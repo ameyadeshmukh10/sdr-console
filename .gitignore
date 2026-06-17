@@ -1,0 +1,16 @@
+# Secrets — never commit
+.env
+
+# Live prospect data, generated outreach, reply threads, pipeline DB (PII)
+data/
+
+# Python
+__pycache__/
+*.pyc
+
+# Node / build output
+node_modules/
+dist/
+
+# OS
+.DS_Store

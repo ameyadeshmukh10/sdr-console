@@ -1,0 +1,146 @@
+import { useState } from 'react'
+import { api } from '../api.js'
+import { Spinner, ErrorBanner, num } from './ui.jsx'
+
+const CAMPAIGN_PERSONA = { 10: 'sales-leadership', 11: 'revops', 12: 'partnerships', 13: 'sdr-bdr' }
+
+// Enrollment with a dry-run gate: always preview first, then a confirm modal
+// before the live write to Bison.
+export default function EnrollPanel({ generatedReady, onChanged }) {
+  const [preview, setPreview] = useState(null)
+  const [result, setResult] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+  const [confirming, setConfirming] = useState(false)
+  const [ack, setAck] = useState(false)
+
+  async function runDryRun() {
+    setBusy(true); setError(null); setResult(null); setPreview(null)
+    try { setPreview(await api.enrollDryRun()) }
+    catch (e) { setError(e.message) }
+    finally { setBusy(false) }
+  }
+
+  async function runLive() {
+    setBusy(true); setError(null)
+    try {
+      const r = await api.enrollLive()
+      setResult(r); setPreview(null); setConfirming(false); setAck(false)
+      if (!r.ok) setError('Enrollment script returned a non-zero exit — see counts/log below.')
+      onChanged?.()
+    } catch (e) { setError(e.message) }
+    finally { setBusy(false) }
+  }
+
+  const byCampaign = preview?.by_campaign || {}
+
+  return (
+    <div className="panel">
+      <div className="row between">
+        <span className="section-h" style={{ margin: 0 }}>Enrollment → Email Bison</span>
+        <span className="badge">{num(generatedReady)} generated ready</span>
+      </div>
+
+      <ErrorBanner error={error} />
+
+      {generatedReady === 0 && !result && (
+        <div className="banner info" style={{ marginTop: 12 }}>
+          Nothing to enroll right now — enrollment activates once batches generate copy
+          (contacts in <span className="mono">generated</span> status).
+        </div>
+      )}
+
+      <div className="row" style={{ gap: 12, marginTop: 14 }}>
+        <button className="ghost" onClick={runDryRun} disabled={busy || generatedReady === 0}>
+          {busy && !confirming ? <Spinner label="Previewing…" /> : 'Preview enrollment (dry-run)'}
+        </button>
+        {preview && preview.rows.length > 0 && (
+          <button onClick={() => setConfirming(true)} disabled={busy}>
+            Enroll {num(preview.rows.length)} live →
+          </button>
+        )}
+      </div>
+
+      {/* dry-run preview */}
+      {preview && (
+        <div style={{ marginTop: 16 }}>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+            <span className="muted">Planned routing:</span>
+            {Object.entries(byCampaign).map(([c, n]) => (
+              <span key={c} className="badge">campaign {c} ({CAMPAIGN_PERSONA[c] || '?'}): {n}</span>
+            ))}
+            {preview.rows.length === 0 && <span className="muted">No contacts in <span className="mono">generated</span> status.</span>}
+          </div>
+          {preview.rows.length > 0 && (
+            <div className="panel" style={{ padding: 0, maxHeight: 280, overflow: 'auto' }}>
+              <table>
+                <thead><tr><th>Email</th><th>Persona</th><th>Campaign</th><th>Vars</th></tr></thead>
+                <tbody>
+                  {preview.rows.slice(0, 200).map((r, i) => (
+                    <tr key={i}>
+                      <td className="mono">{r.email}</td>
+                      <td><span className={`badge persona-${r.persona}`}>{r.persona}</span></td>
+                      <td>{r.campaign}</td>
+                      <td>{r.vars ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* live result */}
+      {result && (
+        <div style={{ marginTop: 16 }}>
+          <div className="banner info">
+            Enrolled <b>{num(result.counts?.enrolled || 0)}</b> ·
+            skipped <b>{num(result.counts?.skipped || 0)}</b> ·
+            no-campaign <b>{num(result.counts?.no_campaign || 0)}</b> ·
+            missing-file <b>{num(result.counts?.missing_file || 0)}</b>
+          </div>
+          {result.rows.filter((r) => r.skipped).length > 0 && (
+            <div className="panel" style={{ padding: 0, marginTop: 12, maxHeight: 220, overflow: 'auto' }}>
+              <table>
+                <thead><tr><th>Skipped</th><th>Reason</th></tr></thead>
+                <tbody>
+                  {result.rows.filter((r) => r.skipped).map((r, i) => (
+                    <tr key={i}><td className="mono">{r.email}</td><td style={{ color: 'var(--amber)' }}>{r.reason}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* confirm modal */}
+      {confirming && (
+        <>
+          <div className="drawer-backdrop" onClick={() => !busy && setConfirming(false)} />
+          <div className="panel" style={{
+            position: 'fixed', top: '30%', left: '50%', transform: 'translateX(-50%)',
+            zIndex: 50, width: 460, maxWidth: '92vw',
+          }}>
+            <h2 style={{ marginTop: 0 }}>Confirm live enrollment</h2>
+            <p className="muted">
+              This sends <b>{num(preview?.rows.length || 0)}</b> leads live to Email Bison
+              (campaigns {Object.keys(byCampaign).join(', ')}). This is an outward action and cannot be undone.
+            </p>
+            <label className="row" style={{ gap: 8, margin: '14px 0' }}>
+              <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} style={{ width: 'auto' }} />
+              <span>I understand this writes live to Bison.</span>
+            </label>
+            <div className="row" style={{ gap: 10, justifyContent: 'flex-end' }}>
+              <button className="ghost" onClick={() => setConfirming(false)} disabled={busy}>Cancel</button>
+              <button onClick={runLive} disabled={!ack || busy} style={{ background: 'var(--red)' }}>
+                {busy ? <Spinner label="Enrolling…" /> : 'Enroll live now'}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
