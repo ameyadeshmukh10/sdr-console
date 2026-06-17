@@ -1,0 +1,393 @@
+{
+  "generated_from": "/Users/ameyadeshmukh/Documents/sdraiworker/reply management/data/interested-replies/dataset.jsonl",
+  "total_replies": 171,
+  "auto_reply_count": 1,
+  "genuine_count": 170,
+  "untracked_count": 24,
+  "by_campaign": {
+    "Global PDFs": {
+      "count": 80,
+      "pct": 46.8
+    },
+    "Americas PDFs": {
+      "count": 36,
+      "pct": 21.1
+    },
+    "Global Event": {
+      "count": 17,
+      "pct": 9.9
+    },
+    "Global Demo Request": {
+      "count": 16,
+      "pct": 9.4
+    },
+    "CRO USA April 2026": {
+      "count": 12,
+      "pct": 7.0
+    },
+    "Americas Demo Request": {
+      "count": 7,
+      "pct": 4.1
+    },
+    "Americas Event": {
+      "count": 2,
+      "pct": 1.2
+    },
+    "CMO USA April 2026": {
+      "count": 1,
+      "pct": 0.6
+    }
+  },
+  "by_geo": {
+    "Global": {
+      "count": 113,
+      "pct": 66.1
+    },
+    "Americas": {
+      "count": 58,
+      "pct": 33.9
+    }
+  },
+  "by_offer_type": {
+    "Lead magnet (PDF)": {
+      "count": 116,
+      "pct": 67.8
+    },
+    "Demo request": {
+      "count": 23,
+      "pct": 13.5
+    },
+    "Event": {
+      "count": 19,
+      "pct": 11.1
+    },
+    "Persona-targeted": {
+      "count": 13,
+      "pct": 7.6
+    }
+  },
+  "by_seniority": {
+    "C-Level": {
+      "count": 39,
+      "pct": 22.8
+    },
+    "Head/Director": {
+      "count": 36,
+      "pct": 21.1
+    },
+    "Manager": {
+      "count": 31,
+      "pct": 18.1
+    },
+    "IC": {
+      "count": 28,
+      "pct": 16.4
+    },
+    "Founder/Owner": {
+      "count": 24,
+      "pct": 14.0
+    },
+    "Unknown": {
+      "count": 8,
+      "pct": 4.7
+    },
+    "VP": {
+      "count": 5,
+      "pct": 2.9
+    }
+  },
+  "by_function": {
+    "Marketing": {
+      "count": 37,
+      "pct": 21.6
+    },
+    "Other": {
+      "count": 34,
+      "pct": 19.9
+    },
+    "Sales/Revenue": {
+      "count": 34,
+      "pct": 19.9
+    },
+    "Finance": {
+      "count": 25,
+      "pct": 14.6
+    },
+    "Executive/General": {
+      "count": 19,
+      "pct": 11.1
+    },
+    "Consulting/Advisory": {
+      "count": 9,
+      "pct": 5.3
+    },
+    "Eng/IT/Product": {
+      "count": 8,
+      "pct": 4.7
+    },
+    "HR/Talent": {
+      "count": 4,
+      "pct": 2.3
+    },
+    "Operations": {
+      "count": 1,
+      "pct": 0.6
+    }
+  },
+  "by_winning_step": {
+    "4": {
+      "count": 53,
+      "pct": 31.2
+    },
+    "1": {
+      "count": 45,
+      "pct": 26.5
+    },
+    "2": {
+      "count": 31,
+      "pct": 18.2
+    },
+    "None": {
+      "count": 29,
+      "pct": 17.1
+    },
+    "3": {
+      "count": 12,
+      "pct": 7.1
+    }
+  },
+  "by_winning_cta": {
+    "Open question": {
+      "count": 56,
+      "pct": 39.7
+    },
+    "Soft permission question": {
+      "count": 33,
+      "pct": 23.4
+    },
+    "None/unclear": {
+      "count": 23,
+      "pct": 16.3
+    },
+    "Demo offer": {
+      "count": 22,
+      "pct": 15.6
+    },
+    "Specific-time offer": {
+      "count": 5,
+      "pct": 3.5
+    },
+    "Resource offer": {
+      "count": 2,
+      "pct": 1.4
+    }
+  },
+  "by_reply_intent": {
+    "Meeting/demo accept": {
+      "count": 58,
+      "pct": 34.1
+    },
+    "Other": {
+      "count": 50,
+      "pct": 29.4
+    },
+    "Question": {
+      "count": 35,
+      "pct": 20.6
+    },
+    "Referral/forward": {
+      "count": 12,
+      "pct": 7.1
+    },
+    "Info request": {
+      "count": 9,
+      "pct": 5.3
+    },
+    "Pricing request": {
+      "count": 3,
+      "pct": 1.8
+    },
+    "Negative/opt-out": {
+      "count": 2,
+      "pct": 1.2
+    },
+    "Positive-later": {
+      "count": 1,
+      "pct": 0.6
+    }
+  },
+  "by_reply_dow": {
+    "Tue": {
+      "count": 45,
+      "pct": 26.5
+    },
+    "Fri": {
+      "count": 36,
+      "pct": 21.2
+    },
+    "Mon": {
+      "count": 36,
+      "pct": 21.2
+    },
+    "Thu": {
+      "count": 30,
+      "pct": 17.6
+    },
+    "Wed": {
+      "count": 18,
+      "pct": 10.6
+    },
+    "Sun": {
+      "count": 3,
+      "pct": 1.8
+    },
+    "Sat": {
+      "count": 2,
+      "pct": 1.2
+    }
+  },
+  "by_interested_via": {
+    "tag": {
+      "count": 89,
+      "pct": 52.0
+    },
+    "status,tag": {
+      "count": 82,
+      "pct": 48.0
+    }
+  },
+  "winning_email_word_count": {
+    "min": 37,
+    "max": 131,
+    "avg": 71.2,
+    "n": 141
+  },
+  "crosstabs": {
+    "offer_type_x_seniority": {
+      "Demo request": {
+        "Founder/Owner": 7,
+        "C-Level": 4,
+        "Head/Director": 4,
+        "IC": 2,
+        "Manager": 4,
+        "Unknown": 2
+      },
+      "Event": {
+        "Founder/Owner": 5,
+        "Manager": 3,
+        "IC": 4,
+        "Unknown": 4,
+        "Head/Director": 3
+      },
+      "Lead magnet (PDF)": {
+        "C-Level": 21,
+        "VP": 5,
+        "IC": 22,
+        "Head/Director": 29,
+        "Founder/Owner": 12,
+        "Manager": 24,
+        "Unknown": 2
+      },
+      "Persona-targeted": {
+        "C-Level": 13
+      }
+    },
+    "cta_x_reply_intent": {
+      "Demo offer": {
+        "Meeting/demo accept": 11,
+        "Question": 7,
+        "Referral/forward": 1,
+        "Other": 3
+      },
+      "Soft permission question": {
+        "Info request": 4,
+        "Other": 6,
+        "Meeting/demo accept": 15,
+        "Question": 5,
+        "Referral/forward": 3
+      },
+      "Open question": {
+        "Question": 9,
+        "Other": 20,
+        "Meeting/demo accept": 18,
+        "Info request": 2,
+        "Referral/forward": 3,
+        "Pricing request": 3,
+        "Negative/opt-out": 1
+      },
+      "Specific-time offer": {
+        "Other": 2,
+        "Referral/forward": 1,
+        "Meeting/demo accept": 1,
+        "Negative/opt-out": 1
+      },
+      "None/unclear": {
+        "Question": 5,
+        "Info request": 2,
+        "Meeting/demo accept": 6,
+        "Other": 8,
+        "Positive-later": 1,
+        "Referral/forward": 1
+      },
+      "Resource offer": {
+        "Question": 1,
+        "Referral/forward": 1
+      }
+    },
+    "seniority_x_function": {
+      "Founder/Owner": {
+        "Executive/General": 17,
+        "Eng/IT/Product": 2,
+        "Consulting/Advisory": 4,
+        "Operations": 1
+      },
+      "C-Level": {
+        "Marketing": 6,
+        "Finance": 12,
+        "Executive/General": 2,
+        "Sales/Revenue": 13,
+        "Eng/IT/Product": 3,
+        "Other": 3
+      },
+      "Head/Director": {
+        "HR/Talent": 1,
+        "Finance": 2,
+        "Marketing": 11,
+        "Eng/IT/Product": 1,
+        "Other": 13,
+        "Sales/Revenue": 8
+      },
+      "IC": {
+        "Eng/IT/Product": 2,
+        "HR/Talent": 3,
+        "Consulting/Advisory": 5,
+        "Finance": 5,
+        "Sales/Revenue": 6,
+        "Marketing": 7
+      },
+      "Manager": {
+        "Finance": 4,
+        "Marketing": 11,
+        "Other": 14,
+        "Sales/Revenue": 2
+      },
+      "VP": {
+        "Other": 3,
+        "Sales/Revenue": 2
+      },
+      "Unknown": {
+        "Sales/Revenue": 3,
+        "Finance": 2,
+        "Marketing": 2,
+        "Other": 1
+      }
+    }
+  },
+  "caveats": [
+    "DESCRIPTIVE ONLY: this is the population of interested repliers, not all leads contacted. There is no denominator, so we cannot compute true conversion lift (which segment/message converts BETTER). Read every finding as 'what the people who replied look like', not 'what causes replies'.",
+    "1 interested-tagged replies are auto-replies/OOO and are excluded from messaging/intent aggregates.",
+    "Titles and companies are messy free-text; seniority/function are heuristic and the agent should reclassify Unknown/Other records before reporting.",
+    "No industry field exists; industry must be inferred from company name/domain.",
+    "interested_reply_text is sometimes the SDR's own reply (the latest message in the thread), not the lead's. reply_intent is a heuristic on that text; for any cited example the agent should confirm against threads/<reply_id>.md."
+  ]
+}

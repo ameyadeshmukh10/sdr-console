@@ -1,0 +1,50 @@
+{
+  "786992060610": {
+    "bison": {
+      "lead_id": 1,
+      "campaign_id": "12"
+    }
+  },
+  "787988418777": {
+    "bison": {
+      "lead_id": 2,
+      "campaign_id": "12"
+    }
+  },
+  "787990282461": {
+    "bison": {
+      "lead_id": 3,
+      "campaign_id": "13"
+    }
+  },
+  "795048142057": {
+    "bison": {
+      "lead_id": 4,
+      "campaign_id": "11"
+    }
+  },
+  "795048570078": {
+    "bison": {
+      "lead_id": 5,
+      "campaign_id": "13"
+    }
+  },
+  "795166878913": {
+    "bison": {
+      "lead_id": 6,
+      "campaign_id": "11"
+    }
+  },
+  "795245614328": {
+    "bison": {
+      "lead_id": 7,
+      "campaign_id": "10"
+    }
+  },
+  "795302509806": {
+    "bison": {
+      "lead_id": 8,
+      "campaign_id": "10"
+    }
+  }
+}

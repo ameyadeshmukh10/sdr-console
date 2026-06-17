@@ -1,0 +1,13 @@
+{
+  "fetched_at": "2026-06-03T21:12:19Z",
+  "campaigns": 15,
+  "step_rows": 56,
+  "total_contacted": 15673,
+  "total_interested": 82,
+  "errors": [
+    {
+      "campaign_id": 1110,
+      "error": "HTTP 400 for https://send.growthtoday.co/api/campaigns/1110/stats: {\"data\":{\"success\":false,\"message\":\"campaign stats can only be viewed for campaigns with a sequence\"}}"
+    }
+  ]
+}

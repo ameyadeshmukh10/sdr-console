@@ -1,8 +1,9 @@
 # Secrets — never commit
 .env
 
-# Live prospect data, generated outreach, reply threads, pipeline DB (PII)
-data/
+# Transient SQLite WAL/SHM sidecar files (the .db itself IS committed)
+*.db-wal
+*.db-shm
 
 # Python
 __pycache__/

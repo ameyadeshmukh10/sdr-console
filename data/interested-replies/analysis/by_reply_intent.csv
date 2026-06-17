@@ -1,0 +1,9 @@
+reply_intent,count,pct
+Meeting/demo accept,58,34.1
+Other,50,29.4
+Question,35,20.6
+Referral/forward,12,7.1
+Info request,9,5.3
+Pricing request,3,1.8
+Negative/opt-out,2,1.2
+Positive-later,1,0.6

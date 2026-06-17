@@ -1,0 +1,182 @@
+{
+  "source": "/Users/ameyadeshmukh/Documents/sdraiworker/reply management/data/campaign-stats",
+  "note": "Rates use Bison's built-in `interested` status count as numerator (82 workspace-wide), not the status-OR-tag 171 from the descriptive analysis. Same source both sides of the ratio.",
+  "overall": {
+    "interested": 82,
+    "contacted": 15673,
+    "interested_rate_pct": 0.523
+  },
+  "by_campaign": [
+    {
+      "campaign_name": "Global Demo Request",
+      "offer_type": "Demo request",
+      "geo": "Global",
+      "contacted": 237,
+      "interested": 8,
+      "interested_rate_pct": 3.38,
+      "reply_rate_pct": 7.59
+    },
+    {
+      "campaign_name": "Americas Demo Request",
+      "offer_type": "Demo request",
+      "geo": "Americas",
+      "contacted": 325,
+      "interested": 5,
+      "interested_rate_pct": 1.54,
+      "reply_rate_pct": 6.77
+    },
+    {
+      "campaign_name": "Global Event",
+      "offer_type": "Event",
+      "geo": "Global",
+      "contacted": 1381,
+      "interested": 11,
+      "interested_rate_pct": 0.8,
+      "reply_rate_pct": 6.66
+    },
+    {
+      "campaign_name": "Global PDFs",
+      "offer_type": "Lead magnet (PDF)",
+      "geo": "Global",
+      "contacted": 4444,
+      "interested": 35,
+      "interested_rate_pct": 0.79,
+      "reply_rate_pct": 9.54
+    },
+    {
+      "campaign_name": "Americas PDFs",
+      "offer_type": "Lead magnet (PDF)",
+      "geo": "Americas",
+      "contacted": 4117,
+      "interested": 17,
+      "interested_rate_pct": 0.41,
+      "reply_rate_pct": 4.79
+    },
+    {
+      "campaign_name": "CRO USA April 2026",
+      "offer_type": "Persona-targeted",
+      "geo": "Americas",
+      "contacted": 2036,
+      "interested": 4,
+      "interested_rate_pct": 0.2,
+      "reply_rate_pct": 3.24
+    },
+    {
+      "campaign_name": "Americas Event",
+      "offer_type": "Event",
+      "geo": "Americas",
+      "contacted": 898,
+      "interested": 1,
+      "interested_rate_pct": 0.11,
+      "reply_rate_pct": 3.45
+    },
+    {
+      "campaign_name": "CMO USA April 2026",
+      "offer_type": "Persona-targeted",
+      "geo": "Americas",
+      "contacted": 2219,
+      "interested": 1,
+      "interested_rate_pct": 0.05,
+      "reply_rate_pct": 2.16
+    },
+    {
+      "campaign_name": "demoCampaign",
+      "offer_type": "Demo request",
+      "geo": "Unknown",
+      "contacted": 16,
+      "interested": 0,
+      "interested_rate_pct": 0.0,
+      "reply_rate_pct": 12.5
+    }
+  ],
+  "by_offer_type": {
+    "Demo request": {
+      "interested": 13,
+      "contacted": 578,
+      "unique_replies": 42,
+      "campaigns": 3,
+      "interested_rate_pct": 2.249,
+      "reply_rate_pct": 7.266
+    },
+    "Lead magnet (PDF)": {
+      "interested": 52,
+      "contacted": 8561,
+      "unique_replies": 621,
+      "campaigns": 2,
+      "interested_rate_pct": 0.607,
+      "reply_rate_pct": 7.254
+    },
+    "Event": {
+      "interested": 12,
+      "contacted": 2279,
+      "unique_replies": 123,
+      "campaigns": 2,
+      "interested_rate_pct": 0.527,
+      "reply_rate_pct": 5.397
+    },
+    "Persona-targeted": {
+      "interested": 5,
+      "contacted": 4255,
+      "unique_replies": 114,
+      "campaigns": 2,
+      "interested_rate_pct": 0.118,
+      "reply_rate_pct": 2.679
+    }
+  },
+  "by_geo": {
+    "Global": {
+      "interested": 54,
+      "contacted": 6062,
+      "unique_replies": 534,
+      "campaigns": 3,
+      "interested_rate_pct": 0.891,
+      "reply_rate_pct": 8.809
+    },
+    "Americas": {
+      "interested": 28,
+      "contacted": 9595,
+      "unique_replies": 364,
+      "campaigns": 5,
+      "interested_rate_pct": 0.292,
+      "reply_rate_pct": 3.794
+    },
+    "Unknown": {
+      "interested": 0,
+      "contacted": 16,
+      "unique_replies": 2,
+      "campaigns": 1,
+      "interested_rate_pct": 0.0,
+      "reply_rate_pct": 12.5
+    }
+  },
+  "by_step": {
+    "1": {
+      "interested": 23,
+      "contacted": 15664,
+      "unique_replies": 387,
+      "interested_rate_pct": 0.147,
+      "reply_rate_pct": 2.471
+    },
+    "2": {
+      "interested": 19,
+      "contacted": 10406,
+      "unique_replies": 205,
+      "interested_rate_pct": 0.183,
+      "reply_rate_pct": 1.97
+    },
+    "3": {
+      "interested": 8,
+      "contacted": 9207,
+      "unique_replies": 126,
+      "interested_rate_pct": 0.087,
+      "reply_rate_pct": 1.369
+    },
+    "4": {
+      "interested": 32,
+      "contacted": 7747,
+      "unique_replies": 183,
+      "interested_rate_pct": 0.413,
+      "reply_rate_pct": 2.362
+    }
+  }
+}

@@ -1,0 +1,559 @@
+{
+  "caveat": "Shares among REPLIERS, not conversion rates — job function is known only for the 171 interested repliers, not the contacted population. Use counts as context; the qualitative patterns are the payload.",
+  "cohort_sizes": {
+    "Marketing": 37,
+    "Sales": 32,
+    "CEO/Founder": 31,
+    "Other": 71
+  },
+  "cohorts": {
+    "Marketing": {
+      "n": 37,
+      "personalization_types": {
+        "company_research": {
+          "count": 37,
+          "pct_of_cohort": 100.0
+        },
+        "pain_hypothesis": {
+          "count": 24,
+          "pct_of_cohort": 64.9
+        },
+        "recent_news": {
+          "count": 19,
+          "pct_of_cohort": 51.4
+        },
+        "metric_specificity": {
+          "count": 18,
+          "pct_of_cohort": 48.6
+        },
+        "role_persona": {
+          "count": 11,
+          "pct_of_cohort": 29.7
+        },
+        "social_proof": {
+          "count": 5,
+          "pct_of_cohort": 13.5
+        },
+        "linkedin_tenure": {
+          "count": 2,
+          "pct_of_cohort": 5.4
+        }
+      },
+      "offers": {
+        "call": {
+          "count": 16,
+          "pct_of_cohort": 43.2
+        },
+        "resource": {
+          "count": 16,
+          "pct_of_cohort": 43.2
+        },
+        "pilot": {
+          "count": 7,
+          "pct_of_cohort": 18.9
+        },
+        "demo": {
+          "count": 1,
+          "pct_of_cohort": 2.7
+        },
+        "audit": {
+          "count": 1,
+          "pct_of_cohort": 2.7
+        }
+      },
+      "winning_cta": {
+        "Open question": {
+          "count": 16,
+          "pct_of_cohort": 43.2
+        },
+        "Soft permission question": {
+          "count": 9,
+          "pct_of_cohort": 24.3
+        },
+        "None/unclear": {
+          "count": 9,
+          "pct_of_cohort": 24.3
+        },
+        "Resource offer": {
+          "count": 2,
+          "pct_of_cohort": 5.4
+        },
+        "Demo offer": {
+          "count": 1,
+          "pct_of_cohort": 2.7
+        }
+      },
+      "winning_step": {
+        "4": {
+          "count": 18,
+          "pct_of_cohort": 48.6
+        },
+        "None": {
+          "count": 11,
+          "pct_of_cohort": 29.7
+        },
+        "2": {
+          "count": 6,
+          "pct_of_cohort": 16.2
+        },
+        "1": {
+          "count": 2,
+          "pct_of_cohort": 5.4
+        }
+      },
+      "offer_type": {
+        "Lead magnet (PDF)": {
+          "count": 32,
+          "pct_of_cohort": 86.5
+        },
+        "Demo request": {
+          "count": 4,
+          "pct_of_cohort": 10.8
+        },
+        "Persona-targeted": {
+          "count": 1,
+          "pct_of_cohort": 2.7
+        }
+      },
+      "seniority": {
+        "Head/Director": {
+          "count": 11,
+          "pct_of_cohort": 29.7
+        },
+        "Manager": {
+          "count": 11,
+          "pct_of_cohort": 29.7
+        },
+        "IC": {
+          "count": 7,
+          "pct_of_cohort": 18.9
+        },
+        "C-Level": {
+          "count": 6,
+          "pct_of_cohort": 16.2
+        },
+        "Unknown": {
+          "count": 2,
+          "pct_of_cohort": 5.4
+        }
+      },
+      "avg_winning_word_count": 68.8,
+      "top_campaigns": {
+        "Global PDFs": 20,
+        "Americas PDFs": 12,
+        "Global Demo Request": 4
+      }
+    },
+    "Sales": {
+      "n": 32,
+      "personalization_types": {
+        "metric_specificity": {
+          "count": 28,
+          "pct_of_cohort": 87.5
+        },
+        "pain_hypothesis": {
+          "count": 26,
+          "pct_of_cohort": 81.2
+        },
+        "company_research": {
+          "count": 19,
+          "pct_of_cohort": 59.4
+        },
+        "recent_news": {
+          "count": 17,
+          "pct_of_cohort": 53.1
+        },
+        "role_persona": {
+          "count": 11,
+          "pct_of_cohort": 34.4
+        },
+        "social_proof": {
+          "count": 6,
+          "pct_of_cohort": 18.8
+        }
+      },
+      "offers": {
+        "call": {
+          "count": 20,
+          "pct_of_cohort": 62.5
+        },
+        "resource": {
+          "count": 5,
+          "pct_of_cohort": 15.6
+        },
+        "demo": {
+          "count": 4,
+          "pct_of_cohort": 12.5
+        },
+        "roi_sketch": {
+          "count": 3,
+          "pct_of_cohort": 9.4
+        },
+        "pilot": {
+          "count": 3,
+          "pct_of_cohort": 9.4
+        },
+        "audit": {
+          "count": 1,
+          "pct_of_cohort": 3.1
+        }
+      },
+      "winning_cta": {
+        "Open question": {
+          "count": 16,
+          "pct_of_cohort": 50.0
+        },
+        "Soft permission question": {
+          "count": 9,
+          "pct_of_cohort": 28.1
+        },
+        "Demo offer": {
+          "count": 4,
+          "pct_of_cohort": 12.5
+        },
+        "None/unclear": {
+          "count": 3,
+          "pct_of_cohort": 9.4
+        }
+      },
+      "winning_step": {
+        "1": {
+          "count": 15,
+          "pct_of_cohort": 46.9
+        },
+        "2": {
+          "count": 8,
+          "pct_of_cohort": 25.0
+        },
+        "4": {
+          "count": 5,
+          "pct_of_cohort": 15.6
+        },
+        "None": {
+          "count": 3,
+          "pct_of_cohort": 9.4
+        },
+        "3": {
+          "count": 1,
+          "pct_of_cohort": 3.1
+        }
+      },
+      "offer_type": {
+        "Lead magnet (PDF)": {
+          "count": 13,
+          "pct_of_cohort": 40.6
+        },
+        "Persona-targeted": {
+          "count": 12,
+          "pct_of_cohort": 37.5
+        },
+        "Event": {
+          "count": 7,
+          "pct_of_cohort": 21.9
+        }
+      },
+      "seniority": {
+        "C-Level": {
+          "count": 13,
+          "pct_of_cohort": 40.6
+        },
+        "Head/Director": {
+          "count": 8,
+          "pct_of_cohort": 25.0
+        },
+        "IC": {
+          "count": 6,
+          "pct_of_cohort": 18.8
+        },
+        "Unknown": {
+          "count": 3,
+          "pct_of_cohort": 9.4
+        },
+        "Manager": {
+          "count": 2,
+          "pct_of_cohort": 6.2
+        }
+      },
+      "avg_winning_word_count": 79.7,
+      "top_campaigns": {
+        "Global PDFs": 12,
+        "CRO USA April 2026": 12,
+        "Global Event": 7
+      }
+    },
+    "CEO/Founder": {
+      "n": 31,
+      "personalization_types": {
+        "role_persona": {
+          "count": 25,
+          "pct_of_cohort": 80.6
+        },
+        "company_research": {
+          "count": 24,
+          "pct_of_cohort": 77.4
+        },
+        "pain_hypothesis": {
+          "count": 22,
+          "pct_of_cohort": 71.0
+        },
+        "recent_news": {
+          "count": 11,
+          "pct_of_cohort": 35.5
+        },
+        "metric_specificity": {
+          "count": 8,
+          "pct_of_cohort": 25.8
+        },
+        "social_proof": {
+          "count": 6,
+          "pct_of_cohort": 19.4
+        },
+        "linkedin_tenure": {
+          "count": 3,
+          "pct_of_cohort": 9.7
+        }
+      },
+      "offers": {
+        "call": {
+          "count": 16,
+          "pct_of_cohort": 51.6
+        },
+        "pilot": {
+          "count": 8,
+          "pct_of_cohort": 25.8
+        },
+        "audit": {
+          "count": 5,
+          "pct_of_cohort": 16.1
+        },
+        "resource": {
+          "count": 5,
+          "pct_of_cohort": 16.1
+        },
+        "demo": {
+          "count": 3,
+          "pct_of_cohort": 9.7
+        },
+        "roi_sketch": {
+          "count": 2,
+          "pct_of_cohort": 6.5
+        }
+      },
+      "winning_cta": {
+        "Soft permission question": {
+          "count": 12,
+          "pct_of_cohort": 38.7
+        },
+        "Open question": {
+          "count": 12,
+          "pct_of_cohort": 38.7
+        },
+        "None/unclear": {
+          "count": 4,
+          "pct_of_cohort": 12.9
+        },
+        "Demo offer": {
+          "count": 2,
+          "pct_of_cohort": 6.5
+        },
+        "Specific-time offer": {
+          "count": 1,
+          "pct_of_cohort": 3.2
+        }
+      },
+      "winning_step": {
+        "2": {
+          "count": 10,
+          "pct_of_cohort": 32.3
+        },
+        "1": {
+          "count": 9,
+          "pct_of_cohort": 29.0
+        },
+        "4": {
+          "count": 8,
+          "pct_of_cohort": 25.8
+        },
+        "3": {
+          "count": 2,
+          "pct_of_cohort": 6.5
+        },
+        "None": {
+          "count": 2,
+          "pct_of_cohort": 6.5
+        }
+      },
+      "offer_type": {
+        "Lead magnet (PDF)": {
+          "count": 18,
+          "pct_of_cohort": 58.1
+        },
+        "Demo request": {
+          "count": 8,
+          "pct_of_cohort": 25.8
+        },
+        "Event": {
+          "count": 5,
+          "pct_of_cohort": 16.1
+        }
+      },
+      "seniority": {
+        "Founder/Owner": {
+          "count": 24,
+          "pct_of_cohort": 77.4
+        },
+        "VP": {
+          "count": 5,
+          "pct_of_cohort": 16.1
+        },
+        "C-Level": {
+          "count": 2,
+          "pct_of_cohort": 6.5
+        }
+      },
+      "avg_winning_word_count": 78.3,
+      "top_campaigns": {
+        "Global PDFs": 10,
+        "Americas PDFs": 8,
+        "Americas Demo Request": 4
+      }
+    },
+    "Other": {
+      "n": 71,
+      "personalization_types": {
+        "company_research": {
+          "count": 50,
+          "pct_of_cohort": 70.4
+        },
+        "recent_news": {
+          "count": 42,
+          "pct_of_cohort": 59.2
+        },
+        "pain_hypothesis": {
+          "count": 36,
+          "pct_of_cohort": 50.7
+        },
+        "social_proof": {
+          "count": 28,
+          "pct_of_cohort": 39.4
+        },
+        "role_persona": {
+          "count": 25,
+          "pct_of_cohort": 35.2
+        },
+        "metric_specificity": {
+          "count": 17,
+          "pct_of_cohort": 23.9
+        }
+      },
+      "offers": {
+        "call": {
+          "count": 44,
+          "pct_of_cohort": 62.0
+        },
+        "resource": {
+          "count": 22,
+          "pct_of_cohort": 31.0
+        },
+        "demo": {
+          "count": 21,
+          "pct_of_cohort": 29.6
+        },
+        "pilot": {
+          "count": 16,
+          "pct_of_cohort": 22.5
+        },
+        "roi_sketch": {
+          "count": 6,
+          "pct_of_cohort": 8.5
+        }
+      },
+      "winning_cta": {
+        "Open question": {
+          "count": 21,
+          "pct_of_cohort": 29.6
+        },
+        "Demo offer": {
+          "count": 20,
+          "pct_of_cohort": 28.2
+        },
+        "Soft permission question": {
+          "count": 16,
+          "pct_of_cohort": 22.5
+        },
+        "None/unclear": {
+          "count": 10,
+          "pct_of_cohort": 14.1
+        },
+        "Specific-time offer": {
+          "count": 4,
+          "pct_of_cohort": 5.6
+        }
+      },
+      "winning_step": {
+        "4": {
+          "count": 22,
+          "pct_of_cohort": 31.0
+        },
+        "1": {
+          "count": 19,
+          "pct_of_cohort": 26.8
+        },
+        "None": {
+          "count": 14,
+          "pct_of_cohort": 19.7
+        },
+        "3": {
+          "count": 9,
+          "pct_of_cohort": 12.7
+        },
+        "2": {
+          "count": 7,
+          "pct_of_cohort": 9.9
+        }
+      },
+      "offer_type": {
+        "Lead magnet (PDF)": {
+          "count": 53,
+          "pct_of_cohort": 74.6
+        },
+        "Demo request": {
+          "count": 11,
+          "pct_of_cohort": 15.5
+        },
+        "Event": {
+          "count": 7,
+          "pct_of_cohort": 9.9
+        }
+      },
+      "seniority": {
+        "C-Level": {
+          "count": 18,
+          "pct_of_cohort": 25.4
+        },
+        "Manager": {
+          "count": 18,
+          "pct_of_cohort": 25.4
+        },
+        "Head/Director": {
+          "count": 17,
+          "pct_of_cohort": 23.9
+        },
+        "IC": {
+          "count": 15,
+          "pct_of_cohort": 21.1
+        },
+        "Unknown": {
+          "count": 3,
+          "pct_of_cohort": 4.2
+        }
+      },
+      "avg_winning_word_count": 77.8,
+      "top_campaigns": {
+        "Global PDFs": 38,
+        "Americas PDFs": 15,
+        "Global Demo Request": 8
+      }
+    }
+  }
+}
