@@ -1,14 +1,16 @@
 import { useState } from 'react'
 import { api } from '../api.js'
 import { Spinner, ErrorBanner, num } from './ui.jsx'
+import OutreachDetail from './OutreachDetail.jsx'
 
 const CAMPAIGN_PERSONA = { 10: 'sales-leadership', 11: 'revops', 12: 'partnerships', 13: 'sdr-bdr' }
 
 // Enrollment with a dry-run gate: always preview first, then a confirm modal
-// before the live write to Bison.
+// before the live write to Bison. Each preview row opens the full generated copy.
 export default function EnrollPanel({ generatedReady, onChanged }) {
   const [preview, setPreview] = useState(null)
   const [result, setResult] = useState(null)
+  const [openId, setOpenId] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [confirming, setConfirming] = useState(false)
@@ -72,21 +74,32 @@ export default function EnrollPanel({ generatedReady, onChanged }) {
             {preview.rows.length === 0 && <span className="muted">No contacts in <span className="mono">generated</span> status.</span>}
           </div>
           {preview.rows.length > 0 && (
-            <div className="panel" style={{ padding: 0, maxHeight: 280, overflow: 'auto' }}>
-              <table>
-                <thead><tr><th>Email</th><th>Persona</th><th>Campaign</th><th>Vars</th></tr></thead>
-                <tbody>
-                  {preview.rows.slice(0, 200).map((r, i) => (
-                    <tr key={i}>
-                      <td className="mono">{r.email}</td>
-                      <td><span className={`badge persona-${r.persona}`}>{r.persona}</span></td>
-                      <td>{r.campaign}</td>
-                      <td>{r.vars ?? '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <>
+              <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+                Click a row to review the signal and the full copy before enrolling.
+              </div>
+              <div className="panel" style={{ padding: 0, maxHeight: 360, overflow: 'auto' }}>
+                <table>
+                  <thead><tr><th>Contact</th><th>Persona</th><th>CTA</th><th>Signal</th><th>Campaign</th></tr></thead>
+                  <tbody>
+                    {preview.rows.slice(0, 200).map((r, i) => (
+                      <tr key={i} className={r.contact_id ? 'clickable' : ''}
+                          onClick={() => r.contact_id && setOpenId(r.contact_id)}>
+                        <td>
+                          <div>{[r.first_name, r.last_name].filter(Boolean).join(' ') || '—'}</div>
+                          <div className="muted" style={{ fontSize: 11 }}>{r.company || r.email}</div>
+                        </td>
+                        <td><span className={`badge persona-${r.persona}`}>{r.persona}</span></td>
+                        <td>{r.cta_type ? <span className="badge cta">{r.cta_type}</span> : '—'}</td>
+                        <td className="muted" style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {r.signal || '—'}</td>
+                        <td>{r.campaign}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </div>
       )}
@@ -141,6 +154,8 @@ export default function EnrollPanel({ generatedReady, onChanged }) {
           </div>
         </>
       )}
+
+      {openId && <OutreachDetail id={openId} onClose={() => setOpenId(null)} />}
     </div>
   )
 }

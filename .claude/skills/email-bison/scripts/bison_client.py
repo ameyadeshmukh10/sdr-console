@@ -142,6 +142,37 @@ class BisonClient:
         if last_err:
             raise last_err
 
+    def patch(self, path, body=None):
+        """Single authenticated PATCH returning parsed JSON (mirrors post)."""
+        url = self.base_url + path
+        data = json.dumps(body or {}).encode("utf-8")
+        req = urllib.request.Request(url, data=data, method="PATCH")
+        req.add_header("Authorization", f"Bearer {self.api_key}")
+        req.add_header("Accept", "application/json")
+        req.add_header("Content-Type", "application/json")
+
+        last_err = None
+        for attempt in range(4):
+            try:
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    payload = resp.read().decode("utf-8")
+                return json.loads(payload) if payload else {}
+            except urllib.error.HTTPError as e:
+                detail = e.read().decode("utf-8", "replace")[:300]
+                if e.code in (429, 500, 502, 503, 504) and attempt < 3:
+                    time.sleep(2 ** attempt)
+                    last_err = BisonError(f"HTTP {e.code} for {url}: {detail}")
+                    continue
+                raise BisonError(f"HTTP {e.code} for {url}: {detail}") from e
+            except urllib.error.URLError as e:
+                if attempt < 3:
+                    time.sleep(2 ** attempt)
+                    last_err = BisonError(f"Network error for {url}: {e.reason}")
+                    continue
+                raise BisonError(f"Network error for {url}: {e.reason}") from e
+        if last_err:
+            raise last_err
+
     # -------------------------------------------------------------- wrappers
     def list_tags(self):
         return list(self.get_paginated("/api/tags"))
@@ -229,4 +260,16 @@ class BisonClient:
         return self.post(
             f"/api/campaigns/{campaign_id}/leads/attach-leads",
             {"lead_ids": list(lead_ids), "allow_parallel_sending": allow_parallel_sending},
+        )
+
+    # ---- interested-reply tagging --------------------------------------
+    def mark_reply_interested(self, reply_id):
+        """Set the built-in 'interested' status on a reply."""
+        return self.patch(f"/api/replies/{reply_id}/mark-as-interested", {})
+
+    def attach_tags_to_leads(self, tag_ids, lead_ids, skip_webhooks=True):
+        """Attach tag ids to lead ids (tags are lead-centric in Bison)."""
+        return self.post(
+            "/api/tags/attach-to-leads",
+            {"tag_ids": list(tag_ids), "lead_ids": list(lead_ids), "skip_webhooks": skip_webhooks},
         )
