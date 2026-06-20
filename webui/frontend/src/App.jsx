@@ -5,6 +5,8 @@ import DiagramPage from './pages/DiagramPage.jsx'
 import AnalyticsPage from './pages/AnalyticsPage.jsx'
 import TrendsPage from './pages/TrendsPage.jsx'
 import OutreachPage from './pages/OutreachPage.jsx'
+import RepliesPage from './pages/RepliesPage.jsx'
+import SignalsPage from './pages/SignalsPage.jsx'
 
 const NAV = [
   { to: '/', ico: '▶', label: 'Use', end: true },
@@ -12,6 +14,8 @@ const NAV = [
   { to: '/diagram', ico: '◉', label: 'Orchestration' },
   { to: '/analytics', ico: '▦', label: 'Analytics' },
   { to: '/trends', ico: '★', label: 'Trends' },
+  { to: '/replies', ico: '✦', label: 'Replies' },
+  { to: '/signals', ico: '⚡', label: 'Signals' },
   { to: '/outreach', ico: '✉', label: 'Outreach' },
 ]
 
@@ -39,6 +43,8 @@ export default function App() {
           <Route path="/diagram" element={<DiagramPage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/trends" element={<TrendsPage />} />
+          <Route path="/replies" element={<RepliesPage />} />
+          <Route path="/signals" element={<SignalsPage />} />
           <Route path="/outreach" element={<OutreachPage />} />
         </Routes>
       </main>

@@ -2,13 +2,17 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
 import { Stat, Spinner, ErrorBanner, Badge, num } from '../components/ui.jsx'
 import EnrollPanel from '../components/EnrollPanel.jsx'
+import GenerateJobPanel from '../components/GenerateJobPanel.jsx'
+import BatchJobPanel from '../components/BatchJobPanel.jsx'
 
-// Pipeline — live batch progress (poll the DB while /sdr-batches runs in Claude
-// Code) + the enrollment gate. The web server can't generate copy itself, so
-// progress here reflects work the sub-agents are doing, surfaced in real time.
+// Pipeline — live batch progress + UI-triggered copy generation (Anthropic API)
+// + the enrollment gate. Generation runs as a background job; the DB-backed
+// progress view and the per-contact job panel update live.
 const POLL_MS = 2500
 
 export default function PipelinePage() {
+  const [jobId, setJobId] = useState(null)
+  const [genError, setGenError] = useState(null)
   const [prog, setProg] = useState(null)
   const [error, setError] = useState(null)
   const [auto, setAuto] = useState(true)
@@ -28,6 +32,15 @@ export default function PipelinePage() {
     timer.current = setInterval(poll, POLL_MS)
     return () => clearInterval(timer.current)
   }, [auto, poll])
+
+  async function startGenerate(batchId) {
+    setGenError(null)
+    try {
+      const r = await api.generate(batchId)
+      if (r.job_id) setJobId(r.job_id)
+      if (r.ok === false) setGenError(r.error || 'could not start job')
+    } catch (e) { setGenError(e.message) }
+  }
 
   const bstat = prog?.batches_by_status || {}
   const done = bstat.done || 0
@@ -81,12 +94,14 @@ export default function PipelinePage() {
             <Stat label="Skipped / failed" value={num((cstat.skipped || 0) + (cstat.failed || 0))} />
           </div>
 
+          <ErrorBanner error={genError} />
+
           {prog.active_batches.length > 0 ? (
             <>
               <h2 className="section-h">Active batches</h2>
               <div className="panel" style={{ padding: 0, marginBottom: 24 }}>
                 <table>
-                  <thead><tr><th>Batch</th><th>Status</th><th>Size</th><th>Generated</th><th>Failed</th><th>Pending</th></tr></thead>
+                  <thead><tr><th>Batch</th><th>Status</th><th>Size</th><th>Generated</th><th>Failed</th><th>Pending</th><th></th></tr></thead>
                   <tbody>
                     {prog.active_batches.map((b) => (
                       <tr key={b.batch_id}>
@@ -96,6 +111,13 @@ export default function PipelinePage() {
                         <td>{b.counts.generated || 0}</td>
                         <td>{b.counts.failed || 0}</td>
                         <td>{b.counts.pending || 0}</td>
+                        <td>
+                          {b.status === 'pending' && (
+                            <button onClick={() => startGenerate(b.batch_id)} disabled={!!jobId}>
+                              Generate copy
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -104,9 +126,15 @@ export default function PipelinePage() {
             </>
           ) : (
             <div className="banner info" style={{ marginBottom: 24 }}>
-              No active batches — all {num(total)} batches are done. Generate more by ingesting a list and running <span className="mono">/sdr-batches</span> in Claude Code; progress will appear here live.
+              No active batches — all {num(total)} batches are done. Ingest a list (Use tab) or
+              <span className="mono"> reset-batch</span> one, then click <b>Generate copy</b> here to run the
+              AI SDR via the Anthropic API.
             </div>
           )}
+
+          {jobId && <GenerateJobPanel jobId={jobId} onDone={poll} />}
+
+          <BatchJobPanel pendingBatches={pending} onChanged={poll} />
 
           <EnrollPanel generatedReady={prog.generated_ready} onChanged={poll} />
         </>

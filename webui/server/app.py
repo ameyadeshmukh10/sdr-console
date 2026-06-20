@@ -52,9 +52,13 @@ HUBSPOT_PULL = SCRIPTS / "sdr-pipeline" / "scripts" / "hubspot_pull.py"
 SDR_BATCHES = SCRIPTS / "sdr-pipeline" / "scripts" / "sdr_batches.py"
 FETCH_STATS = SCRIPTS / "email-bison" / "scripts" / "fetch_campaign_stats.py"
 FETCH_REPLIES = SCRIPTS / "email-bison" / "scripts" / "fetch_interested_replies.py"
+GENERATE_BATCH = SCRIPTS / "sdr-pipeline" / "scripts" / "generate_batch.py"
+CLASSIFY_REPLIES = SCRIPTS / "email-bison" / "scripts" / "classify_replies.py"
 ANALYZE = SCRIPTS / "interested-trends" / "scripts"
 TRENDS_DIR = DATA / "interested-replies" / "analysis"
 REPLIES_LAST_RUN = DATA / "interested-replies" / "last_run.json"
+REVIEW_QUEUE = DATA / "interested-replies" / "review_queue.json"
+BATCH_JOBS_DIR = DATA / "outreach" / "batch-jobs"
 
 PERSONA_ORDER = ["sales-leadership", "revops", "partnerships", "sdr-bdr"]
 PERSONA_ENV = {
@@ -566,10 +570,28 @@ def _parse_enroll(stdout):
     return rows, counts, by_campaign
 
 
+def _enrich_enroll_rows(rows):
+    """Attach contact_id/name/company/signal/cta_type to each row by email so the
+    UI can show the actual copy under review (joins the in-memory outreach index)."""
+    INDEX.maybe_rebuild()
+    by_email = {r["email"].lower(): r for r in INDEX.rows if r.get("email")}
+    for row in rows:
+        m = by_email.get((row.get("email") or "").lower())
+        if m:
+            row["contact_id"] = m["contact_id"]
+            row["first_name"] = m["first_name"]
+            row["last_name"] = m["last_name"]
+            row["company"] = m["company"]
+            row["signal"] = m["signal"]
+            row["cta_type"] = m["cta_type"]
+    return rows
+
+
 def do_enroll(live=False):
     args = [str(SDR_BATCHES), "enroll"] + ([] if live else ["--dry-run"])
     res = run_script(args, timeout=900)
     rows, counts, by_campaign = _parse_enroll(res.get("stdout", ""))
+    _enrich_enroll_rows(rows)
     if live:
         INDEX.build()  # statuses changed: generated -> enrolled/skipped
     return {
@@ -661,6 +683,441 @@ def do_trends_refresh():
 
 
 # ----------------------------------------------------------------------------
+# Copy generation jobs. Generation (Opus + web search, ~25 contacts) is too slow
+# to run inside an HTTP handler, so it runs on a daemon thread and the UI polls.
+# One generation job at a time. DB writes go through `sdr_batches.py ingest`.
+# ----------------------------------------------------------------------------
+JOBS = {}                      # job_id -> job dict
+JOB_LOCK = threading.Lock()
+ACTIVE_GEN_JOB = None          # job_id of the running generation job, or None
+_JOB_SEQ = [0]                 # monotonic counter (uuid is unavailable-free)
+
+
+def _new_job_id():
+    with JOB_LOCK:
+        _JOB_SEQ[0] += 1
+        n = _JOB_SEQ[0]
+    return f"gen-{n}"
+
+
+def _serialize_job(job):
+    if not job:
+        return None
+    return {
+        "job_id": job["job_id"], "kind": job["kind"], "batch_id": job["batch_id"],
+        "status": job["status"], "started_at": job["started_at"],
+        "finished_at": job["finished_at"], "summary": job["summary"],
+        "error": job["error"], "cancel_requested": job["cancel"].is_set(),
+        "contacts": job["contacts"],
+        "log": list(job["log"]),
+    }
+
+
+def _run_generate_job(job_id, batch_id):
+    global ACTIVE_GEN_JOB
+    job = JOBS[job_id]
+
+    def log(msg):
+        job["log"].append(msg)
+        del job["log"][:-200]  # keep last 200
+
+    def progress_cb(cid, state, **extra):
+        with JOB_LOCK:
+            c = job["contacts"].setdefault(cid, {"contact_id": cid})
+            c["state"] = state
+            for k in ("name", "company", "persona", "web_searches", "signal", "issues",
+                      "cache_read", "cache_write"):
+                if k in extra:
+                    c[k] = extra[k]
+        if state == "linted":
+            cr = extra.get("cache_read", 0)
+            cinfo = f", cache {cr / 1000:.1f}k read" if cr else ""
+            log(f"[done] {extra.get('name') or cid} ({extra.get('web_searches', 0)} searches{cinfo})")
+        elif state in ("failed", "error"):
+            log(f"[{state}] {extra.get('name') or cid}: {'; '.join(extra.get('issues', []))[:160]}")
+        elif state == "researching":
+            log(f"[run ] {job['contacts'].get(cid, {}).get('name') or cid}")
+
+    try:
+        # import lazily so app startup never depends on the Anthropic client
+        sys.path.insert(0, str(GENERATE_BATCH.parent))
+        import generate_batch as G  # noqa: E402
+        log(f"starting batch {batch_id}")
+        summary = G.generate_batch(batch_id, progress_cb=progress_cb, cancel_event=job["cancel"])
+        job["summary"] = {"total": summary["total"], "linted": summary["linted"],
+                          "failed": summary["failed"]}
+        log(f"generation done: {summary['linted']} linted, {summary['failed']} failed; ingesting…")
+        ing = run_script([str(SDR_BATCHES), "ingest", str(batch_id)], timeout=120)
+        log((ing["stdout"] or ing["stderr"]).strip()[:200])
+        INDEX.build()
+        job["status"] = "cancelled" if job["cancel"].is_set() else "done"
+    except Exception as e:  # noqa: BLE001
+        job["status"] = "error"
+        job["error"] = f"{type(e).__name__}: {e}"
+        log(f"ERROR: {job['error']}")
+    finally:
+        job["finished_at"] = now_iso()
+        with JOB_LOCK:
+            ACTIVE_GEN_JOB = None
+
+
+def start_generate_job(batch_id):
+    global ACTIVE_GEN_JOB
+    with JOB_LOCK:
+        if ACTIVE_GEN_JOB and JOBS.get(ACTIVE_GEN_JOB, {}).get("status") == "running":
+            return {"ok": False, "error": "a generation job is already running",
+                    "job_id": ACTIVE_GEN_JOB}, 409
+        job_id = None
+    job_id = _new_job_id()
+    job = {
+        "job_id": job_id, "kind": "generate", "batch_id": batch_id,
+        "status": "running", "started_at": now_iso(), "finished_at": None,
+        "contacts": {}, "log": [], "cancel": threading.Event(),
+        "summary": {"total": 0, "linted": 0, "failed": 0}, "error": None,
+    }
+    with JOB_LOCK:
+        JOBS[job_id] = job
+        ACTIVE_GEN_JOB = job_id
+    threading.Thread(target=_run_generate_job, args=(job_id, batch_id), daemon=True).start()
+    return {"ok": True, "job_id": job_id}, 200
+
+
+def now_iso():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+# ----------------------------------------------------------------------------
+# Message Batches API jobs — async (submit -> poll -> retrieve), persisted to a
+# JSON file per job so they survive restart, with a daemon poller per job.
+# ----------------------------------------------------------------------------
+BATCH_POLL_SECONDS = 30
+_BATCH_POLLERS = set()  # job_ids with a live poller (avoid duplicates on resume)
+_BATCH_LOCK = threading.Lock()
+
+
+def _batch_job_path(job_id):
+    return BATCH_JOBS_DIR / f"{job_id}.json"
+
+
+def _read_batch_job(job_id):
+    return _read_json(_batch_job_path(job_id))
+
+
+def _write_batch_job(job):
+    BATCH_JOBS_DIR.mkdir(parents=True, exist_ok=True)
+    _batch_job_path(job["job_id"]).write_text(json.dumps(job, indent=2))
+
+
+def _gen_mod():
+    sys.path.insert(0, str(GENERATE_BATCH.parent))
+    import generate_batch as G  # noqa: E402
+    return G
+
+
+def start_batch_job(limit=None, batch_ids=None):
+    """Bundle N pending pipeline batches into one Anthropic Message Batch."""
+    G = _gen_mod()
+    with db_connect() as conn:
+        pending = [r["batch_id"] for r in conn.execute(
+            "SELECT batch_id FROM batches WHERE status='pending' ORDER BY batch_id")]
+    if batch_ids:
+        selected = [b for b in pending if b in set(batch_ids)]
+    else:
+        selected = pending[: int(limit)] if limit else pending
+    if not selected:
+        return {"ok": False, "error": "no pending batches to submit"}, 400
+
+    import batch_db as bdb  # writable connection for get_batch/status
+    conn = bdb.connect()
+    contacts = []
+    for bid in selected:
+        contacts.extend(bdb.get_batch(conn, bid))
+    conn.close()
+    if not contacts:
+        return {"ok": False, "error": "selected batches have no contacts"}, 400
+
+    knowledge = G.load_knowledge()
+    requests, manifest = G.prepare_batch_requests(contacts, knowledge)
+    client = G.AnthropicClient()
+    batch = client.create_batch(requests)
+
+    job_id = f"batch-{batch['id'][-10:]}"
+    n_cached = sum(1 for m in manifest.values() if not m["was_combined"])
+    job = {
+        "job_id": job_id, "anthropic_batch_id": batch["id"],
+        "pipeline_batch_ids": selected, "status": "processing",
+        "submitted_at": now_iso(), "ended_at": None,
+        "request_count": len(requests), "write_only": n_cached, "researched": len(requests) - n_cached,
+        "counts": batch.get("request_counts", {}), "manifest": manifest,
+        "summary": {"linted": 0, "failed": 0}, "error": None,
+    }
+    _write_batch_job(job)
+    # mark the pipeline batches in_progress so they aren't double-submitted
+    conn = bdb.connect()
+    for bid in selected:
+        bdb.set_batch_status(conn, bid, "in_progress")
+    conn.close()
+
+    _start_batch_poller(job_id)
+    return {"ok": True, "job_id": job_id, "anthropic_batch_id": batch["id"],
+            "request_count": len(requests), "write_only": n_cached}, 200
+
+
+def _start_batch_poller(job_id):
+    with _BATCH_LOCK:
+        if job_id in _BATCH_POLLERS:
+            return
+        _BATCH_POLLERS.add(job_id)
+    threading.Thread(target=_poll_batch_job, args=(job_id,), daemon=True).start()
+
+
+def _poll_batch_job(job_id):
+    G = _gen_mod()
+    import batch_db as bdb
+    try:
+        client = G.AnthropicClient()
+        while True:
+            job = _read_batch_job(job_id)
+            if not job or job.get("status") != "processing":
+                return  # done / cancelled / error -> stop
+            try:
+                batch = client.get_batch(job["anthropic_batch_id"])
+            except Exception as e:  # noqa: BLE001
+                # transient poll failure: the Anthropic batch keeps running and
+                # results stay available for 29 days, so never fail the job on a
+                # poll hiccup — just wait and try again.
+                sys.stderr.write(f"[webui] batch poll retry ({job_id}): {e}\n")
+                time.sleep(BATCH_POLL_SECONDS)
+                continue
+            # re-read to honor a concurrent cancel before writing/processing
+            job = _read_batch_job(job_id)
+            if not job or job.get("status") != "processing":
+                return
+            job["counts"] = batch.get("request_counts", {})
+            _write_batch_job(job)
+            if batch.get("processing_status") != "ended":
+                time.sleep(BATCH_POLL_SECONDS)
+                continue
+
+            # ended -> process results (re-check status didn't flip to cancelled)
+            job = _read_batch_job(job_id)
+            if not job or job.get("status") != "processing":
+                return
+            manifest = job["manifest"]
+            linted, retries = 0, []
+            for item in client.get_batch_results(batch["results_url"]):
+                r = G.process_batch_result(item.get("custom_id"), item.get("result", {}), manifest)
+                if r["status"] == "linted":
+                    linted += 1
+                elif r["status"] == "retry":
+                    retries.append(r.get("contact"))
+            # synchronous retry tail for lint failures / errored requests
+            knowledge = G.load_knowledge()
+            retry_client = G.AnthropicClient()
+            for contact in [c for c in retries if c]:
+                try:
+                    G.generate_one(contact, knowledge, retry_client)
+                except Exception:  # noqa: BLE001
+                    pass
+            # record results via the canonical ingest path, mark batches done
+            for bid in job["pipeline_batch_ids"]:
+                run_script([str(SDR_BATCHES), "ingest", str(bid)], timeout=180)
+            INDEX.build()
+            with db_connect() as conn:
+                ids = job["pipeline_batch_ids"]
+                qmarks = ",".join("?" * len(ids))
+                gen = conn.execute(
+                    f"SELECT COUNT(*) FROM contacts WHERE batch_id IN ({qmarks}) AND status='generated'",
+                    ids).fetchone()[0]
+                failed = conn.execute(
+                    f"SELECT COUNT(*) FROM contacts WHERE batch_id IN ({qmarks}) AND status='failed'",
+                    ids).fetchone()[0]
+            job = _read_batch_job(job_id)  # re-read (cancel may have raced)
+            job["status"] = "done"
+            job["ended_at"] = now_iso()
+            job["summary"] = {"linted": gen, "failed": failed}
+            job["counts"] = batch.get("request_counts", {})
+            _write_batch_job(job)
+            return
+    except Exception as e:  # noqa: BLE001
+        job = _read_batch_job(job_id)
+        if job:
+            job["status"] = "error"
+            job["error"] = f"{type(e).__name__}: {e}"
+            _write_batch_job(job)
+    finally:
+        with _BATCH_LOCK:
+            _BATCH_POLLERS.discard(job_id)
+
+
+def _batch_job_public(job):
+    """Strip the heavy manifest before sending to the UI."""
+    if not job:
+        return None
+    return {k: v for k, v in job.items() if k != "manifest"}
+
+
+def batch_job_status(job_id):
+    job = _read_batch_job(job_id)
+    if not job:
+        return None
+    # ensure a poller is running if it's still processing (e.g. after restart)
+    if job.get("status") == "processing":
+        _start_batch_poller(job_id)
+    return _batch_job_public(job)
+
+
+def batch_jobs_list():
+    jobs = []
+    if BATCH_JOBS_DIR.is_dir():
+        for fp in sorted(BATCH_JOBS_DIR.glob("*.json"), reverse=True):
+            j = _read_json(fp)
+            if j:
+                jobs.append(_batch_job_public(j))
+    return {"jobs": jobs}
+
+
+def cancel_batch_job(job_id):
+    job = _read_batch_job(job_id)
+    if not job:
+        return {"ok": False, "error": f"no job {job_id}"}
+    G = _gen_mod()
+    try:
+        G.AnthropicClient().cancel_batch(job["anthropic_batch_id"])
+    except Exception as e:  # noqa: BLE001
+        pass
+    import batch_db as bdb
+    conn = bdb.connect()
+    for bid in job.get("pipeline_batch_ids", []):
+        bdb.set_batch_status(conn, bid, "pending")
+    conn.close()
+    job["status"] = "cancelled"
+    job["ended_at"] = now_iso()
+    _write_batch_job(job)
+    return {"ok": True, "job_id": job_id}
+
+
+def resume_batch_jobs():
+    """On startup, restart pollers for any batch jobs still processing."""
+    if not BATCH_JOBS_DIR.is_dir():
+        return 0
+    n = 0
+    for fp in BATCH_JOBS_DIR.glob("*.json"):
+        j = _read_json(fp)
+        if j and j.get("status") == "processing":
+            _start_batch_poller(j["job_id"])
+            n += 1
+    return n
+
+
+# ----------------------------------------------------------------------------
+# Interested-reply tagging. Classifier runs as a subprocess (writes the review
+# queue); the gated write applies mark-as-interested + the Interested tag.
+# ----------------------------------------------------------------------------
+def _bison():
+    sys.path.insert(0, str(SCRIPTS / "email-bison" / "scripts"))
+    from bison_client import BisonClient  # noqa: E402
+    return BisonClient()
+
+
+def interested_tag_id():
+    raw = read_env().get("BISON_INTERESTED_TAG_ID", "11")
+    return int(raw) if str(raw).isdigit() else 11
+
+
+def do_scan_replies(campaign_id=None, lookback_days=14):
+    args = [str(CLASSIFY_REPLIES), "--lookback", str(lookback_days)]
+    if campaign_id:
+        args += ["--campaign", str(campaign_id)]
+    res = run_script(args, timeout=600)
+    payload = _read_json(REVIEW_QUEUE) or {"available": False}
+    if isinstance(payload, dict):
+        payload["available"] = REVIEW_QUEUE.is_file()
+    payload = {"available": REVIEW_QUEUE.is_file(), **(payload if isinstance(payload, dict) else {})}
+    payload["scan"] = res
+    payload["ok"] = res["returncode"] == 0
+    return payload
+
+
+def review_queue_payload():
+    data = _read_json(REVIEW_QUEUE)
+    if not data:
+        return {"available": False, "items": []}
+    data["available"] = True
+    return data
+
+
+def do_tag_replies(reply_ids):
+    """For each reply: mark-as-interested + attach the Interested tag to its lead."""
+    queue = _read_json(REVIEW_QUEUE) or {}
+    by_id = {str(it.get("reply_id")): it for it in queue.get("items", [])}
+    tag_id = interested_tag_id()
+    bison = _bison()
+    results, tagged, failed = [], 0, 0
+    for rid in reply_ids:
+        item = by_id.get(str(rid), {})
+        lead_id = item.get("lead_id")
+        try:
+            bison.mark_reply_interested(rid)
+            if lead_id:
+                bison.attach_tags_to_leads([tag_id], [lead_id])
+            results.append({"reply_id": rid, "lead_id": lead_id, "ok": True})
+            tagged += 1
+            item["already_interested"] = True  # update cache
+        except Exception as e:  # noqa: BLE001 - one bad reply must not abort the rest
+            results.append({"reply_id": rid, "lead_id": lead_id, "ok": False, "error": str(e)[:200]})
+            failed += 1
+    if queue:
+        REVIEW_QUEUE.write_text(json.dumps(queue, indent=2))
+    return {"ok": failed == 0, "tagged": tagged, "failed": failed, "results": results}
+
+
+# ----------------------------------------------------------------------------
+# Per-company signal cache (read + force-refresh).
+# ----------------------------------------------------------------------------
+def _age_days(researched_at):
+    if not researched_at:
+        return None
+    try:
+        ts = time.strptime(researched_at, "%Y-%m-%dT%H:%M:%SZ")
+    except (ValueError, TypeError):
+        return None
+    return int((time.time() - time.mktime(ts) + time.timezone) // 86400)
+
+
+def signals_payload():
+    with db_connect() as conn:
+        try:
+            rows = [dict(r) for r in conn.execute(
+                "SELECT * FROM account_signals ORDER BY updated_at DESC")]
+        except sqlite3.Error:
+            rows = []
+    for r in rows:
+        r["age_days"] = _age_days(r.get("researched_at"))
+        r["fresh"] = r["age_days"] is not None and r["age_days"] < 90
+    return {"signals": rows, "count": len(rows)}
+
+
+def do_refresh_signal(domain, company=None):
+    domain = (domain or "").strip().lower()
+    if not domain:
+        return {"ok": False, "error": "domain required"}
+    if not company:
+        with db_connect() as conn:
+            row = conn.execute(
+                "SELECT company FROM contacts WHERE domain=? AND company IS NOT NULL AND company!='' LIMIT 1",
+                (domain,)).fetchone()
+            company = row["company"] if row else ""
+    sys.path.insert(0, str(GENERATE_BATCH.parent))
+    import generate_batch as G  # noqa: E402
+    res = G.research_signal(domain, company)
+    payload = signals_payload()
+    payload["ok"] = True
+    payload["refreshed"] = res
+    return payload
+
+
+# ----------------------------------------------------------------------------
 # HTTP handler.
 # ----------------------------------------------------------------------------
 class Handler(BaseHTTPRequestHandler):
@@ -723,6 +1180,24 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(progress_payload())
             if path == "/api/trends":
                 return self._json(trends_payload())
+            if path == "/api/replies/queue":
+                return self._json(review_queue_payload())
+            if path == "/api/signals":
+                return self._json(signals_payload())
+            if path.startswith("/api/generate/status/"):
+                job_id = path[len("/api/generate/status/"):]
+                job = JOBS.get(job_id)
+                if not job:
+                    return self._error(404, f"no job {job_id}")
+                return self._json(_serialize_job(job))
+            if path == "/api/generate/batch/list":
+                return self._json(batch_jobs_list())
+            if path.startswith("/api/generate/batch/status/"):
+                job_id = path[len("/api/generate/batch/status/"):]
+                pub = batch_job_status(job_id)
+                if pub is None:
+                    return self._error(404, f"no batch job {job_id}")
+                return self._json(pub)
             if path == "/api/outreach":
                 return self._json(INDEX.query(params))
             if path.startswith("/api/outreach/"):
@@ -759,6 +1234,45 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(do_enroll(live=True))
             if path == "/api/trends/refresh":
                 return self._json(do_trends_refresh())
+            if path == "/api/generate":
+                body = self._read_body()
+                batch_id = body.get("batch_id")
+                if batch_id is None:
+                    return self._error(400, "batch_id required")
+                payload, code = start_generate_job(int(batch_id))
+                return self._json(payload, code=code)
+            if path == "/api/generate/batch":
+                body = self._read_body()
+                payload, code = start_batch_job(limit=body.get("limit"),
+                                                batch_ids=body.get("batch_ids"))
+                return self._json(payload, code=code)
+            if path.startswith("/api/generate/batch/cancel/"):
+                job_id = path[len("/api/generate/batch/cancel/"):]
+                return self._json(cancel_batch_job(job_id))
+            if path.startswith("/api/generate/cancel/"):
+                job_id = path[len("/api/generate/cancel/"):]
+                job = JOBS.get(job_id)
+                if not job:
+                    return self._error(404, f"no job {job_id}")
+                job["cancel"].set()
+                return self._json({"ok": True, "job_id": job_id})
+            if path == "/api/signals/refresh":
+                body = self._read_body()
+                return self._json(do_refresh_signal(body.get("domain"), body.get("company")))
+            if path == "/api/replies/scan":
+                body = self._read_body()
+                return self._json(do_scan_replies(
+                    campaign_id=body.get("campaign_id"),
+                    lookback_days=int(body.get("lookback_days", 14)),
+                ))
+            if path == "/api/replies/tag":
+                body = self._read_body()
+                if body.get("confirm") is not True:
+                    return self._error(400, "tagging requires confirm=true")
+                reply_ids = body.get("reply_ids") or []
+                if not reply_ids:
+                    return self._error(400, "reply_ids required")
+                return self._json(do_tag_replies(reply_ids))
             if path == "/api/reindex":
                 n = INDEX.build()
                 return self._json({"indexed": n, "built_at": INDEX.built_at})
@@ -811,6 +1325,9 @@ def main():
     print(f"[webui] building outreach index ...", flush=True)
     n = INDEX.build()
     print(f"[webui] indexed {n} generated outreach files")
+    resumed = resume_batch_jobs()
+    if resumed:
+        print(f"[webui] resumed {resumed} in-flight batch job(s)")
     if Handler.static_dir:
         print(f"[webui] serving frontend from {Handler.static_dir}")
     else:
