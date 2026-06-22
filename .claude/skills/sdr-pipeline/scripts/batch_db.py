@@ -40,7 +40,7 @@ def init_schema(conn):
     CREATE TABLE IF NOT EXISTS contacts (
         contact_id  TEXT PRIMARY KEY,
         first_name  TEXT, last_name TEXT, email TEXT, title TEXT, company TEXT,
-        linkedin_url TEXT, persona TEXT, domain TEXT,
+        linkedin_url TEXT, persona TEXT, domain TEXT, variant TEXT,
         batch_id    INTEGER,
         status      TEXT DEFAULT 'pending',
         error       TEXT,
@@ -71,6 +71,8 @@ def init_schema(conn):
     cols = [r["name"] for r in conn.execute("PRAGMA table_info(contacts)")]
     if "domain" not in cols:
         conn.execute("ALTER TABLE contacts ADD COLUMN domain TEXT")
+    if "variant" not in cols:
+        conn.execute("ALTER TABLE contacts ADD COLUMN variant TEXT")
     conn.execute("UPDATE contacts SET domain=lower(substr(email, instr(email,'@')+1)) "
                  "WHERE (domain IS NULL OR domain='') AND email LIKE '%@%'")
     # index after the column is guaranteed to exist
@@ -83,9 +85,9 @@ def upsert_contacts(conn, rows):
     before = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
     conn.executemany("""
         INSERT OR IGNORE INTO contacts
-          (contact_id, first_name, last_name, email, title, company, linkedin_url, persona, domain, status, updated_at)
-        VALUES (:contact_id,:first_name,:last_name,:email,:title,:company,:linkedin_url,:persona,:domain,'pending',:ts)
-    """, [{**r, "domain": email_domain(r.get("email")), "ts": now()} for r in rows])
+          (contact_id, first_name, last_name, email, title, company, linkedin_url, persona, domain, variant, status, updated_at)
+        VALUES (:contact_id,:first_name,:last_name,:email,:title,:company,:linkedin_url,:persona,:domain,:variant,'pending',:ts)
+    """, [{"variant": None, **r, "domain": email_domain(r.get("email")), "ts": now()} for r in rows])
     conn.commit()
     return conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0] - before
 
@@ -113,7 +115,7 @@ def assign_batches(conn, batch_size=25):
 
 def get_batch(conn, batch_id):
     return [dict(r) for r in conn.execute(
-        "SELECT contact_id, first_name, last_name, email, title, company, linkedin_url, persona, domain "
+        "SELECT contact_id, first_name, last_name, email, title, company, linkedin_url, persona, domain, variant "
         "FROM contacts WHERE batch_id=? ORDER BY domain, rowid", (batch_id,))]
 
 

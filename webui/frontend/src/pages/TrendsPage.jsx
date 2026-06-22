@@ -4,13 +4,14 @@ import {
 } from 'recharts'
 import { api } from '../api.js'
 import { Stat, Spinner, ErrorBanner, num, pct } from '../components/ui.jsx'
+import { BRAND, SERIES, TOOLTIP_STYLE } from '../theme.js'
 
 // Pillar 5 — Trends: what's working across the interested replies. Reads the
 // cached interested-trends analysis; refresh re-runs the fetch + analyze chain.
-const COLORS = ['#4f9dff', '#3fb950', '#bc8cff', '#d29922', '#f85149', '#58a6ff', '#56d364']
+const COLORS = SERIES
 
 // Horizontal distribution from a {key: {count, pct}} map.
-function Dist({ title, data, color = '#4f9dff' }) {
+function Dist({ title, data, color = BRAND.jade }) {
   if (!data) return null
   const entries = Object.entries(data).sort((a, b) => (b[1].count || 0) - (a[1].count || 0))
   const max = Math.max(1, ...entries.map(([, v]) => v.count || 0))
@@ -34,11 +35,13 @@ function Dist({ title, data, color = '#4f9dff' }) {
 
 export default function TrendsPage() {
   const [data, setData] = useState(null)
+  const [variants, setVariants] = useState(null)
   const [error, setError] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
 
   function load() {
     api.trends().then((d) => { setData(d); setError(null) }).catch((e) => setError(e.message))
+    api.variants().then(setVariants).catch(() => {})
   }
   useEffect(() => { load() }, [])
 
@@ -79,6 +82,31 @@ export default function TrendsPage() {
       </div>
       <ErrorBanner error={error} />
 
+      {variants?.variants?.length > 0 && (
+        <div className="panel" style={{ marginBottom: 22 }}>
+          <div className="section-h" style={{ marginTop: 0 }}>By instruction variant (A/B)</div>
+          <table>
+            <thead><tr><th>Variant</th><th>Contacts</th><th>Enrolled</th><th>Interested</th><th>Interested rate</th></tr></thead>
+            <tbody>
+              {variants.variants.map((v) => (
+                <tr key={v.variant}>
+                  <td><span className="badge cta">{v.variant}</span></td>
+                  <td>{num(v.total)}</td>
+                  <td>{num(v.enrolled)}</td>
+                  <td>{num(v.interested)}</td>
+                  <td><b>{v.interested_rate_pct == null ? '—' : v.interested_rate_pct + '%'}</b></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="muted" style={{ fontSize: 12, marginTop: 10 }}>
+            Interested = an enrolled contact whose email shows up in the interested set. Pre-variant
+            contacts count as the <b>value-give</b> baseline. Run <b>earn</b> / <b>show</b> batches from
+            the Pipeline tab to populate the other arms.
+          </p>
+        </div>
+      )}
+
       {!data ? <Spinner label="Loading…" /> : !data.available ? (
         <div className="empty">No analysis found. Click <b>Refresh analysis</b> to pull replies and build it.</div>
       ) : (
@@ -98,23 +126,23 @@ export default function TrendsPage() {
               <div className="section-h" style={{ marginTop: 0 }}>Interested rate by campaign (true conversion)</div>
               <ResponsiveContainer width="100%" height="84%">
                 <BarChart data={convChart} margin={{ top: 8, right: 16, bottom: 8, left: -8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#2a3340" />
-                  <XAxis dataKey="name" tick={{ fill: '#8b97a6', fontSize: 11 }} interval={0} angle={-18} textAnchor="end" height={56} />
-                  <YAxis tick={{ fill: '#8b97a6', fontSize: 11 }} unit="%" />
-                  <Tooltip contentStyle={{ background: '#161b22', border: '1px solid #2a3340', borderRadius: 8 }} />
-                  <Bar dataKey="Interested %" fill="#3fb950" radius={[3, 3, 0, 0]} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={BRAND.grid} />
+                  <XAxis dataKey="name" tick={{ fill: BRAND.muted, fontSize: 11 }} interval={0} angle={-18} textAnchor="end" height={56} />
+                  <YAxis tick={{ fill: BRAND.muted, fontSize: 11 }} unit="%" />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(15,28,24,0.04)' }} />
+                  <Bar dataKey="Interested %" fill={BRAND.jade} radius={[3, 3, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           )}
 
           <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', marginBottom: 22 }}>
-            <Dist title="By seniority" data={s.by_seniority} color="#4f9dff" />
-            <Dist title="By function" data={s.by_function} color="#3fb950" />
-            <Dist title="Winning CTA type" data={s.by_winning_cta} color="#bc8cff" />
-            <Dist title="Reply intent" data={s.by_reply_intent} color="#d29922" />
-            <Dist title="By offer type" data={s.by_offer_type} color="#58a6ff" />
-            <Dist title="Interested via" data={s.by_interested_via} color="#56d364" />
+            <Dist title="By seniority" data={s.by_seniority} color={SERIES[0]} />
+            <Dist title="By function" data={s.by_function} color={SERIES[1]} />
+            <Dist title="Winning CTA type" data={s.by_winning_cta} color={SERIES[3]} />
+            <Dist title="Reply intent" data={s.by_reply_intent} color={SERIES[4]} />
+            <Dist title="By offer type" data={s.by_offer_type} color={SERIES[5]} />
+            <Dist title="Interested via" data={s.by_interested_via} color={SERIES[2]} />
           </div>
 
           {conv?.by_campaign && (

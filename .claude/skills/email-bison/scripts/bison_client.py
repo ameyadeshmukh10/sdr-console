@@ -186,6 +186,17 @@ class BisonClient:
         payload = self.post(f"/api/campaigns/{campaign_id}/stats", body)
         return payload.get("data", {})
 
+    def duplicate_campaign(self, campaign_id):
+        """Clone a campaign (copies the sequence template). Returns the new
+        campaign dict {id, name, status:'Draft', ...}. New campaign starts paused."""
+        payload = self.post(f"/api/campaigns/{campaign_id}/duplicate")
+        return payload.get("data", payload) if isinstance(payload, dict) else payload
+
+    def rename_campaign(self, campaign_id, name):
+        """Rename a campaign (partial settings update — only the name field)."""
+        payload = self.patch(f"/api/campaigns/{campaign_id}/update", {"name": name})
+        return payload.get("data", payload) if isinstance(payload, dict) else payload
+
     def list_replies(self, **filters):
         return self.get_paginated("/api/replies", filters)
 

@@ -4,6 +4,7 @@ import {
 } from 'recharts'
 import { api } from '../api.js'
 import { Stat, Spinner, ErrorBanner, num, pct } from '../components/ui.jsx'
+import { BRAND, TOOLTIP_STYLE } from '../theme.js'
 
 // Pillar 3 — Analytics: campaign performance from cached stats, refreshable live.
 export default function AnalyticsPage() {
@@ -66,13 +67,13 @@ export default function AnalyticsPage() {
               <div className="section-h" style={{ marginTop: 0 }}>Reply vs interested rate by campaign</div>
               <ResponsiveContainer width="100%" height="86%">
                 <BarChart data={chartData} margin={{ top: 8, right: 16, bottom: 8, left: -8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#2a3340" />
-                  <XAxis dataKey="name" tick={{ fill: '#8b97a6', fontSize: 11 }} interval={0} angle={-18} textAnchor="end" height={60} />
-                  <YAxis tick={{ fill: '#8b97a6', fontSize: 11 }} unit="%" />
-                  <Tooltip contentStyle={{ background: '#161b22', border: '1px solid #2a3340', borderRadius: 8 }} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={BRAND.grid} />
+                  <XAxis dataKey="name" tick={{ fill: BRAND.muted, fontSize: 11 }} interval={0} angle={-18} textAnchor="end" height={60} />
+                  <YAxis tick={{ fill: BRAND.muted, fontSize: 11 }} unit="%" />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(15,28,24,0.04)' }} />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Bar dataKey="Reply %" fill="#4f9dff" radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="Interested %" fill="#3fb950" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="Reply %" fill={BRAND.jade} radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="Interested %" fill={BRAND.mint} radius={[3, 3, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
