@@ -866,7 +866,24 @@ def _source_job_public(job):
     return {k: v for k, v in job.items() if k != "thread"}
 
 
-def start_source_job(list_id, list_name=None, cap=25, mode="end-to-end"):
+def _source_progress_path(list_id):
+    return SOURCE_JOBS_DIR / f"progress-{list_id}.json"
+
+
+def read_source_progress(list_id):
+    """How many companies in this list have already been enriched."""
+    p = _source_progress_path(list_id)
+    if not p.is_file():
+        return {"enriched": 0}
+    try:
+        data = json.loads(p.read_text())
+        return {"enriched": int(data.get("count", len(data.get("enriched", []))))}
+    except (ValueError, OSError):
+        return {"enriched": 0}
+
+
+def start_source_job(list_id, list_name=None, cap=25, mode="end-to-end",
+                     per_company_cap=0, concurrency=8, titles="", locations="", reset=False):
     clay = _clay_oauth()
     if clay.status() != "connected":
         return {"ok": False, "error": "Clay is not connected — connect Clay first"}, 409
@@ -875,6 +892,14 @@ def start_source_job(list_id, list_name=None, cap=25, mode="end-to-end"):
         "job_id": job_id, "kind": "source", "status": "running",
         "list_id": str(list_id), "list_name": list_name,
         "cap": int(cap), "mode": mode if mode in ("end-to-end", "review") else "end-to-end",
+        # Optional enrichment knobs surfaced from the UI's Advanced section.
+        "per_company_cap": max(0, int(per_company_cap or 0)),
+        "concurrency": max(1, int(concurrency or 8)),
+        "titles": (titles or "").strip(),
+        "locations": (locations or "").strip(),
+        # Auto-advance cursor: persisted per list so each run takes the next batch.
+        "progress_file": str(_source_progress_path(list_id)),
+        "reset": bool(reset),
         "candidates_path": str(SOURCE_JOBS_DIR / f"{job_id}-candidates.json"),
         "candidates": None, "enrich": None, "source": None,
         "started_at": now_iso(), "finished_at": None, "error": None,
@@ -887,9 +912,21 @@ def _run_source_job(job_id):
     job = SOURCE_JOBS[job_id]
     try:
         SOURCE_JOBS_DIR.mkdir(parents=True, exist_ok=True)
-        enrich = run_script([str(CLAY_ENRICH), "--list-id", job["list_id"],
-                             "--cap", str(job["cap"]), "--out", job["candidates_path"]],
-                            timeout=3600)
+        enrich_args = [str(CLAY_ENRICH), "--list-id", job["list_id"],
+                       "--cap", str(job["cap"]),
+                       "--concurrency", str(job.get("concurrency", 8)),
+                       "--out", job["candidates_path"]]
+        if job.get("per_company_cap"):
+            enrich_args += ["--per-company-cap", str(job["per_company_cap"])]
+        if job.get("titles"):
+            enrich_args += ["--titles", job["titles"]]
+        if job.get("locations"):
+            enrich_args += ["--locations", job["locations"]]
+        if job.get("progress_file"):
+            enrich_args += ["--progress-file", job["progress_file"]]
+        if job.get("reset"):
+            enrich_args += ["--reset-progress"]
+        enrich = run_script(enrich_args, timeout=3600)
         job["enrich"] = enrich
         if enrich["returncode"] != 0:
             job["status"] = "error"
@@ -1529,6 +1566,12 @@ class Handler(BaseHTTPRequestHandler):
                 if not job:
                     return self._error(404, f"no source job {job_id}")
                 return self._json(_source_job_public(job))
+            if path == "/api/source/progress":
+                list_id = (params.get("list_id", [""])[0]).strip()
+                if not list_id:
+                    return self._error(400, "list_id required")
+                return self._json({"ok": True, "list_id": list_id,
+                                   **read_source_progress(list_id)})
             if path == "/api/outreach":
                 return self._json(INDEX.query(params))
             if path.startswith("/api/outreach/"):
@@ -1586,12 +1629,27 @@ class Handler(BaseHTTPRequestHandler):
                     return self._error(400, "list_id required")
                 payload, code = start_source_job(
                     list_id, list_name=(body.get("list_name") or None),
-                    cap=int(body.get("cap", 25)), mode=(body.get("mode") or "end-to-end"))
+                    cap=int(body.get("cap", 25)), mode=(body.get("mode") or "end-to-end"),
+                    per_company_cap=body.get("per_company_cap", 0),
+                    concurrency=body.get("concurrency", 8),
+                    titles=body.get("titles", ""), locations=body.get("locations", ""),
+                    reset=bool(body.get("reset", False)))
                 return self._json(payload, code=code)
             if path.startswith("/api/source/confirm/"):
                 job_id = path[len("/api/source/confirm/"):]
                 payload, code = confirm_source_job(job_id)
                 return self._json(payload, code=code)
+            if path == "/api/source/progress/reset":
+                body = self._read_body()
+                list_id = str(body.get("list_id", "")).strip()
+                if not list_id:
+                    return self._error(400, "list_id required")
+                p = _source_progress_path(list_id)
+                try:
+                    p.unlink()
+                except FileNotFoundError:
+                    pass
+                return self._json({"ok": True, "list_id": list_id, "enriched": 0})
             if path.startswith("/api/generate/batch/cancel/"):
                 job_id = path[len("/api/generate/batch/cancel/"):]
                 return self._json(cancel_batch_job(job_id))

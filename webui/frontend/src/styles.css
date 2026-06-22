@@ -103,6 +103,10 @@ input, select {
 input:focus, select:focus { border-color: var(--jade); box-shadow: 0 0 0 3px var(--accent-dim); }
 label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); font-weight: 500; }
 
+/* Inline text-style button (disclosure toggles, reset links) */
+button.linklike { background: none; border: none; padding: 0; color: var(--accent, #0a7); font-weight: 600; cursor: pointer; }
+button.linklike:hover { text-decoration: underline; }
+
 /* Tables */
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 th, td { text-align: left; padding: 11px 12px; border-bottom: 1px solid var(--border); }

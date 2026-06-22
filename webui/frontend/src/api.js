@@ -57,6 +57,8 @@ export const api = {
   sourceEnrich: (opts) => post('/api/source/enrich', opts),
   sourceConfirm: (jobId) => post('/api/source/confirm/' + jobId),
   sourceStatus: (jobId) => get('/api/source/status/' + jobId),
+  sourceProgress: (listId) => get('/api/source/progress?list_id=' + encodeURIComponent(listId)),
+  sourceProgressReset: (listId) => post('/api/source/progress/reset', { list_id: listId }),
   batchStatus: (jobId) => get('/api/generate/batch/status/' + jobId),
   batchList: () => get('/api/generate/batch/list'),
   cancelBatch: (jobId) => post('/api/generate/batch/cancel/' + jobId),
