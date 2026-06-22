@@ -1,17 +1,30 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { Stat, Spinner, ErrorBanner, num } from '../components/ui.jsx'
+import ListPicker from '../components/ListPicker.jsx'
+import SourcePanel from '../components/SourcePanel.jsx'
 
-// Pillar 1 — Use: feed a HubSpot list into the pipeline (pull + init), then show
-// the resulting pipeline state and any pending batches awaiting generation.
+// Pillar 1 — Use: feed a HubSpot list into the pipeline. Contact lists pull +
+// init directly; company lists enrich the buying group via Clay first.
 export default function UsePage() {
   const [status, setStatus] = useState(null)
   const [pending, setPending] = useState([])
   const [listId, setListId] = useState('2198')
+  const [picked, setPicked] = useState(null)   // selected company list, if any
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
   const [showLog, setShowLog] = useState(false)
+
+  // 0-1 = contact list, 0-2 = company list.
+  function selectList(l) {
+    if (l.object_type_id === '0-2') {
+      setPicked(l)
+    } else {
+      setPicked(null)
+      setListId(l.list_id)
+    }
+  }
 
   async function refresh() {
     try {
@@ -47,6 +60,14 @@ export default function UsePage() {
       <ErrorBanner error={error} />
 
       <div className="panel" style={{ marginBottom: 22 }}>
+        <div className="section-h" style={{ marginTop: 0 }}>Search HubSpot lists</div>
+        <ListPicker onSelect={selectList} />
+      </div>
+
+      {picked && <SourcePanel list={picked} onChanged={refresh} />}
+
+      <div className="panel" style={{ marginBottom: 22 }}>
+        <div className="section-h" style={{ marginTop: 0 }}>Pull a contact list</div>
         <div className="toolbar" style={{ marginBottom: 0 }}>
           <label className="field">
             HubSpot list ID

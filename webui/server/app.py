@@ -53,6 +53,11 @@ SDR_BATCHES = SCRIPTS / "sdr-pipeline" / "scripts" / "sdr_batches.py"
 FETCH_STATS = SCRIPTS / "email-bison" / "scripts" / "fetch_campaign_stats.py"
 FETCH_REPLIES = SCRIPTS / "email-bison" / "scripts" / "fetch_interested_replies.py"
 GENERATE_BATCH = SCRIPTS / "sdr-pipeline" / "scripts" / "generate_batch.py"
+HUBSPOT_LISTS = SCRIPTS / "sdr-pipeline" / "scripts" / "hubspot_lists.py"
+SOURCE_CONTACTS = SCRIPTS / "sdr-pipeline" / "scripts" / "source_contacts.py"
+CLAY_ENRICH = SCRIPTS / "sdr-pipeline" / "scripts" / "clay_enrich.py"
+PIPELINE_SCRIPTS = SCRIPTS / "sdr-pipeline" / "scripts"
+SOURCE_JOBS_DIR = DATA / "outreach" / "source-jobs"
 CLASSIFY_REPLIES = SCRIPTS / "email-bison" / "scripts" / "classify_replies.py"
 ANALYZE = SCRIPTS / "interested-trends" / "scripts"
 TRENDS_DIR = DATA / "interested-replies" / "analysis"
@@ -521,6 +526,44 @@ def do_ingest(list_id):
     }
 
 
+def do_hubspot_lists(query, list_type=None):
+    """Search HubSpot lists by name. list_type in {contact, company} or None (both)."""
+    args = [str(HUBSPOT_LISTS), "search", query or ""]
+    if list_type in ("contact", "company"):
+        args += ["--type", list_type]
+    res = run_script(args, timeout=60)
+    if res["returncode"] != 0:
+        return {"ok": False, "error": (res["stderr"] or res["stdout"]).strip()[:300]}
+    try:
+        return {"ok": True, "lists": json.loads(res["stdout"] or "[]")}
+    except json.JSONDecodeError:
+        return {"ok": False, "error": "could not parse list search output"}
+
+
+# ----------------------------------------------------------------------------
+# Clay MCP OAuth (connect once, backend auto-refreshes) — see clay_oauth.py.
+# ----------------------------------------------------------------------------
+def _clay_oauth():
+    if str(PIPELINE_SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(PIPELINE_SCRIPTS))
+    import clay_oauth  # noqa: E402
+    return clay_oauth
+
+
+def do_clay_status():
+    try:
+        return {"ok": True, "status": _clay_oauth().status()}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "status": "disconnected", "error": f"{type(e).__name__}: {e}"}
+
+
+def do_clay_oauth_start():
+    try:
+        return {"ok": True, "authorize_url": _clay_oauth().start_authorization()}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
 def do_refresh():
     res = run_script([str(FETCH_STATS)], timeout=300)
     payload = analytics_payload()
@@ -801,6 +844,118 @@ def now_iso():
 
 
 # ----------------------------------------------------------------------------
+# Clay sourcing jobs — backend-driven Clay enrichment of a company list's buying
+# group, then the deterministic HubSpot+pipeline path (source_contacts.py). Long
+# running, so run as a background job with status polling (in-memory, like the
+# generate job). mode "end-to-end" commits immediately; "review" pauses with the
+# candidate rows until a /api/source/confirm.
+# ----------------------------------------------------------------------------
+SOURCE_JOBS = {}            # job_id -> job dict
+_SOURCE_SEQ = [0]
+
+
+def _new_source_job_id():
+    with JOB_LOCK:
+        _SOURCE_SEQ[0] += 1
+        return f"src-{_SOURCE_SEQ[0]}"
+
+
+def _source_job_public(job):
+    if not job:
+        return None
+    return {k: v for k, v in job.items() if k != "thread"}
+
+
+def start_source_job(list_id, list_name=None, cap=25, mode="end-to-end"):
+    clay = _clay_oauth()
+    if clay.status() != "connected":
+        return {"ok": False, "error": "Clay is not connected — connect Clay first"}, 409
+    job_id = _new_source_job_id()
+    SOURCE_JOBS[job_id] = {
+        "job_id": job_id, "kind": "source", "status": "running",
+        "list_id": str(list_id), "list_name": list_name,
+        "cap": int(cap), "mode": mode if mode in ("end-to-end", "review") else "end-to-end",
+        "candidates_path": str(SOURCE_JOBS_DIR / f"{job_id}-candidates.json"),
+        "candidates": None, "enrich": None, "source": None,
+        "started_at": now_iso(), "finished_at": None, "error": None,
+    }
+    threading.Thread(target=_run_source_job, args=(job_id,), daemon=True).start()
+    return {"ok": True, "job_id": job_id}, 200
+
+
+def _run_source_job(job_id):
+    job = SOURCE_JOBS[job_id]
+    try:
+        SOURCE_JOBS_DIR.mkdir(parents=True, exist_ok=True)
+        enrich = run_script([str(CLAY_ENRICH), "--list-id", job["list_id"],
+                             "--cap", str(job["cap"]), "--out", job["candidates_path"]],
+                            timeout=3600)
+        job["enrich"] = enrich
+        if enrich["returncode"] != 0:
+            job["status"] = "error"
+            job["error"] = (enrich["stderr"] or enrich["stdout"]).strip()[:500]
+            return
+        candidates = _read_json(Path(job["candidates_path"])) or []
+        job["candidates"] = candidates
+        if not candidates:
+            job["status"] = "done"
+            job["source"] = {"note": "no candidates with a work email were found"}
+            return
+        if job["mode"] == "review":
+            job["status"] = "awaiting_review"
+            return
+        _commit_source_job(job)
+    except Exception as e:  # noqa: BLE001
+        job["status"] = "error"
+        job["error"] = f"{type(e).__name__}: {e}"
+    finally:
+        if job["status"] in ("done", "error"):
+            job["finished_at"] = now_iso()
+
+
+def _commit_source_job(job):
+    """Run source_contacts.py on the candidate file: dedup, create in HubSpot,
+    make the static list, and ingest into the pipeline."""
+    args = [str(SOURCE_CONTACTS), job["candidates_path"]]
+    if job.get("list_name"):
+        args += ["--list-name", job["list_name"]]
+    res = run_script(args, timeout=1800)
+    job["source"] = res
+    if res["returncode"] != 0:
+        job["status"] = "error"
+        job["error"] = (res["stderr"] or res["stdout"]).strip()[:500]
+        return
+    try:
+        job["stats"] = json.loads(res["stdout"])
+    except json.JSONDecodeError:
+        job["stats"] = None
+    INDEX.build()
+    job["status"] = "done"
+
+
+def confirm_source_job(job_id):
+    job = SOURCE_JOBS.get(job_id)
+    if not job:
+        return {"ok": False, "error": f"no source job {job_id}"}, 404
+    if job["status"] != "awaiting_review":
+        return {"ok": False, "error": f"job is {job['status']}, not awaiting review"}, 409
+    job["status"] = "running"
+    threading.Thread(target=_confirm_source_thread, args=(job_id,), daemon=True).start()
+    return {"ok": True, "job_id": job_id}, 200
+
+
+def _confirm_source_thread(job_id):
+    job = SOURCE_JOBS[job_id]
+    try:
+        _commit_source_job(job)
+    except Exception as e:  # noqa: BLE001
+        job["status"] = "error"
+        job["error"] = f"{type(e).__name__}: {e}"
+    finally:
+        job["finished_at"] = now_iso()
+
+
+# ----------------------------------------------------------------------------
 # Message Batches API jobs — async (submit -> poll -> retrieve), persisted to a
 # JSON file per job so they survive restart, with a daemon poller per job.
 # ----------------------------------------------------------------------------
@@ -828,8 +983,53 @@ def _gen_mod():
     return G
 
 
-def start_batch_job(limit=None, batch_ids=None, variant="value-give"):
-    """Bundle N pending pipeline batches into one Anthropic Message Batch."""
+def _normalize_split(split):
+    """Validate a {variant: percent} dict. Returns a clean dict of positive
+    percentages over known variants, or None if unusable (caller falls back to a
+    single variant)."""
+    if not isinstance(split, dict):
+        return None
+    clean = {}
+    for k, v in split.items():
+        if k in VALID_VARIANTS:
+            try:
+                pct = float(v)
+            except (TypeError, ValueError):
+                continue
+            if pct > 0:
+                clean[k] = pct
+    return clean or None
+
+
+def _assign_variant_split(contacts, split):
+    """Assign each contact a variant per the % split: largest-remainder for exact
+    counts, then spread evenly (ratio-deficit greedy) so variants aren't clustered
+    in the domain-sorted order. Mutates contacts in place; returns the counts."""
+    n = len(contacts)
+    total = sum(split.values())
+    variants = [v for v in ("value-give", "earn", "show") if split.get(v, 0) > 0]
+    raw = {v: n * split[v] / total for v in variants}
+    counts = {v: int(raw[v]) for v in variants}
+    leftover = n - sum(counts.values())
+    for v in sorted(variants, key=lambda v: raw[v] - counts[v], reverse=True):
+        if leftover <= 0:
+            break
+        counts[v] += 1
+        leftover -= 1
+    remaining = dict(counts)
+    for c in contacts:
+        pick = max(variants, key=lambda v: (remaining[v] / counts[v]) if counts[v] else -1)
+        c["variant"] = pick
+        remaining[pick] -= 1
+    return counts
+
+
+def start_batch_job(limit=None, batch_ids=None, variant="value-give", split=None):
+    """Bundle N pending pipeline batches into one Anthropic Message Batch.
+
+    If `split` ({variant: percent}) is given, variants are assigned across the
+    selected contacts by those proportions (overriding any per-contact variant);
+    otherwise the single `variant` applies."""
     G = _gen_mod()
     with db_connect() as conn:
         pending = [r["batch_id"] for r in conn.execute(
@@ -850,6 +1050,9 @@ def start_batch_job(limit=None, batch_ids=None, variant="value-give"):
     if not contacts:
         return {"ok": False, "error": "selected batches have no contacts"}, 400
 
+    split = _normalize_split(split)
+    split_counts = _assign_variant_split(contacts, split) if split else None
+
     knowledge = G.load_knowledge()
     requests, manifest = G.prepare_batch_requests(contacts, knowledge, variant=variant)
     client = G.AnthropicClient()
@@ -859,7 +1062,7 @@ def start_batch_job(limit=None, batch_ids=None, variant="value-give"):
     n_cached = sum(1 for m in manifest.values() if not m["was_combined"])
     job = {
         "job_id": job_id, "anthropic_batch_id": batch["id"], "variant": variant,
-        "pipeline_batch_ids": selected, "status": "processing",
+        "split": split_counts, "pipeline_batch_ids": selected, "status": "processing",
         "submitted_at": now_iso(), "ended_at": None,
         "request_count": len(requests), "write_only": n_cached, "researched": len(requests) - n_cached,
         "counts": batch.get("request_counts", {}), "manifest": manifest,
@@ -931,7 +1134,8 @@ def _poll_batch_job(job_id):
             retry_variant = job.get("variant", "value-give")
             for contact in [c for c in retries if c]:
                 try:
-                    G.generate_one(contact, knowledge, retry_client, variant=retry_variant)
+                    G.generate_one(contact, knowledge, retry_client,
+                                   variant=contact.get("variant") or retry_variant)
                 except Exception:  # noqa: BLE001
                     pass
             # record results via the canonical ingest path, mark batches done
@@ -1242,6 +1446,25 @@ class Handler(BaseHTTPRequestHandler):
         except (json.JSONDecodeError, UnicodeDecodeError):
             return {}
 
+    def _html(self, body, code=200):
+        raw = body.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def _clay_callback_html(self, code, state, err):
+        """Finish the Clay OAuth flow and render a tiny close-this-tab page."""
+        if err:
+            return self._html(f"<h2>Clay authorization failed</h2><p>{err}</p>", code=400)
+        try:
+            _clay_oauth().handle_callback(code, state)
+            return self._html(
+                "<h2>Clay connected ✓</h2><p>You can close this tab and return to the SDR Console.</p>")
+        except Exception as e:  # noqa: BLE001
+            return self._html(f"<h2>Clay authorization failed</h2><p>{type(e).__name__}: {e}</p>", code=400)
+
     def do_OPTIONS(self):
         self.send_response(204)
         self._cors()
@@ -1287,6 +1510,25 @@ class Handler(BaseHTTPRequestHandler):
                 if pub is None:
                     return self._error(404, f"no batch job {job_id}")
                 return self._json(pub)
+            if path == "/api/hubspot/lists":
+                q = params.get("q", [""])[0]
+                list_type = params.get("type", [None])[0]
+                return self._json(do_hubspot_lists(q, list_type))
+            if path == "/api/clay/status":
+                return self._json(do_clay_status())
+            if path == "/api/clay/oauth/start":
+                return self._json(do_clay_oauth_start())
+            if path == "/api/clay/oauth/callback":
+                code = params.get("code", [None])[0]
+                state = params.get("state", [None])[0]
+                err = params.get("error", [None])[0]
+                return self._clay_callback_html(code, state, err)
+            if path.startswith("/api/source/status/"):
+                job_id = path[len("/api/source/status/"):]
+                job = SOURCE_JOBS.get(job_id)
+                if not job:
+                    return self._error(404, f"no source job {job_id}")
+                return self._json(_source_job_public(job))
             if path == "/api/outreach":
                 return self._json(INDEX.query(params))
             if path.startswith("/api/outreach/"):
@@ -1334,7 +1576,21 @@ class Handler(BaseHTTPRequestHandler):
                 body = self._read_body()
                 payload, code = start_batch_job(limit=body.get("limit"),
                                                 batch_ids=body.get("batch_ids"),
-                                                variant=_clean_variant(body.get("variant")))
+                                                variant=_clean_variant(body.get("variant")),
+                                                split=body.get("split"))
+                return self._json(payload, code=code)
+            if path == "/api/source/enrich":
+                body = self._read_body()
+                list_id = str(body.get("list_id", "")).strip()
+                if not list_id:
+                    return self._error(400, "list_id required")
+                payload, code = start_source_job(
+                    list_id, list_name=(body.get("list_name") or None),
+                    cap=int(body.get("cap", 25)), mode=(body.get("mode") or "end-to-end"))
+                return self._json(payload, code=code)
+            if path.startswith("/api/source/confirm/"):
+                job_id = path[len("/api/source/confirm/"):]
+                payload, code = confirm_source_job(job_id)
                 return self._json(payload, code=code)
             if path.startswith("/api/generate/batch/cancel/"):
                 job_id = path[len("/api/generate/batch/cancel/"):]

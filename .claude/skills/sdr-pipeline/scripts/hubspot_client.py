@@ -95,6 +95,28 @@ class HubSpotClient:
         """Record IDs for any v3 list (contacts OR companies). Alias of get_list_members."""
         return list(self.get_list_members(list_id))
 
+    def search_lists(self, query="", object_type_id=None, count=50):
+        """Search HubSpot lists by name. Returns a list of normalized dicts:
+        {list_id, name, object_type_id, processing_type, size}.
+        object_type_id '0-1'=contacts, '0-2'=companies; pass it to constrain results.
+        """
+        body = {"query": query or "", "count": int(count), "offset": 0,
+                "additionalProperties": ["hs_list_size"]}
+        if object_type_id:
+            body["objectTypeIds"] = [object_type_id]
+        payload = self._request("POST", "/crm/v3/lists/search", body=body)
+        out = []
+        for lst in payload.get("lists", []):
+            extra = lst.get("additionalProperties") or {}
+            out.append({
+                "list_id": str(lst.get("listId")),
+                "name": lst.get("name"),
+                "object_type_id": lst.get("objectTypeId"),
+                "processing_type": lst.get("processingType"),
+                "size": extra.get("hs_list_size"),
+            })
+        return out
+
     def create_list(self, name, object_type_id="0-1"):
         """Create a static (MANUAL) list. object_type_id '0-1'=contacts. Returns listId (str)."""
         payload = self._request("POST", "/crm/v3/lists",

@@ -8,7 +8,7 @@ const STATUS_COLOR = {
 
 // Message Batches API (50% off, async). Submit N pending pipeline batches as one
 // Anthropic batch; jobs are persisted server-side and survive reloads/restarts.
-export default function BatchJobPanel({ pendingBatches, variant, onChanged }) {
+export default function BatchJobPanel({ pendingBatches, variant, split, splitValid = true, onChanged }) {
   const [jobs, setJobs] = useState(null)
   const [limit, setLimit] = useState(1)
   const [busy, setBusy] = useState(false)
@@ -32,7 +32,7 @@ export default function BatchJobPanel({ pendingBatches, variant, onChanged }) {
   async function submit() {
     setBusy(true); setError(null)
     try {
-      const r = await api.submitBatch(Number(limit), variant)
+      const r = await api.submitBatch(Number(limit), variant, split || undefined)
       if (r.ok === false) setError(r.error || 'submit failed')
       await load(); onChanged?.()
     } catch (e) { setError(e.message) }
@@ -62,9 +62,14 @@ export default function BatchJobPanel({ pendingBatches, variant, onChanged }) {
           <input type="number" min="1" max={Math.max(1, pendingBatches)} value={limit}
             onChange={(e) => setLimit(e.target.value)} style={{ width: 110 }} />
         </label>
-        <button onClick={submit} disabled={busy || pendingBatches === 0}>
+        <button onClick={submit} disabled={busy || pendingBatches === 0 || (split && !splitValid)}>
           {busy ? <Spinner label="Submitting…" /> : `Submit ${Number(limit) || 0} → Batch API`}
         </button>
+        {split && (
+          <span className="muted" style={{ alignSelf: 'center', fontSize: 12 }}>
+            split {Object.entries(split).map(([k, v]) => `${k} ${v}%`).join(' · ')}
+          </span>
+        )}
       </div>
 
       {jobs && jobs.length > 0 && (

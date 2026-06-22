@@ -24,8 +24,13 @@ export default function PipelinePage() {
   const [error, setError] = useState(null)
   const [auto, setAuto] = useState(true)
   const [variant, setVariant] = useState('value-give')
+  const [splitMode, setSplitMode] = useState(false)
+  const [split, setSplit] = useState({ 'value-give': 34, earn: 33, show: 33 })
   const [lastTick, setLastTick] = useState(null)
   const timer = useRef(null)
+
+  const splitTotal = VARIANTS.reduce((s, v) => s + (Number(split[v.id]) || 0), 0)
+  const splitValid = splitTotal === 100
 
   const poll = useCallback(async () => {
     try {
@@ -103,17 +108,44 @@ export default function PipelinePage() {
           </div>
 
           <div className="panel" style={{ marginBottom: 22 }}>
-            <div className="section-h" style={{ marginTop: 0 }}>Instruction set (A/B test)</div>
-            <div className="toolbar" style={{ marginBottom: 0 }}>
-              <label className="field">Variant
-                <select value={variant} onChange={(e) => setVariant(e.target.value)} style={{ minWidth: 230 }}>
-                  {VARIANTS.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
-                </select>
-              </label>
-              <span className="muted" style={{ alignSelf: 'center', maxWidth: 560, fontSize: 13 }}>
-                {VARIANTS.find((v) => v.id === variant)?.hint}. Applies to both <b>Generate copy</b> and the <b>Batch API</b> below.
-              </span>
+            <div className="row between" style={{ marginBottom: 10 }}>
+              <span className="section-h" style={{ margin: 0 }}>Instruction set (A/B test)</span>
+              <div className="row" style={{ gap: 8 }}>
+                <button className={splitMode ? 'ghost' : ''} onClick={() => setSplitMode(false)} style={{ fontSize: 13 }}>Single variant</button>
+                <button className={splitMode ? '' : 'ghost'} onClick={() => setSplitMode(true)} style={{ fontSize: 13 }}>Split %</button>
+              </div>
             </div>
+
+            {!splitMode ? (
+              <div className="toolbar" style={{ marginBottom: 0 }}>
+                <label className="field">Variant
+                  <select value={variant} onChange={(e) => setVariant(e.target.value)} style={{ minWidth: 230 }}>
+                    {VARIANTS.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+                  </select>
+                </label>
+                <span className="muted" style={{ alignSelf: 'center', maxWidth: 560, fontSize: 13 }}>
+                  {VARIANTS.find((v) => v.id === variant)?.hint}. Applies to both <b>Generate copy</b> and the <b>Batch API</b> below.
+                </span>
+              </div>
+            ) : (
+              <>
+                <div className="toolbar" style={{ marginBottom: 0 }}>
+                  {VARIANTS.map((v) => (
+                    <label key={v.id} className="field">{v.label}
+                      <input type="number" min="0" max="100" value={split[v.id]}
+                        onChange={(e) => setSplit((s) => ({ ...s, [v.id]: Number(e.target.value) }))}
+                        style={{ width: 90 }} />
+                    </label>
+                  ))}
+                  <span className="muted" style={{ alignSelf: 'center', fontSize: 13, color: splitValid ? 'var(--muted)' : 'var(--red)' }}>
+                    Total: <b>{splitTotal}%</b>{splitValid ? '' : ' — must equal 100'}
+                  </span>
+                </div>
+                <p className="muted" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
+                  Distributes the selected contacts across variants by these proportions when submitting to the <b>Batch API</b> below.
+                </p>
+              </>
+            )}
           </div>
 
           <ErrorBanner error={genError} />
@@ -156,7 +188,8 @@ export default function PipelinePage() {
 
           {jobId && <GenerateJobPanel jobId={jobId} onDone={poll} />}
 
-          <BatchJobPanel pendingBatches={pending} variant={variant} onChanged={poll} />
+          <BatchJobPanel pendingBatches={pending} variant={variant}
+            split={splitMode ? split : null} splitValid={splitValid} onChanged={poll} />
 
           <EnrollPanel generatedReady={prog.generated_ready} onChanged={poll} />
         </>

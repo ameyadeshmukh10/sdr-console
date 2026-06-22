@@ -27,9 +27,11 @@ npm --prefix webui/frontend run dev              # dev server with /api proxy
 
 ## Pages
 
-1. **Use** (`/`) — enter a HubSpot list ID → runs `hubspot_pull.py` + `sdr_batches.py init`,
-   shows new contacts/batches + pending queue. Copy generation still happens via
-   `/sdr-batches` in Claude Code (the UI does not generate copy).
+1. **Use** (`/`) — **search HubSpot lists** (contact *or* company) and pick one, or type a
+   list ID directly. A **contact list** runs `hubspot_pull.py` + `sdr_batches.py init` (shows
+   new contacts/batches + pending queue). A **company list** opens the Clay enrichment panel
+   (see *Clay buying-group enrichment* below). Copy generation happens on the Pipeline tab or
+   via `/sdr-batches` in Claude Code.
 2. **Pipeline** (`/pipeline`) — **real-time batch progress** (polls `/api/progress`
    every 2.5s with an auto-refresh toggle) while `/sdr-batches` runs in Claude Code,
    plus **enrollment with a dry-run gate**: preview the planned routing first, then a
@@ -82,12 +84,66 @@ shows each contact move `researching → done/failed` live with web-search count
 are recorded via `ingest`. One job at a time; cancellable. Model = `CLAUDE_MODEL` (default
 `claude-opus-4-8`). **Everything is stdlib urllib — no `anthropic` SDK, no pip.**
 
+### HubSpot list search (Use tab)
+The Use tab can **search HubSpot lists by name** instead of needing a list ID. A
+contact/company toggle scopes the search (`objectTypeId` `0-1` contacts, `0-2` companies).
+Backend: `search_lists()` on `HubSpotClient` (`POST /crm/v3/lists/search`, requests
+`hs_list_size`) → `hubspot_lists.py search "<q>" [--type contact|company]` →
+`GET /api/hubspot/lists?q=&type=`. The manual list-ID input stays as a fallback.
+
+### Clay buying-group enrichment (no Claude Code)
+Select a **company list** → **Enrich buying group** sources GTM-leadership contacts at each
+company via Clay, **without** running through Claude Code:
+- The backend drives **Clay's MCP server** (`https://api.clay.com/v3/mcp`) through the
+  **Anthropic Messages API MCP connector** (`mcp_servers` + `anthropic-beta: mcp-client-2025-04-04`)
+  with a cheap model (`CLAUDE_SOURCING_MODEL`, default `claude-haiku-4-5`). `clay_enrich.py`
+  resolves the list's company domains, calls `find-and-enrich-contacts-at-company` per domain,
+  and **polls `get-task-context`** (Python-orchestrated cadence) until emails resolve.
+- The resulting candidates flow through the existing **`source_contacts.py`** (dedup within +
+  against HubSpot, ICP/persona filter, 3-way variant round-robin, create contacts + a static
+  list, ingest into the pipeline) — fully reused, unchanged.
+- **Clay auth is OAuth 2.1** (no static key). `clay_oauth.py` does discovery → dynamic client
+  registration → PKCE authorize → token exchange/refresh; **Connect Clay** in the UI runs the
+  one-time browser flow. Tokens are stored in `data/outreach/clay_oauth.json` (gitignored,
+  `chmod 600`) and auto-refresh. Endpoints: `GET /api/clay/status`, `/api/clay/oauth/start`,
+  `/api/clay/oauth/callback`.
+- Runs as a **background job** (`POST /api/source/enrich {list_id,list_name,cap,mode}`,
+  status at `/api/source/status/<id>`) with two modes: **end-to-end** (commit immediately) or
+  **review** (pause on the candidate list, then `POST /api/source/confirm/<id>` to create).
+
+### Instruction-set variant % split (Pipeline tab → Batch API)
+The A/B panel has a **Single variant ↔ Split %** toggle. In split mode you set the percentage
+per variant (value-give / earn / show, must total 100); on **Batch API** submit the selected
+contacts are distributed by those proportions — largest-remainder for exact counts + even
+interleaving so variants aren't clustered in the domain-sorted order. The per-contact variant
+flows through `prepare_batch_requests` → `ingest` → enroll, so analytics and campaign routing
+stay correct. `POST /api/generate/batch {limit, variant, split}`; omit `split` for the
+single-variant behavior.
+
 ### New env vars (.env)
 ```
-ANTHROPIC_API_KEY=sk-ant-...      # required for generation + reply classification
-CLAUDE_MODEL=claude-opus-4-8      # model for both
-BISON_INTERESTED_TAG_ID=11        # the "Interested" tag applied on approval
+ANTHROPIC_API_KEY=sk-ant-...           # required for generation + reply classification + Clay sourcing
+CLAUDE_MODEL=claude-opus-4-8           # model for generation + classification
+CLAUDE_SOURCING_MODEL=claude-haiku-4-5 # cheap model that drives Clay MCP enrichment
+CLAY_MCP_URL=https://api.clay.com/v3/mcp                 # Clay MCP endpoint (OAuth 2.1)
+CLAY_OAUTH_REDIRECT=http://localhost:8787/api/clay/oauth/callback
+BISON_INTERESTED_TAG_ID=11             # the "Interested" tag applied on approval
 ```
+Clay tokens are **not** in `.env` — they live in the gitignored `data/outreach/clay_oauth.json`,
+populated by the one-time **Connect Clay** OAuth flow.
+
+### Network egress (running in a hosted/web environment)
+The backend makes **direct** HTTPS calls to these hosts — they must be reachable (allowlisted in
+a hosted environment; no issue when running locally):
+- `api.anthropic.com` — generation, reply classification, and the Clay MCP connector. **The Clay
+  *enrichment* calls ride on this host** (Anthropic's servers connect to Clay), so the backend
+  itself does not need `api.clay.com` for enrichment.
+- `api.hubapi.com` — all HubSpot calls (list search, pull, company domains, contact create).
+- `api.clay.com` — **only** the Clay OAuth handshake/refresh (`clay_oauth.py`).
+
+If a host is blocked the relevant endpoint fails with a clear JSON error (e.g. Clay OAuth start
+returns `could not discover OAuth metadata …`). See
+<https://code.claude.com/docs/en/claude-code-on-the-web> for editing a web environment's egress.
 
 ### Outward-write safety
 Two outward writes, both gated the same way (dry-run/preview first → confirm modal with an

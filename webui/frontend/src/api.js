@@ -45,7 +45,18 @@ export const api = {
   generate: (batchId, variant) => post('/api/generate', { batch_id: batchId, variant }),
   generateStatus: (jobId) => get('/api/generate/status/' + jobId),
   generateCancel: (jobId) => post('/api/generate/cancel/' + jobId),
-  submitBatch: (limit, variant) => post('/api/generate/batch', { limit, variant }),
+  submitBatch: (limit, variant, split) => post('/api/generate/batch', { limit, variant, split }),
+  hubspotLists: (q, type) => {
+    const p = new URLSearchParams()
+    if (q) p.set('q', q)
+    if (type) p.set('type', type)
+    return get('/api/hubspot/lists?' + p.toString())
+  },
+  clayStatus: () => get('/api/clay/status'),
+  clayConnectUrl: () => get('/api/clay/oauth/start'),
+  sourceEnrich: (opts) => post('/api/source/enrich', opts),
+  sourceConfirm: (jobId) => post('/api/source/confirm/' + jobId),
+  sourceStatus: (jobId) => get('/api/source/status/' + jobId),
   batchStatus: (jobId) => get('/api/generate/batch/status/' + jobId),
   batchList: () => get('/api/generate/batch/list'),
   cancelBatch: (jobId) => post('/api/generate/batch/cancel/' + jobId),
