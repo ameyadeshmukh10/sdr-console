@@ -17,8 +17,10 @@ Env: ANTHROPIC_API_KEY, HUBSPOT_ACCESS_TOKEN, plus a connected Clay OAuth sessio
 """
 
 import argparse
+import concurrent.futures
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -40,8 +42,34 @@ JOB_TITLE_KEYWORDS = [
     "Sales Operations", "Sales Ops",
 ]
 
+# Sent to Clay to keep individual-contributor / junior titles out of the result set.
+# (Clay's keyword match is fuzzy, so this is a first pass, not a guarantee.)
+JOB_TITLE_EXCLUDE_KEYWORDS = [
+    "Intern", "Assistant", "Representative", "Coordinator",
+    "Specialist", "Associate", "Account Executive", "Junior",
+]
+
+# Deterministic title gate applied to every contact Clay returns — the real
+# guarantee that ICs don't slip through fuzzy matching. A contact is kept only
+# if its title carries a leadership/ops marker AND no IC/junior marker.
+_TARGET_TITLE_RE = re.compile(
+    r"\b(chief|cro|vp|vice president|head of|director|manager|lead"
+    r"|revenue operations|revops|sales operations|sales ops)\b", re.I)
+_IC_TITLE_RE = re.compile(
+    r"\b(intern|assistant|representative|coordinator|specialist"
+    r"|associate|account executive|junior|entry)\b", re.I)
+
+
+def is_target_title(title):
+    """True only for GTM-leadership / RevOps-Sales-Ops titles (ICs excluded)."""
+    t = title or ""
+    if _IC_TITLE_RE.search(t):
+        return False
+    return bool(_TARGET_TITLE_RE.search(t))
+
 POLL_INTERVAL_SECONDS = 15
 MAX_POLLS_PER_DOMAIN = 20  # ~5 min ceiling per company
+DEFAULT_CONCURRENCY = 8    # companies enriched in parallel (override with --concurrency)
 
 SYSTEM = (
     "You operate Clay's MCP tools to source B2B sales-leadership contacts. "
@@ -50,20 +78,46 @@ SYSTEM = (
 )
 
 
-def company_domains(list_id, cap=None):
-    """[{company_id, name, domain}] for a HubSpot company list (domain != null)."""
+def load_progress(path):
+    """Set of company_ids already enriched for this list (empty if no file)."""
+    if not path or not Path(path).is_file():
+        return set()
+    try:
+        return set(str(x) for x in json.loads(Path(path).read_text()).get("enriched", []))
+    except (ValueError, OSError):
+        return set()
+
+
+def save_progress(path, ids):
+    """Persist the set of enriched company_ids so the next run advances past them."""
+    if not path:
+        return
+    Path(path).write_text(json.dumps({"enriched": sorted(ids), "count": len(ids)}, indent=2))
+
+
+def company_domains(list_id, cap=None, exclude_ids=None):
+    """Select the next `cap` companies (with a domain) NOT already enriched.
+
+    Returns (selected, stats); stats reports the cursor position across the list.
+    """
+    exclude_ids = exclude_ids or set()
     hub = HubSpotClient()
     ids = hub.read_list_records(list_id)
     companies = hub.batch_read_companies(ids, properties=("domain", "name", "website"))
-    out = []
+    eligible = []
     for c in companies:
         p = c.get("properties", {})
         domain = (p.get("domain") or "").strip().lower()
         if domain:
-            out.append({"company_id": c.get("id"), "name": p.get("name"), "domain": domain})
-    if cap:
-        out = out[: int(cap)]
-    return out
+            eligible.append({"company_id": c.get("id"), "name": p.get("name"), "domain": domain})
+    remaining = [c for c in eligible if str(c["company_id"]) not in exclude_ids]
+    selected = remaining[: int(cap)] if cap else remaining
+    stats = {
+        "total_with_domain": len(eligible),
+        "already_enriched": len(eligible) - len(remaining),
+        "remaining_before": len(remaining),
+    }
+    return selected, stats
 
 
 def _mcp_servers():
@@ -81,14 +135,16 @@ def _ask_json(client, mcp_servers, prompt):
         return {}
 
 
-def enrich_domain(client, mcp_servers, domain, company_name):
+def enrich_domain(client, mcp_servers, domain, company_name, titles=None, locations=None):
     """Find + enrich the buying group at one domain; return list of contact dicts."""
+    titles = titles or JOB_TITLE_KEYWORDS
+    locations = locations or ["United States"]
     find_prompt = (
         f'Call the Clay tool "find-and-enrich-contacts-at-company" with arguments:\n'
         f'  companyIdentifier: "{domain}"\n'
-        f'  contactFilters.job_title_keywords: {json.dumps(JOB_TITLE_KEYWORDS)}\n'
-        f'  contactFilters.locations: ["United States"]\n'
-        f'  contactFilters.job_title_exclude_keywords: ["Intern", "Assistant"]\n'
+        f'  contactFilters.job_title_keywords: {json.dumps(titles)}\n'
+        f'  contactFilters.locations: {json.dumps(locations)}\n'
+        f'  contactFilters.job_title_exclude_keywords: {json.dumps(JOB_TITLE_EXCLUDE_KEYWORDS)}\n'
         f'  dataPoints.contactDataPoints: [{{"type": "Email"}}]\n'
         f"The tool is async and returns a taskId. Return ONLY JSON: "
         f'{{"task_id": "<the taskId>"}}.'
@@ -109,46 +165,139 @@ def enrich_domain(client, mcp_servers, domain, company_name):
         f'"{domain}" as domain when missing. Output ONLY JSON.'
     )
     for attempt in range(MAX_POLLS_PER_DOMAIN):
-        time.sleep(POLL_INTERVAL_SECONDS)
         res = _ask_json(client, mcp_servers, poll_prompt)
         if res.get("status") == "resolved":
             contacts = res.get("contacts") or []
             sys.stderr.write(f"  [{domain}] resolved: {len(contacts)} contacts\n")
             return contacts
         sys.stderr.write(f"  [{domain}] pending ({attempt + 1}/{MAX_POLLS_PER_DOMAIN})…\n")
+        if attempt < MAX_POLLS_PER_DOMAIN - 1:  # poll-then-sleep: no floor, no trailing wait
+            time.sleep(POLL_INTERVAL_SECONDS)
     sys.stderr.write(f"  [{domain}] timed out after {MAX_POLLS_PER_DOMAIN} polls; skipping\n")
     return []
+
+
+def _csv(value, default):
+    """Parse a comma-separated CLI string into a list; fall back to default."""
+    if not value:
+        return list(default)
+    items = [s.strip() for s in value.split(",") if s.strip()]
+    return items or list(default)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--list-id", required=True, help="HubSpot company list id")
     ap.add_argument("--cap", type=int, default=25, help="max companies this run (Clay credits)")
+    ap.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY,
+                    help="companies enriched in parallel (default %(default)s)")
+    ap.add_argument("--per-company-cap", type=int, default=0,
+                    help="max contacts kept per company (0 = no limit)")
+    ap.add_argument("--titles", default="",
+                    help="comma-separated target job-title keywords (default: built-in ICP list)")
+    ap.add_argument("--locations", default="",
+                    help="comma-separated locations (default: United States)")
+    ap.add_argument("--progress-file", default="",
+                    help="JSON file tracking already-enriched company ids (auto-advance cursor)")
+    ap.add_argument("--reset-progress", action="store_true",
+                    help="ignore + overwrite existing progress (start the list over)")
     ap.add_argument("--out", required=True, help="path to write the candidate contacts JSON")
     args = ap.parse_args()
 
-    companies = company_domains(args.list_id, cap=args.cap)
+    titles = _csv(args.titles, JOB_TITLE_KEYWORDS)
+    locations = _csv(args.locations, ["United States"])
+    per_company_cap = max(0, args.per_company_cap)
+
+    # Auto-advance cursor: skip companies enriched in prior runs (unless resetting).
+    progress = set() if args.reset_progress else load_progress(args.progress_file)
+    companies, cur = company_domains(args.list_id, cap=args.cap, exclude_ids=progress)
+    sys.stderr.write(
+        f"cursor: {cur['already_enriched']}/{cur['total_with_domain']} already enriched, "
+        f"{cur['remaining_before']} remaining; this run takes {len(companies)}\n")
     if not companies:
-        sys.stderr.write("no companies with a domain in that list\n")
+        exhausted = cur["total_with_domain"] > 0 and cur["remaining_before"] == 0
+        note = ("all companies in this list have been enriched — reset to start over"
+                if exhausted else "no companies with a domain in that list")
+        sys.stderr.write(note + "\n")
         Path(args.out).write_text("[]")
-        print(json.dumps({"companies": 0, "candidates": 0, "out": args.out}))
+        print(json.dumps({"companies": 0, "candidates": 0, "exhausted": exhausted,
+                          "note": note, **cur, "out": args.out}))
         return 0
 
     mcp_servers = _mcp_servers()
     client = AnthropicClient(model=DEFAULT_MODEL)
 
+    # Enrich companies concurrently — each enrich_domain() is an independent,
+    # blocking find→poll→parse chain, so a thread pool overlaps their long polls.
+    # The shared client/mcp_servers are read-only (no per-call mutable state).
+    workers = max(1, min(args.concurrency, len(companies)))
+    cap_note = f", ≤{per_company_cap}/company" if per_company_cap else ""
+    sys.stderr.write(f"enriching {len(companies)} companies, {workers} at a time{cap_note}\n")
+    sys.stderr.write(f"  titles: {titles}\n  locations: {locations}\n")
+    raw_results = []
+    done = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(enrich_domain, client, mcp_servers,
+                        co["domain"], co.get("name"), titles, locations): co
+            for co in companies
+        }
+        for fut in concurrent.futures.as_completed(futures):
+            co = futures[fut]
+            done += 1
+            try:
+                contacts = fut.result()
+            except Exception as exc:  # one bad domain must not sink the run
+                sys.stderr.write(f"  [{co['domain']}] error: {exc}\n")
+                contacts = []
+            raw_results.extend(contacts)
+            sys.stderr.write(f"[{done}/{len(companies)}] {co['domain']} done\n")
+
+    # Dedup + title-gate once, after the parallel gather (avoids a shared set
+    # across threads). The gate is the deterministic backstop to Clay's fuzzy
+    # keyword match — an IC title (e.g. "Sales Development Representative") is
+    # dropped here even if Clay returned it.
     candidates, seen_emails = [], set()
-    for i, co in enumerate(companies):
-        sys.stderr.write(f"[{i + 1}/{len(companies)}] {co['domain']}\n")
-        for raw in enrich_domain(client, mcp_servers, co["domain"], co.get("name")):
-            email = (raw.get("email") or "").strip().lower()
-            if not email or email in seen_emails:
-                continue
-            seen_emails.add(email)
-            candidates.append(raw)
+    per_domain = {}
+    dropped_titles = 0
+    dropped_cap = 0
+    for raw in raw_results:
+        email = (raw.get("email") or "").strip().lower()
+        if not email or email in seen_emails:
+            continue
+        if not is_target_title(raw.get("title", "")):
+            dropped_titles += 1
+            sys.stderr.write(f"  dropped non-target title: {raw.get('title')!r} "
+                             f"<{email}>\n")
+            continue
+        dom = (raw.get("domain") or "").strip().lower()
+        if per_company_cap and per_domain.get(dom, 0) >= per_company_cap:
+            dropped_cap += 1
+            continue
+        per_domain[dom] = per_domain.get(dom, 0) + 1
+        seen_emails.add(email)
+        candidates.append(raw)
+    if dropped_titles:
+        sys.stderr.write(f"title gate dropped {dropped_titles} IC/non-target contact(s)\n")
+    if dropped_cap:
+        sys.stderr.write(f"per-company cap dropped {dropped_cap} extra contact(s)\n")
+
+    # Advance the cursor: mark every company attempted this run as enriched
+    # (including 0-yield / timeouts), so future runs move on through the list.
+    attempted_ids = {str(co["company_id"]) for co in companies}
+    progress = progress | attempted_ids
+    save_progress(args.progress_file, progress)
+    enriched_total = len(progress)
+    remaining_after = max(0, cur["total_with_domain"] - enriched_total)
+    sys.stderr.write(
+        f"cursor advanced: {enriched_total}/{cur['total_with_domain']} enriched, "
+        f"{remaining_after} remaining\n")
 
     Path(args.out).write_text(json.dumps(candidates, indent=2))
     print(json.dumps({"companies": len(companies), "candidates": len(candidates),
+                      "dropped_titles": dropped_titles, "dropped_cap": dropped_cap,
+                      "total_with_domain": cur["total_with_domain"],
+                      "enriched_total": enriched_total, "remaining_after": remaining_after,
                       "out": args.out}))
     return 0
 

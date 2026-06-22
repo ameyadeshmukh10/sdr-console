@@ -7,21 +7,40 @@ import { Spinner, ErrorBanner, num } from './ui.jsx'
 // immediately) or review (pause on the candidates, then Approve & create).
 const POLL_MS = 4000
 
+// Mirrors clay_enrich.py's JOB_TITLE_KEYWORDS — the default ICP target titles.
+const DEFAULT_TITLES =
+  'CRO, Chief Revenue Officer, VP of Sales, Head of Sales, Director of Sales, ' +
+  'SDR Manager, BDR Manager, Sales Development Manager, Director of Revenue Operations, ' +
+  'Revenue Operations, RevOps, Sales Operations, Sales Ops'
+
 export default function SourcePanel({ list, onChanged }) {
   const [clay, setClay] = useState(null)        // connection status string
   const [mode, setMode] = useState('end-to-end')
   const [cap, setCap] = useState(25)
+  // Advanced enrichment knobs (surfaced from clay_enrich.py).
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [perCompanyCap, setPerCompanyCap] = useState('')   // '' = no limit
+  const [titles, setTitles] = useState(DEFAULT_TITLES)
+  const [locations, setLocations] = useState('United States')
+  const [concurrency, setConcurrency] = useState(8)
   const [jobId, setJobId] = useState(null)
   const [job, setJob] = useState(null)
   const [pollKey, setPollKey] = useState(0)     // bump to (re)start polling
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  const [progress, setProgress] = useState(null)   // { enriched } for this list
   const timer = useRef(null)
 
   const loadClay = useCallback(async () => {
     try { setClay((await api.clayStatus()).status) } catch (e) { setError(e.message) }
   }, [])
   useEffect(() => { loadClay() }, [loadClay])
+
+  // Cursor progress for the selected list (how many companies already enriched).
+  const loadProgress = useCallback(async () => {
+    try { setProgress(await api.sourceProgress(list.list_id)) } catch { /* non-fatal */ }
+  }, [list.list_id])
+  useEffect(() => { loadProgress() }, [loadProgress])
 
   // poll the running job
   useEffect(() => {
@@ -33,14 +52,20 @@ export default function SourcePanel({ list, onChanged }) {
         setJob(j)
         if (['done', 'error', 'awaiting_review'].includes(j.status)) {
           clearInterval(timer.current)
-          if (j.status === 'done') onChanged?.()
+          if (j.status === 'done') { onChanged?.(); loadProgress() }
         }
       } catch (e) { setError(e.message) }
     }
     tick()
     timer.current = setInterval(tick, POLL_MS)
     return () => clearInterval(timer.current)
-  }, [jobId, pollKey, onChanged])
+  }, [jobId, pollKey, onChanged, loadProgress])
+
+  async function resetProgress() {
+    if (!window.confirm('Start over? This clears the enrichment cursor so the next run begins from the top of the list.')) return
+    try { await api.sourceProgressReset(list.list_id); await loadProgress() }
+    catch (e) { setError(e.message) }
+  }
 
   async function connectClay() {
     setError(null)
@@ -65,6 +90,10 @@ export default function SourcePanel({ list, onChanged }) {
         list_id: list.list_id,
         list_name: `AI SDR Sourced — ${list.name}`,
         cap: Number(cap) || 25, mode,
+        per_company_cap: Number(perCompanyCap) || 0,
+        concurrency: Number(concurrency) || 8,
+        titles: titles.trim() === DEFAULT_TITLES ? '' : titles.trim(),
+        locations: locations.trim() === 'United States' ? '' : locations.trim(),
       })
       if (r.ok === false) setError(r.error || 'enrich failed to start')
       else setJobId(r.job_id)
@@ -110,6 +139,24 @@ export default function SourcePanel({ list, onChanged }) {
         <div className="muted" style={{ fontSize: 12, marginBottom: 12 }}>Clay connected ✓</div>
       )}
 
+      {/* Auto-advance cursor: how far through the list we are. */}
+      {progress && (
+        <div className="banner info" style={{ marginBottom: 12, fontSize: 13 }}>
+          {progress.enriched > 0 ? (
+            <>
+              <b>{num(progress.enriched)}</b>
+              {list.size ? <> of {num(list.size)}</> : null} companies enriched so far.
+              {' '}The next run takes the next {Number(cap) || 25}.
+              <button className="linklike" style={{ marginLeft: 10, fontSize: 12 }}
+                onClick={resetProgress}>Start over</button>
+            </>
+          ) : (
+            <>No companies enriched yet — the next run starts from the top
+              {list.size ? <> of {num(list.size)}</> : null}.</>
+          )}
+        </div>
+      )}
+
       <div className="toolbar" style={{ marginBottom: 0 }}>
         <label className="field">Mode
           <select value={mode} onChange={(e) => setMode(e.target.value)} style={{ minWidth: 180 }}>
@@ -125,6 +172,44 @@ export default function SourcePanel({ list, onChanged }) {
           {busy || running ? <Spinner label="Enriching…" /> : 'Enrich buying group'}
         </button>
       </div>
+
+      <button className="linklike" onClick={() => setShowAdvanced((v) => !v)}
+        style={{ marginTop: 10, fontSize: 12 }}>
+        {showAdvanced ? '▾ Advanced settings' : '▸ Advanced settings'}
+      </button>
+
+      {showAdvanced && (
+        <div className="panel" style={{ marginTop: 8, background: 'transparent' }}>
+          <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
+            Controls how Clay finds the buying group at each company. Each company yields a
+            variable number of contacts (often 0), so total contacts ≠ max companies.
+          </p>
+          <div className="toolbar" style={{ marginBottom: 10 }}>
+            <label className="field">Contacts per company
+              <input type="number" min="0" max="25" value={perCompanyCap}
+                placeholder="no limit"
+                onChange={(e) => setPerCompanyCap(e.target.value)} style={{ width: 120 }} />
+            </label>
+            <label className="field">Concurrency
+              <input type="number" min="1" max="16" value={concurrency}
+                onChange={(e) => setConcurrency(e.target.value)} style={{ width: 100 }} />
+            </label>
+          </div>
+          <label className="field" style={{ display: 'block', marginBottom: 10 }}>Locations (comma-separated)
+            <input type="text" value={locations}
+              onChange={(e) => setLocations(e.target.value)}
+              style={{ width: '100%', boxSizing: 'border-box', marginTop: 4 }} />
+          </label>
+          <label className="field" style={{ display: 'block' }}>Target titles (comma-separated)
+            <textarea value={titles} onChange={(e) => setTitles(e.target.value)}
+              rows={3} style={{ width: '100%', boxSizing: 'border-box', fontSize: 12, marginTop: 4 }} />
+          </label>
+          <button className="linklike" style={{ fontSize: 12 }}
+            onClick={() => { setTitles(DEFAULT_TITLES); setLocations('United States'); setPerCompanyCap(''); setConcurrency(8) }}>
+            Reset to defaults
+          </button>
+        </div>
+      )}
 
       {job && <JobView job={job} onApprove={approve} busy={busy} />}
     </div>
