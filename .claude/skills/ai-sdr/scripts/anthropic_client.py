@@ -27,6 +27,9 @@ ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_MODEL = "claude-opus-4-8"
 # Server-side web search tool (model runs the search internally; no client loop).
 WEB_SEARCH_TOOL_TYPE = "web_search_20250305"
+# Remote MCP connector beta — lets the Messages API call tools on a remote MCP
+# server (e.g. Clay) server-side; results come back as mcp_tool_result blocks.
+MCP_CONNECTOR_BETA = "mcp-client-2025-04-04"
 
 
 def _load_dotenv():
@@ -118,6 +121,31 @@ class AnthropicClient:
             }]
         return body
 
+    def complete_with_mcp(self, system, user, mcp_servers, *, model=None,
+                          max_tokens=4096, timeout=180, max_turns=12):
+        """One logical turn that may call tools on remote MCP servers.
+
+        mcp_servers = [{"type":"url","url":...,"name":...,"authorization_token":...}].
+        Tool calls execute server-side; on a `pause_turn` stop_reason we resend the
+        accumulated assistant content to continue (bounded by max_turns). Returns
+        the parsed final text + usage (same shape as complete()).
+        """
+        body = {
+            "model": model or self.model,
+            "max_tokens": max_tokens,
+            "system": system,
+            "messages": [{"role": "user", "content": user}],
+            "mcp_servers": mcp_servers,
+        }
+        headers = {"anthropic-beta": MCP_CONNECTOR_BETA}
+        payload = self._post(body, timeout=timeout, extra_headers=headers)
+        turns = 1
+        while payload.get("stop_reason") == "pause_turn" and turns < max_turns:
+            body["messages"].append({"role": "assistant", "content": payload.get("content", [])})
+            payload = self._post(body, timeout=timeout, extra_headers=headers)
+            turns += 1
+        return parse_message(payload)
+
     # ---- Message Batches API ----------------------------------------------
     def create_batch(self, requests):
         """Submit a batch. requests = [{"custom_id","params"}]. Returns the batch obj."""
@@ -169,12 +197,14 @@ class AnthropicClient:
         if last_err:
             raise last_err
 
-    def _post(self, body, timeout, url=API_URL):
+    def _post(self, body, timeout, url=API_URL, extra_headers=None):
         data = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(url, data=data, method="POST")
         req.add_header("x-api-key", self.api_key)
         req.add_header("anthropic-version", ANTHROPIC_VERSION)
         req.add_header("content-type", "application/json")
+        for k, v in (extra_headers or {}).items():
+            req.add_header(k, v)
 
         last_err = None
         for attempt in range(5):

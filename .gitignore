@@ -1,5 +1,9 @@
 # Secrets — never commit
 .env
+# Clay OAuth tokens (access + refresh) live here:
+data/outreach/clay_oauth.json
+# Transient Clay sourcing job candidate files:
+data/outreach/source-jobs/
 
 # Transient SQLite WAL/SHM sidecar files (the .db itself IS committed)
 *.db-wal
