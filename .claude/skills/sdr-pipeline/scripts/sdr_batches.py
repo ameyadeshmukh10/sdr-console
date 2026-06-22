@@ -66,6 +66,7 @@ def cmd_get_batch(args):
 
 
 def cmd_ingest(args):
+    import generate_batch as G  # variant-aware linter (reads asset['variant'])
     conn = db.connect()
     rows = db.get_batch(conn, args.batch_id)
     if not rows:
@@ -80,7 +81,10 @@ def cmd_ingest(args):
             continue
         try:
             asset = json.loads(p.read_text())
-            issues = E.lint_email_assets(asset.get("email", {}))
+            issues = G.lint_assets(asset)
+            conn.execute("UPDATE contacts SET variant=? WHERE contact_id=?",
+                         (asset.get("variant", "value-give"), r["contact_id"]))
+            conn.commit()
         except Exception as e:  # noqa: BLE001
             issues = [f"unreadable json: {e}"]
         if issues:
@@ -91,6 +95,66 @@ def cmd_ingest(args):
             gen += 1
     db.set_batch_status(conn, args.batch_id, "done")
     print(f"batch {args.batch_id} ingested: {gen} generated, {bad} failed")
+    return 0
+
+
+def _upsert_env(updates):
+    """Insert or replace KEY=value lines in the project .env (preserves the rest)."""
+    env_path = E.PROJECT_ROOT / ".env"
+    lines = env_path.read_text().splitlines() if env_path.is_file() else []
+    out, seen = [], set()
+    for ln in lines:
+        key = ln.split("=", 1)[0].strip() if ("=" in ln and not ln.strip().startswith("#")) else None
+        if key in updates:
+            out.append(f"{key}={updates[key]}")
+            seen.add(key)
+        else:
+            out.append(ln)
+    for k, v in updates.items():
+        if k not in seen:
+            out.append(f"{k}={v}")
+    env_path.write_text("\n".join(out) + "\n")
+
+
+VARIANTS_ORDER = ["value-give", "earn", "show"]
+
+
+def cmd_setup_variant_campaigns(args):
+    """Create one dedicated Bison campaign per instruction variant by duplicating a
+    template campaign, then write the ids to .env. Idempotent (skips configured ones)."""
+    import os
+    E._load_dotenv()
+    from bison_client import BisonClient  # noqa: E402
+    bison = BisonClient()
+    template = args.template or os.environ.get("BISON_CAMPAIGN_SALES_LEADERSHIP") or os.environ.get("BISON_CAMPAIGN_ID")
+    if not template:
+        print("no template campaign id — pass --template N (a campaign with the 4-step sequence)")
+        return 1
+    updates, mapping = {}, {}
+    for v in VARIANTS_ORDER:
+        envkey = E.VARIANT_CAMPAIGN_ENV[v]
+        existing = os.environ.get(envkey)
+        if existing and not args.force:
+            print(f"  {v:11} already configured -> campaign {existing} (skip; --force to recreate)")
+            mapping[v] = existing
+            continue
+        new = bison.duplicate_campaign(template)
+        cid = new.get("id")
+        name = f"AI SDR Test - {v}"
+        try:
+            bison.rename_campaign(cid, name)
+        except Exception as e:  # noqa: BLE001 - naming is cosmetic, don't fail setup
+            name = new.get("name") + f" (rename failed: {str(e)[:60]})"
+        mapping[v] = cid
+        updates[envkey] = cid
+        print(f"  {v:11} duplicated template {template} -> campaign {cid} "
+              f"(name '{name}', status {new.get('status')})")
+    if updates:
+        _upsert_env(updates)
+        print(f"\nwrote {len(updates)} campaign id(s) to .env: {updates}")
+    print("\nNEXT in Bison: rename each 'Copy of…' campaign to its variant, verify sender emails + "
+          "schedule, then activate. Enrollment now routes by variant automatically.")
+    print("variant -> campaign:", mapping)
     return 0
 
 
@@ -112,7 +176,9 @@ def cmd_enroll(args):
             counts["missing_file"] += 1
             continue
         asset = json.loads(p.read_text())
-        campaign = E.bison_campaign_for(r["persona"])
+        # route by instruction variant (one campaign per variant); persona is the fallback
+        variant = asset.get("variant") or r["variant"] or "value-give"
+        campaign = E.bison_campaign_for_variant(variant) or E.bison_campaign_for(r["persona"])
         if not campaign:
             counts["no_campaign"] += 1
             continue
@@ -158,6 +224,7 @@ def main():
     p = sub.add_parser("get-batch"); p.add_argument("batch_id", type=int); p.set_defaults(func=cmd_get_batch)
     p = sub.add_parser("ingest"); p.add_argument("batch_id", type=int); p.set_defaults(func=cmd_ingest)
     p = sub.add_parser("enroll"); p.add_argument("--dry-run", action="store_true"); p.set_defaults(func=cmd_enroll)
+    p = sub.add_parser("setup-variant-campaigns"); p.add_argument("--template", type=int); p.add_argument("--force", action="store_true"); p.set_defaults(func=cmd_setup_variant_campaigns)
     p = sub.add_parser("reset-batch"); p.add_argument("batch_id", type=int); p.set_defaults(func=cmd_reset_batch)
     args = ap.parse_args()
     E._load_dotenv()  # make .env config (campaign ids, keys) available to all subcommands

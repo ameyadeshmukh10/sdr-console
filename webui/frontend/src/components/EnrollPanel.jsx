@@ -3,7 +3,11 @@ import { api } from '../api.js'
 import { Spinner, ErrorBanner, num } from './ui.jsx'
 import OutreachDetail from './OutreachDetail.jsx'
 
-const CAMPAIGN_PERSONA = { 10: 'sales-leadership', 11: 'revops', 12: 'partnerships', 13: 'sdr-bdr' }
+// campaigns now route by variant (14/15/16); 10-13 are the legacy persona campaigns
+const CAMPAIGN_PERSONA = {
+  14: 'value-give', 15: 'earn', 16: 'show',
+  10: 'sales-leadership', 11: 'revops', 12: 'partnerships', 13: 'sdr-bdr',
+}
 
 // Enrollment with a dry-run gate: always preview first, then a confirm modal
 // before the live write to Bison. Each preview row opens the full generated copy.

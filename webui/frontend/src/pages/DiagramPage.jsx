@@ -1,15 +1,11 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { Spinner, ErrorBanner, num, pct } from '../components/ui.jsx'
+import { BRAND, PERSONA_COLORS } from '../theme.js'
 
 // Pillar 2 — See: orchestration topology. HubSpot list -> persona routing ->
 // persona sub-agents -> Bison campaigns, with live contact counts overlaid.
-const PERSONA_COLOR = {
-  'sales-leadership': '#4f9dff',
-  'revops': '#3fb950',
-  'partnerships': '#bc8cff',
-  'sdr-bdr': '#d29922',
-}
+const PERSONA_COLOR = PERSONA_COLORS
 const AGENT = {
   'sales-leadership': 'sdr-sales-leadership',
   'revops': 'sdr-revops',
@@ -47,23 +43,23 @@ export default function DiagramPage() {
           <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ minWidth: 760 }}>
             <defs>
               <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-                <path d="M0,0 L6,3 L0,6 Z" fill="#5a6675" />
+                <path d="M0,0 L6,3 L0,6 Z" fill={BRAND.jade} />
               </marker>
             </defs>
 
             {/* HubSpot source node */}
             <g>
-              <rect x={xHub} y={hubY} width={wHub} height={80} rx="10" fill="#161b22" stroke="#2a3340" />
-              <text x={xHub + wHub / 2} y={hubY + 30} textAnchor="middle" fill="#e6edf3" fontSize="14" fontWeight="700">HubSpot</text>
-              <text x={xHub + wHub / 2} y={hubY + 50} textAnchor="middle" fill="#8b97a6" fontSize="11">ICP list</text>
-              <text x={xHub + wHub / 2} y={hubY + 67} textAnchor="middle" fill="#8b97a6" fontSize="11">
+              <rect x={xHub} y={hubY} width={wHub} height={80} rx="12" fill="#fff" stroke={BRAND.border} />
+              <text x={xHub + wHub / 2} y={hubY + 30} textAnchor="middle" fill={BRAND.ink} fontSize="14" fontWeight="700">HubSpot</text>
+              <text x={xHub + wHub / 2} y={hubY + 50} textAnchor="middle" fill={BRAND.muted} fontSize="11">ICP list</text>
+              <text x={xHub + wHub / 2} y={hubY + 67} textAnchor="middle" fill={BRAND.muted} fontSize="11">
                 {num(personas.reduce((a, p) => a + p.contacts, 0))} contacts
               </text>
             </g>
 
             {personas.map((p, i) => {
               const y = top + i * rowH
-              const color = PERSONA_COLOR[p.persona] || '#8b97a6'
+              const color = PERSONA_COLOR[p.persona] || BRAND.muted
               const dim = hover && hover !== p.persona
               const cy = y + 40
               const enrolled = p.by_status.enrolled || 0
@@ -79,22 +75,22 @@ export default function DiagramPage() {
                     stroke={color} strokeWidth="2" markerEnd="url(#arrow)" opacity="0.7" />
 
                   {/* persona / agent node */}
-                  <rect x={xPersona} y={y} width={wPersona} height={80} rx="10" fill="#1c2330" stroke={color} strokeWidth="1.5" />
-                  <text x={xPersona + 16} y={y + 26} fill="#e6edf3" fontSize="14" fontWeight="700">{p.persona}</text>
-                  <text x={xPersona + 16} y={y + 45} fill="#8b97a6" fontSize="11">{AGENT[p.persona]}</text>
-                  <text x={xPersona + 16} y={y + 65} fill={color} fontSize="12" fontWeight="600">{num(p.contacts)} contacts</text>
-                  <text x={xPersona + wPersona - 16} y={y + 65} textAnchor="end" fill="#8b97a6" fontSize="11">{num(enrolled)} enrolled</text>
+                  <rect x={xPersona} y={y} width={wPersona} height={80} rx="12" fill="#fff" stroke={color} strokeWidth="1.5" />
+                  <text x={xPersona + 16} y={y + 26} fill={BRAND.ink} fontSize="14" fontWeight="700">{p.persona}</text>
+                  <text x={xPersona + 16} y={y + 45} fill={BRAND.muted} fontSize="11">{AGENT[p.persona]}</text>
+                  <text x={xPersona + 16} y={y + 65} fill={color} fontSize="12" fontWeight="700">{num(p.contacts)} contacts</text>
+                  <text x={xPersona + wPersona - 16} y={y + 65} textAnchor="end" fill={BRAND.muted} fontSize="11">{num(enrolled)} enrolled</text>
 
                   {/* campaign node */}
-                  <rect x={xCamp} y={y} width={wCamp} height={80} rx="10" fill="#161b22" stroke="#2a3340" />
-                  <text x={xCamp + 16} y={y + 26} fill="#e6edf3" fontSize="14" fontWeight="700">Campaign {p.campaign_id ?? '—'}</text>
+                  <rect x={xCamp} y={y} width={wCamp} height={80} rx="12" fill="#fbfcfb" stroke={BRAND.border} />
+                  <text x={xCamp + 16} y={y + 26} fill={BRAND.ink} fontSize="14" fontWeight="700">Campaign {p.campaign_id ?? '—'}</text>
                   {stats ? (
                     <>
-                      <text x={xCamp + 16} y={y + 47} fill="#8b97a6" fontSize="11">{num(stats.total_leads_contacted)} contacted · {num(stats.interested)} interested</text>
-                      <text x={xCamp + 16} y={y + 65} fill="#3fb950" fontSize="11">{pct(stats.reply_rate_pct)} reply · {pct(stats.interested_rate_pct)} interested</text>
+                      <text x={xCamp + 16} y={y + 47} fill={BRAND.muted} fontSize="11">{num(stats.total_leads_contacted)} contacted · {num(stats.interested)} interested</text>
+                      <text x={xCamp + 16} y={y + 65} fill={BRAND.jade} fontSize="11">{pct(stats.reply_rate_pct)} reply · {pct(stats.interested_rate_pct)} interested</text>
                     </>
                   ) : (
-                    <text x={xCamp + 16} y={y + 50} fill="#8b97a6" fontSize="11">no cached stats — refresh Analytics</text>
+                    <text x={xCamp + 16} y={y + 50} fill={BRAND.muted} fontSize="11">no cached stats — refresh Analytics</text>
                   )}
                 </g>
               )

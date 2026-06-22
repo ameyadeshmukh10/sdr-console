@@ -49,13 +49,27 @@ def _load_dotenv():
 EMAIL_KEYS = [f"{k}{i}" for i in range(1, 5) for k in ("subject", "body")]
 LI_KEYS = ["li_connect", "li_msg1", "li_msg2"]
 
-# Per-persona Bison campaign routing (env var per persona; falls back to BISON_CAMPAIGN_ID).
+# Per-persona Bison campaign routing (legacy; kept as a fallback).
 PERSONA_CAMPAIGN_ENV = {
     "sales-leadership": "BISON_CAMPAIGN_SALES_LEADERSHIP",
     "revops": "BISON_CAMPAIGN_REVOPS",
     "partnerships": "BISON_CAMPAIGN_PARTNERSHIPS",
     "sdr-bdr": "BISON_CAMPAIGN_SDR_BDR",
 }
+
+# Per-variant Bison campaign routing — one dedicated campaign per instruction set,
+# for clean per-variant interested-rate reporting in Bison.
+VARIANT_CAMPAIGN_ENV = {
+    "value-give": "BISON_CAMPAIGN_VALUE_GIVE",
+    "earn": "BISON_CAMPAIGN_EARN",
+    "show": "BISON_CAMPAIGN_SHOW",
+}
+
+
+def bison_campaign_for_variant(variant):
+    """The dedicated campaign for a variant, falling back to the persona/default
+    routing only if the variant campaign isn't configured yet."""
+    return os.environ.get(VARIANT_CAMPAIGN_ENV.get(variant or "value-give", ""))
 
 
 def bison_campaign_for(persona):
@@ -153,8 +167,9 @@ def main():
                     print(f"      - {it}")
                 continue
 
-        # ---- Email Bison (per-persona campaign) ----
-        campaign = bison_campaign_for(contact.get("persona"))
+        # ---- Email Bison (per-VARIANT campaign; persona routing is the fallback) ----
+        variant = asset.get("variant") or contact.get("variant") or "value-give"
+        campaign = bison_campaign_for_variant(variant) or bison_campaign_for(contact.get("persona"))
         if st.get("bison"):
             # Already enrolled → refresh the copy (custom_variables) on the existing lead.
             lead_id = st["bison"]["lead_id"]

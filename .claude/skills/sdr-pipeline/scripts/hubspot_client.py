@@ -91,6 +91,37 @@ class HubSpotClient:
             if not after:
                 return
 
+    def read_list_records(self, list_id):
+        """Record IDs for any v3 list (contacts OR companies). Alias of get_list_members."""
+        return list(self.get_list_members(list_id))
+
+    def create_list(self, name, object_type_id="0-1"):
+        """Create a static (MANUAL) list. object_type_id '0-1'=contacts. Returns listId (str)."""
+        payload = self._request("POST", "/crm/v3/lists",
+                                body={"name": name, "objectTypeId": object_type_id,
+                                      "processingType": "MANUAL"})
+        return str((payload.get("list") or {}).get("listId") or payload.get("listId"))
+
+    def add_contacts_to_list(self, list_id, record_ids):
+        """Add record IDs to a static list (chunks of 100). Body is a JSON array of ids."""
+        ids = [str(i) for i in record_ids]
+        for i in range(0, len(ids), 100):
+            self._request("PUT", f"/crm/v3/lists/{list_id}/memberships/add", body=ids[i:i + 100])
+        return len(ids)
+
+    # ---- companies ------------------------------------------------------
+    def batch_read_companies(self, ids, properties=("domain", "name", "website")):
+        """Read properties for company ids (chunks of 100)."""
+        ids = [str(i) for i in ids]
+        out = []
+        for i in range(0, len(ids), 100):
+            payload = self._request(
+                "POST", "/crm/v3/objects/companies/batch/read",
+                body={"inputs": [{"id": cid} for cid in ids[i:i + 100]], "properties": list(properties)},
+            )
+            out.extend(payload.get("results", []))
+        return out
+
     # ---- contacts -------------------------------------------------------
     def batch_read_contacts(self, ids, properties):
         """Read properties for up to many contact ids (chunks of 100)."""
@@ -104,3 +135,48 @@ class HubSpotClient:
             )
             out.extend(payload.get("results", []))
         return out
+
+    def find_existing_emails(self, emails):
+        """Return the subset of `emails` already present in HubSpot (lowercased), for dedup."""
+        emails = [e.strip().lower() for e in emails if e and e.strip()]
+        found = set()
+        for i in range(0, len(emails), 100):  # search `IN` accepts up to 100 values
+            chunk = emails[i:i + 100]
+            after = None
+            while True:
+                body = {
+                    "filterGroups": [{"filters": [{"propertyName": "email", "operator": "IN", "values": chunk}]}],
+                    "properties": ["email"], "limit": 100,
+                }
+                if after:
+                    body["after"] = after
+                payload = self._request("POST", "/crm/v3/objects/contacts/search", body=body)
+                for r in payload.get("results", []):
+                    e = (r.get("properties") or {}).get("email")
+                    if e:
+                        found.add(e.strip().lower())
+                after = (payload.get("paging") or {}).get("next", {}).get("after")
+                if not after:
+                    break
+        return found
+
+    def create_contact(self, properties):
+        """Create one contact. Returns the new contact id (str). Raises on failure."""
+        payload = self._request("POST", "/crm/v3/objects/contacts", body={"properties": properties})
+        return str(payload.get("id"))
+
+    def batch_create_contacts(self, records):
+        """Create contacts (chunks of 100). `records` = list of property dicts. Returns created
+        objects (with `id`), aligned by email. Skips a whole chunk only on hard error."""
+        out = []
+        for i in range(0, len(records), 100):
+            chunk = records[i:i + 100]
+            payload = self._request(
+                "POST", "/crm/v3/objects/contacts/batch/create",
+                body={"inputs": [{"properties": r} for r in chunk]},
+            )
+            out.extend(payload.get("results", []))
+        return out
+
+    def delete_contact(self, contact_id):
+        self._request("DELETE", f"/crm/v3/objects/contacts/{contact_id}")

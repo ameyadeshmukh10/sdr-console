@@ -16,6 +16,7 @@ DB writes go through the existing `ingest`, so the read-only web API sees them.
 
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -51,7 +52,8 @@ PERSONA_FRAMING = {
                "Gives: 3 personalized drafts, signal play, outbound teardown, peer benchmark.",
 }
 
-TASK_TEMPLATE = """\
+# Shared research block — all variants research the same way; only the writing (Step 3) differs.
+RESEARCH_BLOCK = """\
 # Today's date
 Today is {today}. The current year is {year}. Judge recency strictly against this date.
 
@@ -81,14 +83,64 @@ reference something concrete and true about what they build or who they sell to 
   "Raised a $20M Series B in May {year}".
 - If you used the fallback: prefix with "no recent signal - " and describe the anchor, e.g.
   "no recent signal - anchored on Acme's PLG motion selling to mid-market RevOps teams".
+"""
 
+# ---- Variant write rules (Step 3). Choose one per run to A/B test. -----------------------------
+WRITE_RULES = {
+    # The original value-anchored give + meeting-ask sequence (the current baseline).
+    "value-give": """\
 # Step 3 — write the sequence
 Write a 4-touch cold EMAIL sequence plus 3 LinkedIn touches, following every rule in the knowledge
 above: 70-110 words per email (aim 80-95); three short paragraphs separated by a blank line; no em or
 en dashes; NO sign-off or trailing name; step 1 opens on the signal (or the company-specific anchor
 in the fallback case); each CTA leads with a deliverable give AND asks for a meeting; at least one
 concrete metric across the sequence; step 4 is a breakup; never put pricing in a cold email.
-"""
+""",
+
+    # "Earn the reply": shorter, relevance-first, question CTAs, meeting deferred. The email itself
+    # is the proof our AI writes like a sharp human.
+    "earn": """\
+# Step 3 — write the sequence ("earn the reply")
+You are writing to a sharp, busy GTM leader who gets dozens of AI-generated cold emails a week. Your
+job is to NOT sound like those: we sell an AI SDR, so this email must prove, by being visibly better,
+that our AI writes like a thoughtful human peer. The goal of each early email is a REPLY, not a booked
+meeting.
+
+- 45-75 words per email. One or two short paragraphs. ONE idea per email.
+- Touch 1 opens on the signal (or company anchor), then makes ONE specific, true observation about
+  THEIR situation (their motion, stage, or the tension the signal implies), and ends with a SINGLE
+  soft, open question. No meeting ask, no "give", no product pitch in touch 1.
+- Touch 2: one new specific angle. At most ONE proof point in the WHOLE sequence, told as a one-line
+  human story (never a stack of numbers). End on a soft question or a light, low-friction offer.
+- Touch 3: now you may ask for a short conversation, framed as the easy way to go deeper on THEIR
+  situation. Keep it light (a quick chat / short call), not "worth 15 minutes to walk you through it".
+- Touch 4: a genuine one-line breakup. No guilt, leave the door open.
+- No em or en dashes. NO sign-off or trailing name. No hype words (revolutionary, game-changing,
+  cutting-edge, supercharge, unlock, transform). Do not cram metrics. Never put pricing in a cold
+  email. Vary how each email opens; do not start them all the same way.
+""",
+
+    # "Show the product": earn-the-reply PLUS a concrete async give that IS a demo of the product.
+    "show": """\
+# Step 3 — write the sequence ("show the product")
+Same as the "earn the reply" style, with ONE addition: this email is a live demo of the product. In
+TOUCH 2, make a concrete, low-friction, ASYNC offer that proves the product without a meeting: offer
+to send a small real sample our AI would produce for THEM, e.g. "I had our AI draft 3 opening lines
+(or 3 short emails) to {company}'s top 3 accounts, want me to send them over? No call." Delivered by
+email, no meeting required.
+
+- 45-75 words per email. One or two short paragraphs. ONE idea per email.
+- Touch 1: open on the signal (or anchor) + ONE specific observation about their situation + a SINGLE
+  soft, open question. No meeting ask in touch 1.
+- Touch 2 carries the async sample offer above. At most ONE proof point in the whole sequence, as a
+  one-line human story.
+- Touch 3: a soft meeting ask, tied to their situation, framed as the easy way to go deeper.
+- Touch 4: a genuine one-line breakup.
+- No em or en dashes. NO sign-off or trailing name. No hype words. Do not cram metrics. Never put
+  pricing in a cold email. Vary how each email opens.
+""",
+}
+DEFAULT_VARIANT = "value-give"
 
 OUTPUT_SCHEMA = """\
 # Output
@@ -117,21 +169,13 @@ def _today():
     return {"today": now.strftime("%B %d, %Y"), "year": now.year, "prev_year": now.year - 1}
 
 
-# Write-only task: the company signal is provided (from the cache), so no web search.
-WRITE_TASK = """\
+# Write-only preamble: the signal is provided (from the cache), so no web search. The chosen variant's
+# write rules (above) are appended after this.
+WRITE_PREAMBLE = """\
 # Your task
 You are GIVEN the company's current signal in the contact block below. Do NOT search the web. Write the
-sequence using ONLY the provided signal.
-
-If the signal begins with "no recent signal -", treat the text after it as the company's product / ICP /
-GTM anchor and personalize around that (do not imply or invent recent news).
-
-# Write the sequence
-Write a 4-touch cold EMAIL sequence plus 3 LinkedIn touches, following every rule in the knowledge above:
-70-110 words per email (aim 80-95); three short paragraphs separated by a blank line; no em or en dashes;
-NO sign-off or trailing name; step 1 opens on the signal (or the anchor); each CTA leads with a deliverable
-give AND asks for a meeting; at least one concrete metric across the sequence; step 4 is a breakup; never
-put pricing in a cold email.
+sequence using ONLY the provided signal. If the signal begins with "no recent signal -", treat the text
+after it as the company's product / ICP / GTM anchor and personalize around that (do not invent news).
 """
 
 # Research-only task (UI force-refresh): just find/refresh the signal, return only the signal JSON.
@@ -159,12 +203,16 @@ def load_knowledge():
     return "\n\n---\n\n".join(parts)
 
 
-def build_system(knowledge, mode="research"):
-    task = WRITE_TASK if mode == "write" else TASK_TEMPLATE.format(**_today())
+def build_system(knowledge, variant=DEFAULT_VARIANT, mode="research"):
+    rules = WRITE_RULES.get(variant, WRITE_RULES[DEFAULT_VARIANT])
+    if mode == "write":
+        body = WRITE_PREAMBLE + "\n\n" + rules
+    else:
+        body = RESEARCH_BLOCK.format(**_today()) + "\n\n" + rules
     return (
         "You are an expert B2B SDR copywriter for EverWorker's SDR AI Worker. Ground every claim in "
         "the knowledge base below; never invent product claims, numbers, or proof not in it.\n\n"
-        + knowledge + "\n\n---\n\n" + task + "\n\n" + OUTPUT_SCHEMA
+        + knowledge + "\n\n---\n\n" + body + "\n\n" + OUTPUT_SCHEMA
     )
 
 
@@ -213,6 +261,71 @@ def lint_email(email):
     return issues
 
 
+# --- relaxed linters for the new test variants (shorter, question-led, no forced give/meeting/metric) ---
+_HYPE = re.compile(r"\b(revolutioniz\w*|revolutionary|game[- ]?chang\w*|cutting[- ]?edge|"
+                   r"supercharg\w*|unlock\w*|transformati\w*|best[- ]in[- ]class|world[- ]class|"
+                   r"seamless\w*|paradigm|synerg\w*)\b", re.I)
+
+
+def _wc(body):
+    return len(re.findall(r"[A-Za-z0-9']+", body or ""))
+
+
+def _lint_short(email, lo=38, hi=85, require_give=None):
+    """Shared rules for the earn/show variants: short, no dashes/sign-off/pricing/hype,
+    a soft question in touch 1, a genuine breakup in touch 4."""
+    steps = []
+    for i in range(1, 5):
+        subj, body = email.get(f"subject{i}", ""), email.get(f"body{i}", "")
+        if not subj or not body:
+            return [f"missing subject{i}/body{i}"]
+        steps.append({"n": i, "subject": subj, "body": body})
+    issues = []
+    for s in steps:
+        b = s["body"]
+        wc = _wc(b)
+        if not (lo <= wc <= hi):
+            issues.append(f"step{s['n']}: word count {wc} (need {lo}-{hi})")
+        if L.DASH.search(b):
+            issues.append(f"step{s['n']}: em/en dash present (use commas or periods)")
+        lines = [ln.strip() for ln in b.splitlines() if ln.strip()]
+        if lines and L.SIGNOFF_LINE.match(lines[-1]):
+            issues.append(f"step{s['n']}: trailing sign-off/name (end on the line, no sign-off)")
+        if L.PRICING.search(b):
+            issues.append(f"step{s['n']}: pricing/plan language in a cold step")
+        if _HYPE.search(b):
+            issues.append(f"step{s['n']}: hype word (write like a sharp human, no buzzwords)")
+    if "?" not in steps[0]["body"]:
+        issues.append("step1: no soft question (touch 1 should end on one open question)")
+    if not L.BREAKUP.search(steps[-1]["body"]):
+        issues.append("step4: final step is not a breakup")
+    if require_give and not require_give.search(" ".join(s["body"] for s in steps)):
+        issues.append("missing the async sample offer (touch 2 should offer to send a real sample, no call)")
+    return issues
+
+
+# a lenient detector for the "show" variant's async sample offer
+_SHOW_GIVE = re.compile(r"\bsample\b|drafted?\s+(3|three)|\b(3|three)\s+(sample|opening|short|"
+                        r"personalized|tailored)\b|want me to send|send (you |them |over )|no call", re.I)
+
+
+def lint_earn(email):
+    return _lint_short(email)
+
+
+def lint_show(email):
+    return _lint_short(email, require_give=_SHOW_GIVE)
+
+
+LINTERS = {"value-give": lint_email, "earn": lint_earn, "show": lint_show}
+
+
+def lint_assets(asset):
+    """Variant-aware lint used by both generation and ingest (reads asset['variant'])."""
+    fn = LINTERS.get(asset.get("variant", DEFAULT_VARIANT), lint_email)
+    return fn(asset.get("email", {}))
+
+
 def _atomic_write(contact_id, asset):
     db.GEN_DIR.mkdir(parents=True, exist_ok=True)
     path = db.GEN_DIR / f"{contact_id}.json"
@@ -221,24 +334,27 @@ def _atomic_write(contact_id, asset):
     os.replace(tmp, path)
 
 
-def generate_contact(contact, knowledge, client, write=True, cached_signal=None):
+def generate_contact(contact, knowledge, client, write=True, cached_signal=None,
+                     variant=DEFAULT_VARIANT):
     """Generate + validate one contact. Returns a result dict.
 
     cached_signal (when provided): use it as the company signal and DO NOT search
     the web — much cheaper. Otherwise research the signal with web search.
+    variant: which instruction set / linter to use (value-give | earn | show).
     write=False skips the file write (used by --contact-test); the asset is
     still returned under result["asset"].
     """
     cid, persona = contact["contact_id"], contact.get("persona", "sales-leadership")
     mode = "write" if cached_signal else "research"
     use_search = cached_signal is None
+    linter = LINTERS.get(variant, lint_email)
     issues, last_asset, web_searches = ["no output"], None, 0
     cache_read = cache_write = 0
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             res = client.complete(
-                build_system(knowledge, mode=mode),
+                build_system(knowledge, variant=variant, mode=mode),
                 build_user(contact, cached_signal=cached_signal,
                            prior_issues=None if attempt == 1 else issues),
                 use_web_search=use_search, max_web_searches=3, max_tokens=4096,
@@ -259,12 +375,13 @@ def generate_contact(contact, knowledge, client, write=True, cached_signal=None)
         last_asset = {
             "contact_id": cid,
             "persona": persona,
+            "variant": variant,
             # trust the cached signal verbatim; otherwise take the model's
             "signal": (cached_signal or data.get("signal") or "").strip(),
             "email": data.get("email", {}) or {},
             "linkedin": data.get("linkedin", {}) or {},
         }
-        issues = lint_email(last_asset["email"])
+        issues = linter(last_asset["email"])
         if not issues:
             if write:
                 _atomic_write(cid, last_asset)
@@ -307,7 +424,7 @@ def _fresh_cached_signal(domain):
     return row["signal"] if db.signal_fresh(row) else None
 
 
-def generate_one(contact, knowledge, client, write=True):
+def generate_one(contact, knowledge, client, write=True, variant=DEFAULT_VARIANT):
     """Cache-aware single-contact generation.
 
     Reuse a fresh per-company signal (write-only, no web search). On a cache miss
@@ -318,7 +435,7 @@ def generate_one(contact, knowledge, client, write=True):
 
     cached = _fresh_cached_signal(domain)
     if cached:
-        r = generate_contact(contact, knowledge, client, write=write, cached_signal=cached)
+        r = generate_contact(contact, knowledge, client, write=write, cached_signal=cached, variant=variant)
         r["used_cache"] = True
         return r
 
@@ -329,10 +446,10 @@ def generate_one(contact, knowledge, client, write=True):
         if domain:  # another thread may have cached it while we waited
             cached = _fresh_cached_signal(domain)
             if cached:
-                r = generate_contact(contact, knowledge, client, write=write, cached_signal=cached)
+                r = generate_contact(contact, knowledge, client, write=write, cached_signal=cached, variant=variant)
                 r["used_cache"] = True
                 return r
-        r = generate_contact(contact, knowledge, client, write=write)  # combined: search + write
+        r = generate_contact(contact, knowledge, client, write=write, variant=variant)  # search + write
         r["used_cache"] = False
         sig = (r.get("signal") or "").strip()
         if domain and sig:
@@ -368,22 +485,69 @@ def research_signal(domain, company, client=None):
 
 
 # ----------------------------------------------------------------------------
+# "Show the product" fulfillment: when a show-arm lead says "yes, send them",
+# draft 3 sample outbound emails our AI would write for THEIR outbound — i.e. to
+# 3 accounts that fit the lead's company's ICP. This is the deliverable demo.
+# ----------------------------------------------------------------------------
+SAMPLES_TASK = """\
+Today is {today}.
+
+You are the AI SDR working FOR {company}. Show {company}'s GTM leader exactly what your outbound looks
+like for THEIR business.
+
+1. Research {company}: what they sell and, crucially, WHO they sell to (their ICP — the kind of
+   companies and roles {company} prospects).
+2. Pick THREE realistic target accounts that {company} would actually prospect (real companies that fit
+   their ICP, not {company} itself). For each, find ONE recent ({year}) signal if you can; if not, use a
+   specific true fact about that account.
+3. For each, write ONE short, sharp, personalized opening line (1-2 sentences) that {company}'s AI SDR
+   would send to that account, grounded in the signal/fact. Sound like a sharp human, no hype, no em
+   dashes, do not invent funding numbers.
+
+Return ONLY this JSON, no prose:
+{{"company": "{company}",
+  "icp_summary": "<one line: who {company} sells to>",
+  "samples": [
+    {{"account": "<target company>", "signal": "<recent signal or specific fact>", "opener": "<1-2 sentence opener>"}},
+    {{"account": "...", "signal": "...", "opener": "..."}},
+    {{"account": "...", "signal": "...", "opener": "..."}}
+  ]}}
+"""
+
+
+def generate_samples(company, domain="", client=None):
+    """Draft 3 sample outbound emails our AI would write for {company}'s own outbound."""
+    client = client or AnthropicClient()
+    system = ("You are an expert B2B SDR copywriter. Be specific, concrete, and human. Ground claims in "
+              "what you can actually find; never invent funding figures or fake metrics.")
+    user = SAMPLES_TASK.format(company=(company or domain or "the company"), **_today())
+    res = client.complete(system, user, use_web_search=True, max_web_searches=4, max_tokens=2048)
+    data = extract_json(res["text"])
+    return {
+        "company": company, "domain": domain,
+        "icp_summary": (data.get("icp_summary") or "").strip(),
+        "samples": data.get("samples", []) or [],
+        "web_searches": res.get("web_search_count", 0),
+    }
+
+
+# ----------------------------------------------------------------------------
 # Message Batches API path: build requests, then process results. Same prompts
 # and cache logic as the real-time path, just packaged for async batch submit.
 # ----------------------------------------------------------------------------
-def build_request_params(contact, knowledge, client, cached_signal=None):
+def build_request_params(contact, knowledge, client, cached_signal=None, variant=DEFAULT_VARIANT):
     """The Messages `params` for one contact (write-only if a cached signal is
     given, else a combined research+write request with web search). 1h cache."""
     mode = "write" if cached_signal else "research"
     return client.build_body(
-        build_system(knowledge, mode=mode),
+        build_system(knowledge, variant=variant, mode=mode),
         build_user(contact, cached_signal=cached_signal),
         use_web_search=cached_signal is None, max_web_searches=3,
         max_tokens=4096, cache_ttl="1h",
     )
 
 
-def prepare_batch_requests(contacts, knowledge, client=None):
+def prepare_batch_requests(contacts, knowledge, client=None, variant=DEFAULT_VARIANT):
     """Build {custom_id, params} for each contact + a manifest for result handling.
     Already-cached companies become cheap write-only requests (no web search)."""
     client = client or AnthropicClient()
@@ -392,9 +556,10 @@ def prepare_batch_requests(contacts, knowledge, client=None):
         cid = str(c["contact_id"])
         domain = c.get("domain") or db.email_domain(c.get("email"))
         cached = _fresh_cached_signal(domain)
+        cvariant = c.get("variant") or variant  # per-contact split wins over run-level
         requests.append({"custom_id": cid,
-                         "params": build_request_params(c, knowledge, client, cached_signal=cached)})
-        manifest[cid] = {"contact": c, "domain": domain,
+                         "params": build_request_params(c, knowledge, client, cached_signal=cached, variant=cvariant)})
+        manifest[cid] = {"contact": c, "domain": domain, "variant": cvariant,
                          "was_combined": cached is None, "cached_signal": cached}
     return requests, manifest
 
@@ -409,6 +574,7 @@ def process_batch_result(custom_id, result, manifest):
     contact = entry["contact"]
     cid, persona = contact["contact_id"], contact.get("persona", "sales-leadership")
     domain, cached_signal = entry["domain"], entry.get("cached_signal")
+    variant = entry.get("variant", DEFAULT_VARIANT)
 
     if result.get("type") != "succeeded":
         return {"status": "retry", "issues": [f"batch result: {result.get('type')}"], "contact": contact}
@@ -420,7 +586,7 @@ def process_batch_result(custom_id, result, manifest):
         return {"status": "retry", "issues": ["invalid JSON from batch"], "contact": contact}
 
     asset = {
-        "contact_id": cid, "persona": persona,
+        "contact_id": cid, "persona": persona, "variant": variant,
         "signal": (cached_signal or data.get("signal") or "").strip(),
         "email": data.get("email", {}) or {}, "linkedin": data.get("linkedin", {}) or {},
     }
@@ -433,7 +599,7 @@ def process_batch_result(custom_id, result, manifest):
         finally:
             conn.close()
 
-    issues = lint_email(asset["email"])
+    issues = lint_assets(asset)
     if issues:
         return {"status": "retry", "issues": issues, "contact": contact, "signal": asset["signal"]}
     _atomic_write(cid, asset)
@@ -442,7 +608,8 @@ def process_batch_result(custom_id, result, manifest):
             "used_cache": cached_signal is not None}
 
 
-def generate_batch(batch_id, progress_cb=None, cancel_event=None, max_workers=MAX_WORKERS):
+def generate_batch(batch_id, progress_cb=None, cancel_event=None, max_workers=MAX_WORKERS,
+                   variant=DEFAULT_VARIANT):
     """Generate all contacts in a batch concurrently. Does NOT touch the DB —
     the caller runs `sdr_batches.py ingest <batch_id>` to record results.
 
@@ -472,7 +639,10 @@ def generate_batch(batch_id, progress_cb=None, cancel_event=None, max_workers=MA
         if progress_cb:
             progress_cb(cid, "researching")
         try:
-            r = generate_one(contact, knowledge, client)
+            # a pre-assigned per-contact variant (e.g. a 3-way-split sourced list) wins;
+            # otherwise use the run-level variant the caller chose.
+            cvariant = contact.get("variant") or variant
+            r = generate_one(contact, knowledge, client, variant=cvariant)
         except Exception as e:  # noqa: BLE001 - never let one contact kill the batch
             r = {"status": "error", "issues": [str(e)[:300]], "web_searches": 0,
                  "attempts": 0, "signal": "", "used_cache": False}
@@ -497,9 +667,11 @@ def generate_batch(batch_id, progress_cb=None, cancel_event=None, max_workers=MA
 def contact_test():
     """Generate ONE synthetic contact and print the result. No DB/Bison writes.
 
-    usage: generate_batch.py --contact-test [Company] [Title] [persona] [FirstName]
+    usage: generate_batch.py --contact-test [Company] [Title] [persona] [FirstName] [variant]
+           variant in {value-give, earn, show} (default value-give)
     """
     args = sys.argv[2:]
+    variant = args[4] if len(args) > 4 and args[4] in WRITE_RULES else DEFAULT_VARIANT
     contact = {
         "contact_id": "TEST",
         "first_name": args[3] if len(args) > 3 else "Jordan",
@@ -509,10 +681,10 @@ def contact_test():
         "persona": args[2] if len(args) > 2 else "sales-leadership",
         "linkedin_url": "",
     }
-    print(f"generating test copy for {contact['first_name']} @ {contact['company']} "
+    print(f"generating [{variant}] test copy for {contact['first_name']} @ {contact['company']} "
           f"({contact['persona']})...\n")
     client = AnthropicClient()
-    r = generate_contact(contact, load_knowledge(), client, write=False)
+    r = generate_contact(contact, load_knowledge(), client, write=False, variant=variant)
     print(f"status: {r['status']}  web_searches: {r['web_searches']}  attempts: {r['attempts']}  "
           f"cache_read: {r.get('cache_read', 0)}  cache_write: {r.get('cache_write', 0)}")
     print(f"signal: {r['signal']}\n")

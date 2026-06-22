@@ -30,6 +30,17 @@ export default function RepliesPage() {
   const [tagging, setTagging] = useState(false)
   const [result, setResult] = useState(null)
   const [expanded, setExpanded] = useState(null)
+  const [samplesBusy, setSamplesBusy] = useState(null)
+  const [samples, setSamples] = useState(null)
+
+  async function draftSamples(it) {
+    setSamplesBusy(it.reply_id); setSamples(null)
+    try {
+      const r = await api.samples({ from_email: it.from_email })
+      setSamples({ ...r, from_name: it.from_name })
+    } catch (e) { setError(e.message) }
+    finally { setSamplesBusy(null) }
+  }
 
   function loadQueue() {
     api.repliesQueue().then((q) => {
@@ -120,7 +131,7 @@ export default function RepliesPage() {
           </div>
           <div className="panel" style={{ padding: 0 }}>
             <table>
-              <thead><tr><th></th><th>From</th><th>Reply</th><th>Verdict</th><th>Reason</th><th>Conf.</th></tr></thead>
+              <thead><tr><th></th><th>From</th><th>Reply</th><th>Verdict</th><th>Reason</th><th>Conf.</th><th></th></tr></thead>
               <tbody>
                 {items.map((it) => {
                   const cls = it.classifier || {}
@@ -145,6 +156,13 @@ export default function RepliesPage() {
                       </td>
                       <td className="muted" style={{ maxWidth: 260, fontSize: 12 }}>{cls.reason}</td>
                       <td>{cls.confidence != null ? `${Math.round(cls.confidence * 100)}%` : '—'}</td>
+                      <td>
+                        <button className="ghost" style={{ padding: '5px 10px', fontSize: 12.5 }}
+                          onClick={() => draftSamples(it)} disabled={samplesBusy === it.reply_id}
+                          title="Draft 3 sample emails our AI would write for this lead's company (show-arm fulfillment)">
+                          {samplesBusy === it.reply_id ? <Spinner /> : 'Draft 3 samples'}
+                        </button>
+                      </td>
                     </tr>
                   )
                 })}
@@ -173,6 +191,29 @@ export default function RepliesPage() {
                 {tagging ? <Spinner label="Tagging…" /> : 'Tag in Bison now'}
               </button>
             </div>
+          </div>
+        </>
+      )}
+
+      {samples && (
+        <>
+          <div className="drawer-backdrop" onClick={() => setSamples(null)} />
+          <div className="drawer">
+            <button className="close-x" onClick={() => setSamples(null)}>Close ✕</button>
+            <h2 className="page-title" style={{ marginBottom: 2 }}>3 samples for {samples.company || '—'}</h2>
+            <p className="page-sub" style={{ marginBottom: 12 }}>
+              What our AI SDR would write for {samples.from_name ? `${samples.from_name}'s` : 'their'} own outbound.
+              Paste these into your reply to prove the product.
+            </p>
+            <div className="banner info"><b>Their ICP:</b> {samples.icp_summary || '—'}</div>
+            {(samples.samples || []).map((s, i) => (
+              <div className="touch" key={i}>
+                <div className="step">Sample {i + 1} · {s.account}</div>
+                {s.signal && <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>signal: {s.signal}</div>}
+                <div className="body">{s.opener}</div>
+              </div>
+            ))}
+            {(samples.samples || []).length === 0 && <div className="empty">No samples returned — try again.</div>}
           </div>
         </>
       )}

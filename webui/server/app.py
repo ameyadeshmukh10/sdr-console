@@ -196,14 +196,14 @@ def db_batches(status=None, limit=None):
 
 
 def db_contact_meta():
-    """contact_id -> (status, error, batch_id, persona) from the DB."""
+    """contact_id -> full contact record from the DB (authoritative for ALL contacts,
+    incl. ones sourced via Clay that never went through contacts.jsonl)."""
     out = {}
     with db_connect() as conn:
-        for r in conn.execute("SELECT contact_id, status, error, batch_id, persona FROM contacts"):
-            out[r["contact_id"]] = {
-                "status": r["status"], "error": r["error"],
-                "batch_id": r["batch_id"], "persona": r["persona"],
-            }
+        for r in conn.execute(
+            "SELECT contact_id, first_name, last_name, email, title, company, linkedin_url, "
+            "persona, domain, variant, status, error, batch_id FROM contacts"):
+            out[r["contact_id"]] = dict(r)
     return out
 
 
@@ -251,14 +251,17 @@ class OutreachIndex:
                     cid = str(asset.get("contact_id") or fp.stem)
                     cmeta = jsonl_meta.get(cid, {})
                     dbm = db_meta.get(cid, {})
+                    # contacts.jsonl first, DB fallback (sourced contacts are DB-only)
+                    def meta(k):
+                        return cmeta.get(k) or dbm.get(k) or ""
                     rows.append({
                         "contact_id": cid,
-                        "first_name": cmeta.get("first_name", ""),
-                        "last_name": cmeta.get("last_name", ""),
-                        "email": cmeta.get("email", ""),
-                        "title": cmeta.get("title", ""),
-                        "company": cmeta.get("company", ""),
-                        "persona": asset.get("persona") or cmeta.get("persona") or dbm.get("persona") or "",
+                        "first_name": meta("first_name"),
+                        "last_name": meta("last_name"),
+                        "email": meta("email"),
+                        "title": meta("title"),
+                        "company": meta("company"),
+                        "persona": asset.get("persona") or meta("persona"),
                         "signal": asset.get("signal", ""),
                         "cta_type": derive_cta(asset),
                         "status": dbm.get("status", ""),
@@ -371,19 +374,22 @@ def outreach_detail(contact_id):
         asset = json.loads(fp.read_text())
     except (json.JSONDecodeError, OSError):
         return None
-    jsonl_meta = INDEX._load_contacts_jsonl().get(str(contact_id), {})
+    jm = INDEX._load_contacts_jsonl().get(str(contact_id), {})
     dbm = db_contact_meta().get(str(contact_id), {})
+
+    def meta(k):  # contacts.jsonl first, DB fallback (sourced contacts are DB-only)
+        return jm.get(k) or dbm.get(k) or ""
     return {
         "contact": {
             "contact_id": str(contact_id),
-            "first_name": jsonl_meta.get("first_name", ""),
-            "last_name": jsonl_meta.get("last_name", ""),
-            "email": jsonl_meta.get("email", ""),
-            "title": jsonl_meta.get("title", ""),
-            "company": jsonl_meta.get("company", ""),
-            "linkedin_url": jsonl_meta.get("linkedin_url", ""),
-            "buyer_role": jsonl_meta.get("buyer_role", ""),
-            "persona": asset.get("persona") or jsonl_meta.get("persona", ""),
+            "first_name": meta("first_name"),
+            "last_name": meta("last_name"),
+            "email": meta("email"),
+            "title": meta("title"),
+            "company": meta("company"),
+            "linkedin_url": meta("linkedin_url"),
+            "buyer_role": meta("buyer_role"),
+            "persona": asset.get("persona") or meta("persona"),
             "status": dbm.get("status", ""),
             "error": dbm.get("error"),
             "batch_id": dbm.get("batch_id"),
@@ -713,7 +719,7 @@ def _serialize_job(job):
     }
 
 
-def _run_generate_job(job_id, batch_id):
+def _run_generate_job(job_id, batch_id, variant="value-give"):
     global ACTIVE_GEN_JOB
     job = JOBS[job_id]
 
@@ -742,8 +748,9 @@ def _run_generate_job(job_id, batch_id):
         # import lazily so app startup never depends on the Anthropic client
         sys.path.insert(0, str(GENERATE_BATCH.parent))
         import generate_batch as G  # noqa: E402
-        log(f"starting batch {batch_id}")
-        summary = G.generate_batch(batch_id, progress_cb=progress_cb, cancel_event=job["cancel"])
+        log(f"starting batch {batch_id} [{variant}]")
+        summary = G.generate_batch(batch_id, progress_cb=progress_cb, cancel_event=job["cancel"],
+                                   variant=variant)
         job["summary"] = {"total": summary["total"], "linted": summary["linted"],
                           "failed": summary["failed"]}
         log(f"generation done: {summary['linted']} linted, {summary['failed']} failed; ingesting…")
@@ -761,7 +768,14 @@ def _run_generate_job(job_id, batch_id):
             ACTIVE_GEN_JOB = None
 
 
-def start_generate_job(batch_id):
+VALID_VARIANTS = {"value-give", "earn", "show"}
+
+
+def _clean_variant(v):
+    return v if v in VALID_VARIANTS else "value-give"
+
+
+def start_generate_job(batch_id, variant="value-give"):
     global ACTIVE_GEN_JOB
     with JOB_LOCK:
         if ACTIVE_GEN_JOB and JOBS.get(ACTIVE_GEN_JOB, {}).get("status") == "running":
@@ -770,7 +784,7 @@ def start_generate_job(batch_id):
         job_id = None
     job_id = _new_job_id()
     job = {
-        "job_id": job_id, "kind": "generate", "batch_id": batch_id,
+        "job_id": job_id, "kind": "generate", "batch_id": batch_id, "variant": variant,
         "status": "running", "started_at": now_iso(), "finished_at": None,
         "contacts": {}, "log": [], "cancel": threading.Event(),
         "summary": {"total": 0, "linted": 0, "failed": 0}, "error": None,
@@ -778,7 +792,7 @@ def start_generate_job(batch_id):
     with JOB_LOCK:
         JOBS[job_id] = job
         ACTIVE_GEN_JOB = job_id
-    threading.Thread(target=_run_generate_job, args=(job_id, batch_id), daemon=True).start()
+    threading.Thread(target=_run_generate_job, args=(job_id, batch_id, variant), daemon=True).start()
     return {"ok": True, "job_id": job_id}, 200
 
 
@@ -814,7 +828,7 @@ def _gen_mod():
     return G
 
 
-def start_batch_job(limit=None, batch_ids=None):
+def start_batch_job(limit=None, batch_ids=None, variant="value-give"):
     """Bundle N pending pipeline batches into one Anthropic Message Batch."""
     G = _gen_mod()
     with db_connect() as conn:
@@ -837,14 +851,14 @@ def start_batch_job(limit=None, batch_ids=None):
         return {"ok": False, "error": "selected batches have no contacts"}, 400
 
     knowledge = G.load_knowledge()
-    requests, manifest = G.prepare_batch_requests(contacts, knowledge)
+    requests, manifest = G.prepare_batch_requests(contacts, knowledge, variant=variant)
     client = G.AnthropicClient()
     batch = client.create_batch(requests)
 
     job_id = f"batch-{batch['id'][-10:]}"
     n_cached = sum(1 for m in manifest.values() if not m["was_combined"])
     job = {
-        "job_id": job_id, "anthropic_batch_id": batch["id"],
+        "job_id": job_id, "anthropic_batch_id": batch["id"], "variant": variant,
         "pipeline_batch_ids": selected, "status": "processing",
         "submitted_at": now_iso(), "ended_at": None,
         "request_count": len(requests), "write_only": n_cached, "researched": len(requests) - n_cached,
@@ -914,9 +928,10 @@ def _poll_batch_job(job_id):
             # synchronous retry tail for lint failures / errored requests
             knowledge = G.load_knowledge()
             retry_client = G.AnthropicClient()
+            retry_variant = job.get("variant", "value-give")
             for contact in [c for c in retries if c]:
                 try:
-                    G.generate_one(contact, knowledge, retry_client)
+                    G.generate_one(contact, knowledge, retry_client, variant=retry_variant)
                 except Exception:  # noqa: BLE001
                     pass
             # record results via the canonical ingest path, mark batches done
@@ -1118,6 +1133,78 @@ def do_refresh_signal(domain, company=None):
 
 
 # ----------------------------------------------------------------------------
+# A/B by instruction variant + "show the product" sample fulfillment.
+# ----------------------------------------------------------------------------
+SAMPLES_DIR = DATA / "outreach" / "samples"
+
+
+def _interested_emails():
+    """Lowercased lead emails marked interested (fetched dataset + approved review queue)."""
+    emails = set()
+    for row in read_jsonl(DATA / "interested-replies" / "dataset.jsonl"):
+        e = ((row.get("lead") or {}).get("email") or "").strip().lower()
+        if e:
+            emails.add(e)
+    q = _read_json(REVIEW_QUEUE)
+    if q:
+        for it in q.get("items", []):
+            if it.get("already_interested") or (it.get("classifier") or {}).get("interested"):
+                e = (it.get("from_email") or "").strip().lower()
+                if e:
+                    emails.add(e)
+    return emails
+
+
+def variant_breakdown():
+    """Interested rate per instruction variant. NULL/'' variant counts as the value-give baseline."""
+    interested = _interested_emails()
+    with db_connect() as conn:
+        rows = conn.execute(
+            "SELECT COALESCE(NULLIF(variant,''),'value-give') v, status, email FROM contacts").fetchall()
+    agg = {}
+    for r in rows:
+        a = agg.setdefault(r["v"], {"total": 0, "enrolled": 0, "interested": 0})
+        a["total"] += 1
+        if r["status"] == "enrolled":
+            a["enrolled"] += 1
+        if (r["email"] or "").strip().lower() in interested:
+            a["interested"] += 1
+    order = ["value-give", "earn", "show"]
+    out = []
+    for v in order + [k for k in agg if k not in order]:
+        if v not in agg:
+            continue
+        a = agg[v]
+        den = a["enrolled"] or a["total"]
+        out.append({"variant": v, **a,
+                    "interested_rate_pct": round(100 * a["interested"] / den, 3) if den else None})
+    return {"variants": out, "interested_total": len(interested)}
+
+
+def do_generate_samples(company=None, domain=None, from_email=None):
+    """Draft 3 sample outbound emails our AI would write for a lead's company (show-arm demo)."""
+    if from_email and not company:
+        with db_connect() as conn:
+            r = conn.execute("SELECT company, domain FROM contacts WHERE lower(email)=? LIMIT 1",
+                             ((from_email or "").strip().lower(),)).fetchone()
+        if r:
+            company = company or r["company"]
+            domain = domain or r["domain"]
+        if not domain and "@" in (from_email or ""):
+            domain = from_email.split("@")[-1].lower()
+    if not (company or domain):
+        return {"ok": False, "error": "company, domain, or from_email required"}
+    G = _gen_mod()
+    result = G.generate_samples(company or domain, domain or "")
+    SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
+    key = re.sub(r"[^a-z0-9]+", "-", (company or domain).lower()).strip("-")[:50] or "company"
+    result["ok"] = True
+    result["generated_at"] = now_iso()
+    (SAMPLES_DIR / f"{key}.json").write_text(json.dumps(result, indent=2))
+    return result
+
+
+# ----------------------------------------------------------------------------
 # HTTP handler.
 # ----------------------------------------------------------------------------
 class Handler(BaseHTTPRequestHandler):
@@ -1184,6 +1271,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(review_queue_payload())
             if path == "/api/signals":
                 return self._json(signals_payload())
+            if path == "/api/variants":
+                return self._json(variant_breakdown())
             if path.startswith("/api/generate/status/"):
                 job_id = path[len("/api/generate/status/"):]
                 job = JOBS.get(job_id)
@@ -1239,12 +1328,13 @@ class Handler(BaseHTTPRequestHandler):
                 batch_id = body.get("batch_id")
                 if batch_id is None:
                     return self._error(400, "batch_id required")
-                payload, code = start_generate_job(int(batch_id))
+                payload, code = start_generate_job(int(batch_id), variant=_clean_variant(body.get("variant")))
                 return self._json(payload, code=code)
             if path == "/api/generate/batch":
                 body = self._read_body()
                 payload, code = start_batch_job(limit=body.get("limit"),
-                                                batch_ids=body.get("batch_ids"))
+                                                batch_ids=body.get("batch_ids"),
+                                                variant=_clean_variant(body.get("variant")))
                 return self._json(payload, code=code)
             if path.startswith("/api/generate/batch/cancel/"):
                 job_id = path[len("/api/generate/batch/cancel/"):]
@@ -1264,6 +1354,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(do_scan_replies(
                     campaign_id=body.get("campaign_id"),
                     lookback_days=int(body.get("lookback_days", 14)),
+                ))
+            if path == "/api/samples":
+                body = self._read_body()
+                return self._json(do_generate_samples(
+                    company=body.get("company"), domain=body.get("domain"),
+                    from_email=body.get("from_email"),
                 ))
             if path == "/api/replies/tag":
                 body = self._read_body()

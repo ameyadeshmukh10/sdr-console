@@ -10,12 +10,20 @@ import BatchJobPanel from '../components/BatchJobPanel.jsx'
 // progress view and the per-contact job panel update live.
 const POLL_MS = 2500
 
+// Instruction-set variants to A/B test (must match the backend WRITE_RULES keys).
+const VARIANTS = [
+  { id: 'value-give', label: 'Value-give (baseline)', hint: 'Current: give + meeting ask each step, ~80-110 words' },
+  { id: 'earn', label: 'Earn-the-reply', hint: 'Shorter, question CTAs, meeting deferred to touch 3' },
+  { id: 'show', label: 'Show-the-product', hint: 'Earn + async "3 sample emails to your top accounts" offer' },
+]
+
 export default function PipelinePage() {
   const [jobId, setJobId] = useState(null)
   const [genError, setGenError] = useState(null)
   const [prog, setProg] = useState(null)
   const [error, setError] = useState(null)
   const [auto, setAuto] = useState(true)
+  const [variant, setVariant] = useState('value-give')
   const [lastTick, setLastTick] = useState(null)
   const timer = useRef(null)
 
@@ -36,7 +44,7 @@ export default function PipelinePage() {
   async function startGenerate(batchId) {
     setGenError(null)
     try {
-      const r = await api.generate(batchId)
+      const r = await api.generate(batchId, variant)
       if (r.job_id) setJobId(r.job_id)
       if (r.ok === false) setGenError(r.error || 'could not start job')
     } catch (e) { setGenError(e.message) }
@@ -94,6 +102,20 @@ export default function PipelinePage() {
             <Stat label="Skipped / failed" value={num((cstat.skipped || 0) + (cstat.failed || 0))} />
           </div>
 
+          <div className="panel" style={{ marginBottom: 22 }}>
+            <div className="section-h" style={{ marginTop: 0 }}>Instruction set (A/B test)</div>
+            <div className="toolbar" style={{ marginBottom: 0 }}>
+              <label className="field">Variant
+                <select value={variant} onChange={(e) => setVariant(e.target.value)} style={{ minWidth: 230 }}>
+                  {VARIANTS.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+                </select>
+              </label>
+              <span className="muted" style={{ alignSelf: 'center', maxWidth: 560, fontSize: 13 }}>
+                {VARIANTS.find((v) => v.id === variant)?.hint}. Applies to both <b>Generate copy</b> and the <b>Batch API</b> below.
+              </span>
+            </div>
+          </div>
+
           <ErrorBanner error={genError} />
 
           {prog.active_batches.length > 0 ? (
@@ -134,7 +156,7 @@ export default function PipelinePage() {
 
           {jobId && <GenerateJobPanel jobId={jobId} onDone={poll} />}
 
-          <BatchJobPanel pendingBatches={pending} onChanged={poll} />
+          <BatchJobPanel pendingBatches={pending} variant={variant} onChanged={poll} />
 
           <EnrollPanel generatedReady={prog.generated_ready} onChanged={poll} />
         </>

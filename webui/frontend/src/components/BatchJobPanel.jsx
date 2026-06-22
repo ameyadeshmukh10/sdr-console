@@ -8,7 +8,7 @@ const STATUS_COLOR = {
 
 // Message Batches API (50% off, async). Submit N pending pipeline batches as one
 // Anthropic batch; jobs are persisted server-side and survive reloads/restarts.
-export default function BatchJobPanel({ pendingBatches, onChanged }) {
+export default function BatchJobPanel({ pendingBatches, variant, onChanged }) {
   const [jobs, setJobs] = useState(null)
   const [limit, setLimit] = useState(1)
   const [busy, setBusy] = useState(false)
@@ -32,7 +32,7 @@ export default function BatchJobPanel({ pendingBatches, onChanged }) {
   async function submit() {
     setBusy(true); setError(null)
     try {
-      const r = await api.submitBatch(Number(limit))
+      const r = await api.submitBatch(Number(limit), variant)
       if (r.ok === false) setError(r.error || 'submit failed')
       await load(); onChanged?.()
     } catch (e) { setError(e.message) }

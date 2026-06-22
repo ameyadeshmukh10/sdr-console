@@ -24,8 +24,8 @@ export default function App() {
     <div className="app">
       <aside className="sidebar">
         <div className="brand">
-          SDR Console
-          <small>EverWorker AI SDR</small>
+          Ever<span className="mark">Worker</span>
+          <small>SDR Console</small>
         </div>
         {NAV.map((n) => (
           <NavLink key={n.to} to={n.to} end={n.end}
