@@ -135,8 +135,14 @@ def _ask_json(client, mcp_servers, prompt):
         return {}
 
 
-def enrich_domain(client, mcp_servers, domain, company_name, titles=None, locations=None):
-    """Find + enrich the buying group at one domain; return list of contact dicts."""
+def fire_find_task(client, mcp_servers, domain, titles=None, locations=None):
+    """Kick off Clay's async find-and-enrich for one domain; return its taskId.
+
+    This only *starts* the enrichment (Clay runs it server-side and returns a
+    taskId immediately) — it does NOT wait for results. Firing every company's
+    task up front lets Clay enrich them all in parallel instead of `concurrency`
+    at a time; the wait then happens once, in poll_tasks().
+    """
     titles = titles or JOB_TITLE_KEYWORDS
     locations = locations or ["United States"]
     find_prompt = (
@@ -150,11 +156,11 @@ def enrich_domain(client, mcp_servers, domain, company_name, titles=None, locati
         f'{{"task_id": "<the taskId>"}}.'
     )
     found = _ask_json(client, mcp_servers, find_prompt)
-    task_id = found.get("task_id") or found.get("taskId")
-    if not task_id:
-        sys.stderr.write(f"  [{domain}] no taskId returned; skipping\n")
-        return []
+    return found.get("task_id") or found.get("taskId")
 
+
+def poll_task(client, mcp_servers, task_id, domain, company_name):
+    """One get-task-context poll. Returns (resolved: bool, contacts: list)."""
     poll_prompt = (
         f'Call the Clay tool "get-task-context" for taskId "{task_id}". '
         f"If the enrichment is still running, return {{\"status\": \"pending\"}}. "
@@ -164,17 +170,10 @@ def enrich_domain(client, mcp_servers, domain, company_name, titles=None, locati
         f'that have a work email. Use "{company_name or domain}" as company and '
         f'"{domain}" as domain when missing. Output ONLY JSON.'
     )
-    for attempt in range(MAX_POLLS_PER_DOMAIN):
-        res = _ask_json(client, mcp_servers, poll_prompt)
-        if res.get("status") == "resolved":
-            contacts = res.get("contacts") or []
-            sys.stderr.write(f"  [{domain}] resolved: {len(contacts)} contacts\n")
-            return contacts
-        sys.stderr.write(f"  [{domain}] pending ({attempt + 1}/{MAX_POLLS_PER_DOMAIN})…\n")
-        if attempt < MAX_POLLS_PER_DOMAIN - 1:  # poll-then-sleep: no floor, no trailing wait
-            time.sleep(POLL_INTERVAL_SECONDS)
-    sys.stderr.write(f"  [{domain}] timed out after {MAX_POLLS_PER_DOMAIN} polls; skipping\n")
-    return []
+    res = _ask_json(client, mcp_servers, poll_prompt)
+    if res.get("status") == "resolved":
+        return True, (res.get("contacts") or [])
+    return False, []
 
 
 def _csv(value, default):
@@ -227,31 +226,70 @@ def main():
     mcp_servers = _mcp_servers()
     client = AnthropicClient(model=DEFAULT_MODEL)
 
-    # Enrich companies concurrently — each enrich_domain() is an independent,
-    # blocking find→poll→parse chain, so a thread pool overlaps their long polls.
-    # The shared client/mcp_servers are read-only (no per-call mutable state).
+    # Fan-out / fan-in: fire EVERY company's Clay find task up front, then poll
+    # them all together. Clay enriches all companies in parallel server-side, so
+    # wall-clock is ~the slowest single company instead of ceil(N/workers) waves.
     workers = max(1, min(args.concurrency, len(companies)))
     cap_note = f", ≤{per_company_cap}/company" if per_company_cap else ""
     sys.stderr.write(f"enriching {len(companies)} companies, {workers} at a time{cap_note}\n")
     sys.stderr.write(f"  titles: {titles}\n  locations: {locations}\n")
     raw_results = []
+    total = len(companies)
     done = 0
+
+    def mark_done(domain):
+        nonlocal done
+        done += 1
+        sys.stderr.write(f"[{done}/{total}] {domain} done\n")
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {
-            pool.submit(enrich_domain, client, mcp_servers,
-                        co["domain"], co.get("name"), titles, locations): co
-            for co in companies
-        }
-        for fut in concurrent.futures.as_completed(futures):
-            co = futures[fut]
-            done += 1
+        # Phase 1 — fire all find tasks concurrently (fast; just returns taskIds).
+        fired = {pool.submit(fire_find_task, client, mcp_servers,
+                             co["domain"], titles, locations): co for co in companies}
+        pending = []  # [{co, task_id}] still being enriched at Clay
+        for fut in concurrent.futures.as_completed(fired):
+            co = fired[fut]
             try:
-                contacts = fut.result()
-            except Exception as exc:  # one bad domain must not sink the run
-                sys.stderr.write(f"  [{co['domain']}] error: {exc}\n")
-                contacts = []
-            raw_results.extend(contacts)
-            sys.stderr.write(f"[{done}/{len(companies)}] {co['domain']} done\n")
+                task_id = fut.result()
+            except Exception as exc:
+                sys.stderr.write(f"  [{co['domain']}] find error: {exc}\n")
+                task_id = None
+            if task_id:
+                pending.append({"co": co, "task_id": task_id})
+            else:  # no task to wait on — count it done now so progress completes
+                sys.stderr.write(f"  [{co['domain']}] no taskId returned; skipping\n")
+                mark_done(co["domain"])
+        sys.stderr.write(f"fired {len(pending)}/{total} find tasks; polling together…\n")
+
+        # Phase 2 — poll all pending tasks together, round by round, until each
+        # resolves or we hit the round ceiling.
+        for rnd in range(MAX_POLLS_PER_DOMAIN):
+            if not pending:
+                break
+            polls = {pool.submit(poll_task, client, mcp_servers, t["task_id"],
+                                 t["co"]["domain"], t["co"].get("name")): t for t in pending}
+            still = []
+            for fut in concurrent.futures.as_completed(polls):
+                t = polls[fut]
+                try:
+                    resolved, contacts = fut.result()
+                except Exception as exc:
+                    sys.stderr.write(f"  [{t['co']['domain']}] poll error: {exc}\n")
+                    resolved, contacts = False, []
+                if resolved:
+                    raw_results.extend(contacts)
+                    sys.stderr.write(f"  [{t['co']['domain']}] resolved: {len(contacts)} contacts\n")
+                    mark_done(t["co"]["domain"])
+                else:
+                    still.append(t)
+            pending = still
+            if pending and rnd < MAX_POLLS_PER_DOMAIN - 1:
+                sys.stderr.write(f"  {len(pending)} still pending (round {rnd + 1}/{MAX_POLLS_PER_DOMAIN})…\n")
+                time.sleep(POLL_INTERVAL_SECONDS)
+
+        for t in pending:  # timed out — count done so the run + progress complete
+            sys.stderr.write(f"  [{t['co']['domain']}] timed out after {MAX_POLLS_PER_DOMAIN} polls; skipping\n")
+            mark_done(t["co"]["domain"])
 
     # Dedup + title-gate once, after the parallel gather (avoids a shared set
     # across threads). The gate is the deterministic backstop to Clay's fuzzy
