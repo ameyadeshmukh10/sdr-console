@@ -16,9 +16,13 @@ generation sub-agents in parallel between `init` and `enroll`.
 """
 
 import argparse
+import concurrent.futures
 import json
 import sys
+from collections import defaultdict
 from pathlib import Path
+
+ENROLL_WORKERS = 8   # concurrent Bison create_lead calls
 
 SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
@@ -170,6 +174,10 @@ def cmd_enroll(args):
         from bison_client import BisonClient  # noqa: E402
         bison = BisonClient()
     counts = {"enrolled": 0, "no_campaign": 0, "missing_file": 0, "skipped": 0}
+
+    # Resolve campaign + copy per contact (local, fast). Skip missing-file /
+    # no-campaign here so the network phase only sees real work.
+    tasks = []  # (row, campaign, cvars)
     for r in rows:
         p = db.GEN_DIR / f"{r['contact_id']}.json"
         if not p.is_file():
@@ -182,25 +190,58 @@ def cmd_enroll(args):
         if not campaign:
             counts["no_campaign"] += 1
             continue
-        cvars = E.bison_custom_vars(asset["email"])
-        if args.dry_run:
+        tasks.append((r, campaign, E.bison_custom_vars(asset["email"])))
+
+    if args.dry_run:
+        for r, campaign, cvars in tasks:
             print(f"  [dry] {r['email']} [{r['persona']}] -> campaign {campaign} ({len(cvars)} vars)")
+        counts["enrolled"] = len(tasks)
+        print(f"enroll (dry-run): {counts}")
+        return 0
+
+    # Phase 1 — create leads concurrently (network-bound; BisonClient is stateless
+    # per call and retries on 429/5xx). Workers do NOT touch the sqlite conn — they
+    # just return results; status writes + attaches happen single-threaded below.
+    def create(task):
+        r, campaign, cvars = task
+        try:
+            lead_id = bison.create_lead(first_name=r["first_name"], last_name=r["last_name"],
+                                        email=r["email"], title=r["title"], company=r["company"],
+                                        custom_variables=cvars)
+            return ("ok", r, campaign, lead_id)
+        except Exception as e:  # benign per-lead rejection (already enrolled, bounced…)
+            return ("err", r, campaign, str(e))
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=ENROLL_WORKERS) as ex:
+        results = list(ex.map(create, tasks))
+
+    # Phase 2 — batch the attach: one attach_leads_to_campaign call per campaign
+    # instead of one per lead. Mark 'enrolled' only after a successful attach.
+    by_campaign = defaultdict(list)  # campaign -> [(row, lead_id)]
+    for status, r, campaign, payload in results:
+        if status == "err":
+            db.set_contact_status(conn, r["contact_id"], "skipped", error=payload[:500])
+            counts["skipped"] += 1
+            print(f"  [skip] {r['email']} [{r['persona']}] -> campaign {campaign}: {payload[:120]}")
         else:
-            try:
-                lead_id = bison.create_lead(first_name=r["first_name"], last_name=r["last_name"],
-                                            email=r["email"], title=r["title"], company=r["company"],
-                                            custom_variables=cvars)
-                bison.attach_leads_to_campaign(campaign, [lead_id])
-            except Exception as e:
-                # Benign per-lead rejections (already in a sequence, bounced, unsubscribed)
-                # should not abort the whole run — record and continue.
-                db.set_contact_status(conn, r["contact_id"], "skipped", error=str(e)[:500])
+            by_campaign[campaign].append((r, payload))
+
+    for campaign, items in by_campaign.items():
+        lead_ids = [lid for _, lid in items]
+        try:
+            bison.attach_leads_to_campaign(campaign, lead_ids)
+        except Exception as e:  # whole-batch attach failure: leads created, not attached
+            for r, _ in items:
+                db.set_contact_status(conn, r["contact_id"], "skipped", error=f"attach: {str(e)[:480]}")
                 counts["skipped"] += 1
-                print(f"  [skip] {r['email']} [{r['persona']}] -> campaign {campaign}: {str(e)[:120]}")
-                continue
+            print(f"  [skip] campaign {campaign} attach failed ({len(lead_ids)} leads): {str(e)[:120]}")
+            continue
+        for r, _ in items:
             db.set_contact_status(conn, r["contact_id"], "enrolled")
             counts["enrolled"] += 1
-    print(f"enroll{' (dry-run)' if args.dry_run else ''}: {counts}")
+        print(f"  attached {len(lead_ids)} leads -> campaign {campaign}")
+
+    print(f"enroll: {counts}")
     return 0
 
 
