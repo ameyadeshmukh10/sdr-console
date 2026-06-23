@@ -54,6 +54,24 @@ def _load_dotenv():
 EMAIL_KEYS = [f"{k}{i}" for i in range(1, 5) for k in ("subject", "body")]
 LI_KEYS = ["li_connect", "li_msg1", "li_msg2"]
 
+
+def heyreach_accounts():
+    """LinkedIn sender account ids from HEYREACH_LINKEDIN_ACCOUNT_ID. Comma-separated
+    when the campaign has multiple senders — leads are spread across them."""
+    raw = os.environ.get("HEYREACH_LINKEDIN_ACCOUNT_ID") or ""
+    return [a.strip() for a in raw.split(",") if a.strip()]
+
+
+def heyreach_account_for(accounts, contact_id):
+    """Stable round-robin pick — balances leads across senders, deterministic and
+    thread-safe (no shared counter)."""
+    n = len(accounts)
+    try:
+        idx = int(str(contact_id)) % n
+    except ValueError:
+        idx = sum(map(ord, str(contact_id))) % n
+    return accounts[idx]
+
 # Per-persona Bison campaign routing (legacy; kept as a fallback).
 PERSONA_CAMPAIGN_ENV = {
     "sales-leadership": "BISON_CAMPAIGN_SALES_LEADERSHIP",
@@ -134,7 +152,7 @@ def main():
                 (json.loads(l) for l in contacts_path.open() if l.strip())}
 
     hr_campaign = os.environ.get("HEYREACH_CAMPAIGN_ID")
-    hr_account = os.environ.get("HEYREACH_LINKEDIN_ACCOUNT_ID")
+    hr_accounts = heyreach_accounts()
 
     # Lazy clients (only built when actually sending).
     bison = heyreach = None
@@ -212,13 +230,14 @@ def main():
             res["counts"]["no_li"] = 1
         elif st.get("heyreach"):
             pass
-        elif not (hr_campaign and hr_account):
+        elif not (hr_campaign and hr_accounts):
             if dry:
                 res["logs"].append("  [dry] HEYREACH skipped (HEYREACH_CAMPAIGN_ID / LINKEDIN_ACCOUNT_ID not set)")
         else:
             custom_fields = {k: linkedin.get(k, "") for k in LI_KEYS}
             pair = HeyReachClient.build_pair(
-                hr_account, contact.get("first_name"), contact.get("last_name"), li_url,
+                heyreach_account_for(hr_accounts, cid),
+                contact.get("first_name"), contact.get("last_name"), li_url,
                 company=contact.get("company"), position=contact.get("title"),
                 email=contact.get("email"), custom_fields=custom_fields)
             if dry:

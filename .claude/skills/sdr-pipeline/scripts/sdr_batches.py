@@ -172,8 +172,8 @@ def cmd_enroll(args):
     # HeyReach (LinkedIn) is a single campaign for everyone; enabled when both env
     # vars are set. Bison is the email channel (per-variant campaigns).
     hr_campaign = os.environ.get("HEYREACH_CAMPAIGN_ID")
-    hr_account = os.environ.get("HEYREACH_LINKEDIN_ACCOUNT_ID")
-    hr_enabled = bool(hr_campaign and hr_account)
+    hr_accounts = E.heyreach_accounts()
+    hr_enabled = bool(hr_campaign and hr_accounts)
     bison = heyreach = None
     if not args.dry_run:
         from bison_client import BisonClient  # noqa: E402
@@ -205,7 +205,8 @@ def cmd_enroll(args):
             if r["linkedin_url"]:
                 cf = {k: (asset.get("linkedin") or {}).get(k, "") for k in E.LI_KEYS}
                 hr_pairs[r["contact_id"]] = E.HeyReachClient.build_pair(
-                    hr_account, r["first_name"], r["last_name"], r["linkedin_url"],
+                    E.heyreach_account_for(hr_accounts, r["contact_id"]),
+                    r["first_name"], r["last_name"], r["linkedin_url"],
                     company=r["company"], position=r["title"], email=r["email"], custom_fields=cf)
             else:
                 counts["no_li"] += 1
@@ -307,8 +308,8 @@ def cmd_heyreach_backfill(args):
     """
     import os
     hr_campaign = os.environ.get("HEYREACH_CAMPAIGN_ID")
-    hr_account = os.environ.get("HEYREACH_LINKEDIN_ACCOUNT_ID")
-    if not (hr_campaign and hr_account):
+    hr_accounts = E.heyreach_accounts()
+    if not (hr_campaign and hr_accounts):
         print("HeyReach not configured — set HEYREACH_CAMPAIGN_ID + HEYREACH_LINKEDIN_ACCOUNT_ID in .env")
         return 1
 
@@ -351,7 +352,8 @@ def cmd_heyreach_backfill(args):
         asset = json.loads(p.read_text())
         cf = {k: (asset.get("linkedin") or {}).get(k, "") for k in E.LI_KEYS}
         pairs.append((cid, E.HeyReachClient.build_pair(
-            hr_account, r["first_name"], r["last_name"], r["linkedin_url"],
+            E.heyreach_account_for(hr_accounts, cid),
+            r["first_name"], r["last_name"], r["linkedin_url"],
             company=r["company"], position=r["title"], email=r["email"], custom_fields=cf)))
 
     scope = f"job {args.job}" if args.job else "all enrolled"

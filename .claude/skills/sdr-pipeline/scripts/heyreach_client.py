@@ -96,5 +96,8 @@ class HeyReachClient:
         if email:
             lead["emailAddress"] = email
         if custom_fields:
-            lead["customUserFields"] = custom_fields
+            # HeyReach expects an array of {name, value}, not a dict.
+            lead["customUserFields"] = (
+                custom_fields if isinstance(custom_fields, list)
+                else [{"name": k, "value": v} for k, v in custom_fields.items()])
         return {"linkedInAccountId": int(linkedin_account_id), "lead": lead}
