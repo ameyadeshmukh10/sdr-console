@@ -118,11 +118,24 @@ class HubSpotClient:
         return out
 
     def create_list(self, name, object_type_id="0-1"):
-        """Create a static (MANUAL) list. object_type_id '0-1'=contacts. Returns listId (str)."""
-        payload = self._request("POST", "/crm/v3/lists",
-                                body={"name": name, "objectTypeId": object_type_id,
-                                      "processingType": "MANUAL"})
-        return str((payload.get("list") or {}).get("listId") or payload.get("listId"))
+        """Create a static (MANUAL) list, or reuse an existing one of the same name.
+
+        HubSpot rejects duplicate list names (400 ILS.DUPLICATE_LIST_NAMES); when
+        that happens we look the list up by name and return its id, so the call is
+        idempotent and re-running a sourcing batch doesn't blow up. Returns listId.
+        """
+        try:
+            payload = self._request("POST", "/crm/v3/lists",
+                                    body={"name": name, "objectTypeId": object_type_id,
+                                          "processingType": "MANUAL"})
+            return str((payload.get("list") or {}).get("listId") or payload.get("listId"))
+        except HubSpotError as e:
+            if "DUPLICATE_LIST_NAMES" not in str(e) and "already exist" not in str(e):
+                raise
+            for lst in self.search_lists(query=name, object_type_id=object_type_id):
+                if (lst.get("name") or "").strip() == name.strip():
+                    return str(lst["list_id"])
+            raise
 
     def add_contacts_to_list(self, list_id, record_ids):
         """Add record IDs to a static list (chunks of 100). Body is a JSON array of ids."""
@@ -158,10 +171,10 @@ class HubSpotClient:
             out.extend(payload.get("results", []))
         return out
 
-    def find_existing_emails(self, emails):
-        """Return the subset of `emails` already present in HubSpot (lowercased), for dedup."""
+    def find_existing_email_ids(self, emails):
+        """Map {email_lower: contact_id} for emails already present in HubSpot."""
         emails = [e.strip().lower() for e in emails if e and e.strip()]
-        found = set()
+        found = {}
         for i in range(0, len(emails), 100):  # search `IN` accepts up to 100 values
             chunk = emails[i:i + 100]
             after = None
@@ -176,11 +189,15 @@ class HubSpotClient:
                 for r in payload.get("results", []):
                     e = (r.get("properties") or {}).get("email")
                     if e:
-                        found.add(e.strip().lower())
+                        found[e.strip().lower()] = str(r.get("id"))
                 after = (payload.get("paging") or {}).get("next", {}).get("after")
                 if not after:
                     break
         return found
+
+    def find_existing_emails(self, emails):
+        """Subset of `emails` already present in HubSpot (lowercased), for dedup."""
+        return set(self.find_existing_email_ids(emails))
 
     def create_contact(self, properties):
         """Create one contact. Returns the new contact id (str). Raises on failure."""

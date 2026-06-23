@@ -5,7 +5,7 @@ import { Spinner, ErrorBanner, num } from './ui.jsx'
 // Clay buying-group enrichment for a selected HubSpot company list. Connects Clay
 // (OAuth) if needed, then runs the backend enrich job: end-to-end (commit
 // immediately) or review (pause on the candidates, then Approve & create).
-const POLL_MS = 4000
+const POLL_MS = 2500
 
 // Mirrors clay_enrich.py's JOB_TITLE_KEYWORDS — the default ICP target titles.
 const DEFAULT_TITLES =
@@ -221,7 +221,31 @@ function JobView({ job, onApprove, busy }) {
     return <div className="banner error" style={{ marginTop: 14 }}>{job.error}</div>
   }
   if (job.status === 'running') {
-    return <div style={{ marginTop: 14 }}><Spinner label="Clay enrichment running (this can take a few minutes)…" /></div>
+    const p = job.progress || {}
+    const total = p.total || 0
+    const firing = p.phase === 'firing'
+    const value = firing ? (p.fired || 0) : (p.completed || 0)
+    const pct = total ? Math.round((100 * value) / total) : 0
+    const label = !total ? 'Starting Clay enrichment…'
+      : firing ? `Preparing ${value}/${total} companies…`
+        : `Enriching ${value}/${total} companies…`
+    return (
+      <div style={{ marginTop: 14 }}>
+        <Spinner label={label} />
+        {total > 0 && (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ height: 8, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${pct}%`, background: 'var(--accent, #0a7)', transition: 'width .4s ease' }} />
+            </div>
+            <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+              {firing
+                ? `firing ${value}/${total} enrichment tasks at Clay — they run in parallel`
+                : `${value} of ${total} companies · ${p.contacts || 0} contact${p.contacts === 1 ? '' : 's'} found so far · each can take up to ~5 min on Clay's side`}
+            </div>
+          </div>
+        )}
+      </div>
+    )
   }
   if (job.status === 'awaiting_review') {
     const cands = job.candidates || []

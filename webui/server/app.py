@@ -502,6 +502,42 @@ def run_script(args, timeout=600):
     return {"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr}
 
 
+def run_script_streaming(args, on_stderr_line=None, timeout=3600):
+    """Like run_script but streams stderr line-by-line to a callback as it arrives
+    (subprocess.run buffers until exit). stdout is still captured whole for the
+    final JSON summary. Returns the same {returncode, stdout, stderr} shape."""
+    proc = subprocess.Popen(
+        [sys.executable, *args], cwd=str(PROJECT_ROOT),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+    out_chunks, err_chunks = [], []
+
+    def pump(stream, sink, cb):
+        for line in iter(stream.readline, ""):
+            sink.append(line)
+            if cb:
+                try:
+                    cb(line.rstrip("\n"))
+                except Exception:
+                    pass
+        stream.close()
+
+    threads = [
+        threading.Thread(target=pump, args=(proc.stdout, out_chunks, None), daemon=True),
+        threading.Thread(target=pump, args=(proc.stderr, err_chunks, on_stderr_line), daemon=True),
+    ]
+    for t in threads:
+        t.start()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+    for t in threads:
+        t.join(timeout=5)
+    return {"returncode": proc.returncode, "stdout": "".join(out_chunks),
+            "stderr": "".join(err_chunks)}
+
+
 def do_ingest(list_id):
     pre = db_status()
     pull = run_script([str(HUBSPOT_PULL), str(list_id)], timeout=600)
@@ -926,7 +962,28 @@ def _run_source_job(job_id):
             enrich_args += ["--progress-file", job["progress_file"]]
         if job.get("reset"):
             enrich_args += ["--reset-progress"]
-        enrich = run_script(enrich_args, timeout=3600)
+
+        # Live progress parsed from the script's stderr as it streams.
+        job["progress"] = {"total": job["cap"], "completed": 0, "fired": 0,
+                           "contacts": 0, "phase": "starting"}
+
+        def on_line(line):
+            p = job["progress"]
+            m = re.search(r"this run takes (\d+)", line)
+            if m:
+                p["total"], p["phase"] = int(m.group(1)), "firing"
+            m = re.search(r"firing (\d+)/(\d+) tasks", line)
+            if m:
+                p["fired"], p["total"], p["phase"] = int(m.group(1)), int(m.group(2)), "firing"
+            m = re.search(r"\[(\d+)/(\d+)\]\s+\S+\s+done", line)
+            if m:
+                p["completed"], p["total"], p["phase"] = int(m.group(1)), int(m.group(2)), "polling"
+            m = re.search(r"resolved:\s+(\d+)\s+contacts", line)
+            if m:
+                p["contacts"] += int(m.group(1))
+
+        enrich = run_script_streaming(enrich_args, on_line, timeout=3600)
+        job["progress"]["phase"] = "done"
         job["enrich"] = enrich
         if enrich["returncode"] != 0:
             job["status"] = "error"
