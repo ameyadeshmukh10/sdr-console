@@ -964,17 +964,20 @@ def _run_source_job(job_id):
             enrich_args += ["--reset-progress"]
 
         # Live progress parsed from the script's stderr as it streams.
-        job["progress"] = {"total": job["cap"], "completed": 0, "contacts": 0,
-                           "phase": "starting"}
+        job["progress"] = {"total": job["cap"], "completed": 0, "fired": 0,
+                           "contacts": 0, "phase": "starting"}
 
         def on_line(line):
             p = job["progress"]
             m = re.search(r"this run takes (\d+)", line)
             if m:
-                p["total"], p["phase"] = int(m.group(1)), "enriching"
+                p["total"], p["phase"] = int(m.group(1)), "firing"
+            m = re.search(r"firing (\d+)/(\d+) tasks", line)
+            if m:
+                p["fired"], p["total"], p["phase"] = int(m.group(1)), int(m.group(2)), "firing"
             m = re.search(r"\[(\d+)/(\d+)\]\s+\S+\s+done", line)
             if m:
-                p["completed"], p["total"] = int(m.group(1)), int(m.group(2))
+                p["completed"], p["total"], p["phase"] = int(m.group(1)), int(m.group(2)), "polling"
             m = re.search(r"resolved:\s+(\d+)\s+contacts", line)
             if m:
                 p["contacts"] += int(m.group(1))

@@ -221,23 +221,26 @@ function JobView({ job, onApprove, busy }) {
     return <div className="banner error" style={{ marginTop: 14 }}>{job.error}</div>
   }
   if (job.status === 'running') {
-    const p = job.progress
-    const total = p && p.total ? p.total : 0
-    const done = p ? p.completed : 0
-    const pct = total ? Math.round((100 * done) / total) : 0
+    const p = job.progress || {}
+    const total = p.total || 0
+    const firing = p.phase === 'firing'
+    const value = firing ? (p.fired || 0) : (p.completed || 0)
+    const pct = total ? Math.round((100 * value) / total) : 0
+    const label = !total ? 'Starting Clay enrichment…'
+      : firing ? `Preparing ${value}/${total} companies…`
+        : `Enriching ${value}/${total} companies…`
     return (
       <div style={{ marginTop: 14 }}>
-        <Spinner label={total
-          ? `Enriching ${done}/${total} companies…`
-          : 'Starting Clay enrichment…'} />
+        <Spinner label={label} />
         {total > 0 && (
           <div style={{ marginTop: 10 }}>
             <div style={{ height: 8, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
               <div style={{ height: '100%', width: `${pct}%`, background: 'var(--accent, #0a7)', transition: 'width .4s ease' }} />
             </div>
             <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-              {done} of {total} companies · {p.contacts} contact{p.contacts === 1 ? '' : 's'} found so far
-              {' · '}each company can take up to ~5 min on Clay's side
+              {firing
+                ? `firing ${value}/${total} enrichment tasks at Clay — they run in parallel`
+                : `${value} of ${total} companies · ${p.contacts || 0} contact${p.contacts === 1 ? '' : 's'} found so far · each can take up to ~5 min on Clay's side`}
             </div>
           </div>
         )}
