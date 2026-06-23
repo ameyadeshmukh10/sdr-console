@@ -491,6 +491,32 @@ def linkedin_channel():
     return {"campaign_id": cid, "campaign_name": _HEYREACH_NAME_CACHE[cid] or None, "leads": leads}
 
 
+def linkedin_analytics_payload():
+    """Live HeyReach (LinkedIn) analytics for the configured campaign: the lead
+    funnel (GetById progressStats) + connection/message/reply metrics
+    (GetOverallStats). Degrades to {error}/{configured:false} so the Analytics
+    page never breaks on a HeyReach hiccup."""
+    env = read_env()
+    raw = (env.get("HEYREACH_CAMPAIGN_ID") or "").strip()
+    cid = int(raw) if raw.isdigit() else None
+    if cid is None:
+        return {"configured": False}
+    try:
+        sys.path.insert(0, str(SCRIPTS / "sdr-pipeline" / "scripts"))
+        from heyreach_client import HeyReachClient
+        hr = HeyReachClient()
+        camp = hr.get_campaign(cid) or {}
+        stats = (hr.get_overall_stats([cid]) or {}).get("overallStats") or {}
+    except Exception as e:  # noqa: BLE001
+        return {"configured": True, "campaign_id": cid, "error": str(e)[:200]}
+    return {
+        "configured": True, "campaign_id": cid,
+        "campaign_name": camp.get("name"), "status": camp.get("status"),
+        "funnel": camp.get("progressStats") or {}, "stats": stats,
+        "fetched_at": now_iso(),
+    }
+
+
 def rollup_payload():
     st = db_status()
     cmap = persona_campaign_map()
@@ -1711,6 +1737,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(rollup_payload())
             if path == "/api/analytics":
                 return self._json(analytics_payload())
+            if path == "/api/analytics/linkedin":
+                return self._json(linkedin_analytics_payload())
             if path == "/api/progress":
                 return self._json(progress_payload())
             if path == "/api/trends":

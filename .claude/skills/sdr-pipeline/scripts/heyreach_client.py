@@ -80,6 +80,16 @@ class HeyReachClient:
         """GET /campaign/GetById — campaign details (status, campaignAccountIds, …)."""
         return self._request("GET", f"/campaign/GetById?campaignId={int(campaign_id)}")
 
+    def get_overall_stats(self, campaign_ids, account_ids=None):
+        """POST /stats/GetOverallStats — LinkedIn metrics for the given campaign(s):
+        connectionsSent/Accepted, messagesSent, totalMessageReplies, reply +
+        acceptance rates, uniqueLeadsContacted, autoTaggedInterested. accountIds
+        is required by the API ([] = all accounts on the campaign)."""
+        return self._request("POST", "/stats/GetOverallStats", {
+            "campaignIds": [int(c) for c in campaign_ids],
+            "accountIds": [int(a) for a in (account_ids or [])],
+        })
+
     def add_leads_to_campaign(self, campaign_id, account_lead_pairs):
         """POST /campaign/AddLeadsToCampaignV2.
 

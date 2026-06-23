@@ -33,6 +33,7 @@ export const api = {
   rollup: () => get('/api/rollup'),
   analytics: () => get('/api/analytics'),
   refreshAnalytics: () => post('/api/analytics/refresh'),
+  linkedinAnalytics: () => get('/api/analytics/linkedin'),
   outreach: (params) => get('/api/outreach?' + new URLSearchParams(params).toString()),
   outreachDetail: (id) => get('/api/outreach/' + encodeURIComponent(id)),
   ingest: (listId) => post('/api/ingest', { list_id: listId }),
