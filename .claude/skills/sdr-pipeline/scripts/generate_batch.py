@@ -271,9 +271,10 @@ def _wc(body):
     return len(re.findall(r"[A-Za-z0-9']+", body or ""))
 
 
-def _lint_short(email, lo=38, hi=85, require_give=None):
+def _lint_short(email, lo=28, hi=100, require_give=None):
     """Shared rules for the earn/show variants: short, no dashes/sign-off/pricing/hype,
-    a soft question in touch 1, a genuine breakup in touch 4."""
+    a soft question in touch 1, a genuine breakup in touch 4. Word-count band is
+    intentionally wide — it's a style nudge, not worth an expensive re-gen."""
     steps = []
     for i in range(1, 5):
         subj, body = email.get(f"subject{i}", ""), email.get(f"body{i}", "")

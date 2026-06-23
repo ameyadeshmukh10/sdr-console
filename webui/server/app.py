@@ -27,6 +27,7 @@ Design notes:
     pipeline scripts via subprocess; we never reimplement their logic.
 """
 
+import concurrent.futures
 import json
 import re
 import sqlite3
@@ -1140,6 +1141,7 @@ def _confirm_source_thread(job_id):
 # JSON file per job so they survive restart, with a daemon poller per job.
 # ----------------------------------------------------------------------------
 BATCH_POLL_SECONDS = 30
+BATCH_RETRY_WORKERS = 6   # concurrency for re-generating lint-failed copy
 _BATCH_POLLERS = set()  # job_ids with a live poller (avoid duplicates on resume)
 _BATCH_LOCK = threading.Lock()
 
@@ -1308,16 +1310,26 @@ def _poll_batch_job(job_id):
                     linted += 1
                 elif r["status"] == "retry":
                     retries.append(r.get("contact"))
-            # synchronous retry tail for lint failures / errored requests
+            # Retry tail for lint failures / errored requests — run concurrently.
+            # A large batch can have hundreds of lint failures; doing these one at
+            # a time (each a fresh web-search generation) turned into hours. Each
+            # generate_one writes its own per-contact file, so they parallelize
+            # cleanly (the AnthropicClient is stateless across calls).
             knowledge = G.load_knowledge()
             retry_client = G.AnthropicClient()
             retry_variant = job.get("variant", "value-give")
-            for contact in [c for c in retries if c]:
+            retry_contacts = [c for c in retries if c]
+
+            def _retry_one(contact):
                 try:
                     G.generate_one(contact, knowledge, retry_client,
                                    variant=contact.get("variant") or retry_variant)
                 except Exception:  # noqa: BLE001
                     pass
+
+            if retry_contacts:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=BATCH_RETRY_WORKERS) as ex:
+                    list(ex.map(_retry_one, retry_contacts))
             # record results via the canonical ingest path, mark batches done
             for bid in job["pipeline_batch_ids"]:
                 run_script([str(SDR_BATCHES), "ingest", str(bid)], timeout=180)
