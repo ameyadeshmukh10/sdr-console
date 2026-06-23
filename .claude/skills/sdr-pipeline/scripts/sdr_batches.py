@@ -298,6 +298,87 @@ def cmd_reset_batch(args):
     return 0
 
 
+def cmd_heyreach_backfill(args):
+    """Push already-enrolled contacts (Bison-only) into the HeyReach campaign.
+
+    For catching up contacts enrolled before HeyReach was wired in. Idempotent
+    via data/outreach/heyreach_state.json so re-runs skip ones already added.
+    Scope with --job <batch_job_id> to limit to that batch's contacts.
+    """
+    import os
+    hr_campaign = os.environ.get("HEYREACH_CAMPAIGN_ID")
+    hr_account = os.environ.get("HEYREACH_LINKEDIN_ACCOUNT_ID")
+    if not (hr_campaign and hr_account):
+        print("HeyReach not configured — set HEYREACH_CAMPAIGN_ID + HEYREACH_LINKEDIN_ACCOUNT_ID in .env")
+        return 1
+
+    out_dir = db.GEN_DIR.parent
+    conn = db.connect()
+    cols = "contact_id, first_name, last_name, email, title, company, linkedin_url, variant"
+    where = "status='enrolled' AND linkedin_url IS NOT NULL AND linkedin_url != ''"
+    params = []
+    if args.job:
+        jp = out_dir / "batch-jobs" / f"{args.job}.json"
+        if not jp.is_file():
+            print(f"no batch job file: {jp}")
+            return 1
+        batch_ids = json.loads(jp.read_text()).get("pipeline_batch_ids") or []
+        if not batch_ids:
+            print(f"batch job {args.job} has no pipeline_batch_ids")
+            return 1
+        where += f" AND batch_id IN ({','.join('?' * len(batch_ids))})"
+        params = batch_ids
+    rows = [dict(r) for r in conn.execute(f"SELECT {cols} FROM contacts WHERE {where}", params)]
+
+    state_path = out_dir / "heyreach_state.json"
+    done = set()
+    if state_path.is_file():
+        try:
+            done = set(json.loads(state_path.read_text()).get("added", []))
+        except (ValueError, OSError):
+            done = set()
+
+    pairs, skipped_done, missing_file = [], 0, 0
+    for r in rows:
+        cid = r["contact_id"]
+        if cid in done:
+            skipped_done += 1
+            continue
+        p = db.GEN_DIR / f"{cid}.json"
+        if not p.is_file():
+            missing_file += 1
+            continue
+        asset = json.loads(p.read_text())
+        cf = {k: (asset.get("linkedin") or {}).get(k, "") for k in E.LI_KEYS}
+        pairs.append((cid, E.HeyReachClient.build_pair(
+            hr_account, r["first_name"], r["last_name"], r["linkedin_url"],
+            company=r["company"], position=r["title"], email=r["email"], custom_fields=cf)))
+
+    scope = f"job {args.job}" if args.job else "all enrolled"
+    print(f"heyreach-backfill [{scope}]: {len(rows)} enrolled w/ LinkedIn, "
+          f"{len(pairs)} to add, {skipped_done} already done, {missing_file} missing copy")
+    if args.dry_run:
+        print(f"  [dry] would add {len(pairs)} leads -> HeyReach campaign {hr_campaign}")
+        return 0
+    if not pairs:
+        return 0
+
+    heyreach = E.HeyReachClient()
+    added, failed = 0, 0
+    for i in range(0, len(pairs), E.HR_CHUNK):
+        chunk = pairs[i:i + E.HR_CHUNK]
+        try:
+            heyreach.add_leads_to_campaign(hr_campaign, [pr for _, pr in chunk])
+            added += len(chunk)
+            done.update(cid for cid, _ in chunk)
+            state_path.write_text(json.dumps({"added": sorted(done)}, indent=2))  # persist per chunk
+        except Exception as e:  # noqa: BLE001
+            failed += len(chunk)
+            print(f"  [skip] HEYREACH add of {len(chunk)} leads failed: {str(e)[:140]}")
+    print(f"heyreach-backfill: added={added} failed={failed} skipped_done={skipped_done} missing_file={missing_file}")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="SDR batch pipeline")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -307,6 +388,7 @@ def main():
     p = sub.add_parser("get-batch"); p.add_argument("batch_id", type=int); p.set_defaults(func=cmd_get_batch)
     p = sub.add_parser("ingest"); p.add_argument("batch_id", type=int); p.set_defaults(func=cmd_ingest)
     p = sub.add_parser("enroll"); p.add_argument("--dry-run", action="store_true"); p.set_defaults(func=cmd_enroll)
+    p = sub.add_parser("heyreach-backfill"); p.add_argument("--job"); p.add_argument("--dry-run", action="store_true"); p.set_defaults(func=cmd_heyreach_backfill)
     p = sub.add_parser("setup-variant-campaigns"); p.add_argument("--template", type=int); p.add_argument("--force", action="store_true"); p.set_defaults(func=cmd_setup_variant_campaigns)
     p = sub.add_parser("reset-batch"); p.add_argument("batch_id", type=int); p.set_defaults(func=cmd_reset_batch)
     args = ap.parse_args()
