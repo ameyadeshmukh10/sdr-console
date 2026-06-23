@@ -169,15 +169,25 @@ def cmd_enroll(args):
     if not rows:
         print("nothing to enroll (no 'generated' contacts).")
         return 0
-    bison = None
+    # HeyReach (LinkedIn) is a single campaign for everyone; enabled when both env
+    # vars are set. Bison is the email channel (per-variant campaigns).
+    hr_campaign = os.environ.get("HEYREACH_CAMPAIGN_ID")
+    hr_account = os.environ.get("HEYREACH_LINKEDIN_ACCOUNT_ID")
+    hr_enabled = bool(hr_campaign and hr_account)
+    bison = heyreach = None
     if not args.dry_run:
         from bison_client import BisonClient  # noqa: E402
         bison = BisonClient()
-    counts = {"enrolled": 0, "no_campaign": 0, "missing_file": 0, "skipped": 0}
+        if hr_enabled:
+            heyreach = E.HeyReachClient()
+    counts = {"enrolled": 0, "no_campaign": 0, "missing_file": 0, "skipped": 0,
+              "linkedin": 0, "no_li": 0, "heyreach_failed": 0}
 
     # Resolve campaign + copy per contact (local, fast). Skip missing-file /
-    # no-campaign here so the network phase only sees real work.
-    tasks = []  # (row, campaign, cvars)
+    # no-campaign here so the network phase only sees real work. Build the
+    # HeyReach pair now too (local) — it's batch-added after a successful enroll.
+    tasks = []         # (row, campaign, cvars)
+    hr_pairs = {}      # contact_id -> HeyReach lead pair (li_url present + hr_enabled)
     for r in rows:
         p = db.GEN_DIR / f"{r['contact_id']}.json"
         if not p.is_file():
@@ -191,11 +201,22 @@ def cmd_enroll(args):
             counts["no_campaign"] += 1
             continue
         tasks.append((r, campaign, E.bison_custom_vars(asset["email"])))
+        if hr_enabled:
+            if r["linkedin_url"]:
+                cf = {k: (asset.get("linkedin") or {}).get(k, "") for k in E.LI_KEYS}
+                hr_pairs[r["contact_id"]] = E.HeyReachClient.build_pair(
+                    hr_account, r["first_name"], r["last_name"], r["linkedin_url"],
+                    company=r["company"], position=r["title"], email=r["email"], custom_fields=cf)
+            else:
+                counts["no_li"] += 1
 
     if args.dry_run:
         for r, campaign, cvars in tasks:
-            print(f"  [dry] {r['email']} [{r['persona']}] -> campaign {campaign} ({len(cvars)} vars)")
-        counts["enrolled"] = len(tasks)
+            li = " +LinkedIn" if hr_pairs.get(r["contact_id"]) else ""
+            print(f"  [dry] {r['email']} [{r['persona']}] -> bison campaign {campaign} ({len(cvars)} vars){li}")
+        counts["enrolled"], counts["linkedin"] = len(tasks), len(hr_pairs)
+        print(f"  [dry] HEYREACH would add {len(hr_pairs)} leads -> campaign {hr_campaign}" if hr_enabled
+              else "  [dry] HEYREACH disabled (set HEYREACH_CAMPAIGN_ID + HEYREACH_LINKEDIN_ACCOUNT_ID)")
         print(f"enroll (dry-run): {counts}")
         return 0
 
@@ -226,6 +247,7 @@ def cmd_enroll(args):
         else:
             by_campaign[campaign].append((r, payload))
 
+    hr_batch = []  # HeyReach pairs for contacts that successfully enrolled in Bison
     for campaign, items in by_campaign.items():
         lead_ids = [lid for _, lid in items]
         try:
@@ -239,7 +261,27 @@ def cmd_enroll(args):
         for r, _ in items:
             db.set_contact_status(conn, r["contact_id"], "enrolled")
             counts["enrolled"] += 1
-        print(f"  attached {len(lead_ids)} leads -> campaign {campaign}")
+            if r["contact_id"] in hr_pairs:
+                hr_batch.append(hr_pairs[r["contact_id"]])
+        print(f"  attached {len(lead_ids)} leads -> bison campaign {campaign}")
+
+    # Phase 3 — HeyReach: batch-add the LinkedIn leads to the HeyReach campaign.
+    # A HeyReach failure does NOT undo the Bison enrollment — it's a second channel,
+    # so we just log + count it.
+    if heyreach and hr_batch:
+        added = 0
+        for i in range(0, len(hr_batch), E.HR_CHUNK):
+            chunk = hr_batch[i:i + E.HR_CHUNK]
+            try:
+                heyreach.add_leads_to_campaign(hr_campaign, chunk)
+                added += len(chunk)
+            except Exception as e:
+                counts["heyreach_failed"] += len(chunk)
+                print(f"  [skip] HEYREACH add of {len(chunk)} leads failed: {str(e)[:120]}")
+        counts["linkedin"] = added
+        print(f"  HEYREACH added {added} leads -> campaign {hr_campaign}")
+    elif not hr_enabled:
+        print("  HEYREACH disabled (set HEYREACH_CAMPAIGN_ID + HEYREACH_LINKEDIN_ACCOUNT_ID to enable LinkedIn)")
 
     print(f"enroll: {counts}")
     return 0
