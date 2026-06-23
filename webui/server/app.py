@@ -462,6 +462,35 @@ def analytics_payload():
     }
 
 
+_HEYREACH_NAME_CACHE = {}
+
+
+def linkedin_channel():
+    """The HeyReach (LinkedIn) channel all personas feed into: campaign id/name +
+    how many leads we've pushed. Name is fetched once and cached so the diagram
+    still loads instantly on later requests / if HeyReach is unreachable."""
+    env = read_env()
+    raw = (env.get("HEYREACH_CAMPAIGN_ID") or "").strip()
+    cid = int(raw) if raw.isdigit() else None
+    if cid is None:
+        return None
+    leads = 0
+    sp = DATA / "outreach" / "heyreach_state.json"
+    if sp.is_file():
+        try:
+            leads = len(json.loads(sp.read_text()).get("added", []))
+        except (ValueError, OSError):
+            pass
+    if cid not in _HEYREACH_NAME_CACHE:
+        try:
+            sys.path.insert(0, str(SCRIPTS / "sdr-pipeline" / "scripts"))
+            from heyreach_client import HeyReachClient
+            _HEYREACH_NAME_CACHE[cid] = (HeyReachClient().get_campaign(cid) or {}).get("name") or ""
+        except Exception:  # noqa: BLE001 — never block the diagram on a HeyReach hiccup
+            _HEYREACH_NAME_CACHE[cid] = ""
+    return {"campaign_id": cid, "campaign_name": _HEYREACH_NAME_CACHE[cid] or None, "leads": leads}
+
+
 def rollup_payload():
     st = db_status()
     cmap = persona_campaign_map()
@@ -471,8 +500,10 @@ def rollup_payload():
     for p in PERSONA_ORDER:
         cid = cmap.get(p)
         stats = None
+        campaign_name = None
         if cid is not None and cid in by_campaign:
             c = by_campaign[cid]
+            campaign_name = c.get("campaign_name")
             stats = {
                 "total_leads": c.get("total_leads"),
                 "total_leads_contacted": c.get("total_leads_contacted"),
@@ -484,11 +515,13 @@ def rollup_payload():
         personas.append({
             "persona": p,
             "campaign_id": cid,
+            "campaign_name": campaign_name,
             "contacts": st["by_persona"].get(p, 0),
             "by_status": st["persona_status"].get(p, {}),
             "campaign_stats": stats,
         })
-    return {"personas": personas, "personas_order": PERSONA_ORDER}
+    return {"personas": personas, "personas_order": PERSONA_ORDER,
+            "linkedin": linkedin_channel()}
 
 
 # ----------------------------------------------------------------------------
