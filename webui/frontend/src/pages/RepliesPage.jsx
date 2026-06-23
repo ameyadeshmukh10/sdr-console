@@ -85,7 +85,7 @@ export default function RepliesPage() {
   return (
     <div>
       <h1 className="page-title">Replies — interested detection</h1>
-      <p className="page-sub">Scan the Bison inbox, classify with Claude, then approve to apply the Interested tag.</p>
+      <p className="page-sub">Scan the Bison inbox, classify with Claude, then approve to apply the Interested tag. Auto-replies, non-lead senders, and connection-test mail are filtered out; explicit unsubscribe / "close the file" replies are suppressed.</p>
 
       <div className="panel" style={{ marginBottom: 18 }}>
         <div className="toolbar" style={{ marginBottom: 0 }}>
@@ -114,8 +114,10 @@ export default function RepliesPage() {
         <div className="grid stat-grid" style={{ marginBottom: 18 }}>
           <Stat label="Scanned" value={num(counts.scanned || 0)} sub={`last ${queue.lookback_days || 14}d`} />
           <Stat label="Flagged interested" value={num(counts.flagged || 0)} sub="not yet tagged" />
-          <Stat label="Already interested" value={num(counts.already || 0)} />
-          <Stat label="Selected" value={num(selected.size)} />
+          <Stat label="Filtered out" value={num(counts.filtered || 0)} sub="auto-reply / non-lead / test" />
+          <Stat label={queue.unsubscribed?.applied ? 'Unsubscribed' : 'To unsubscribe'}
+            value={num(counts.unsubscribed || 0)}
+            sub={queue.unsubscribed?.applied ? 'suppressed in Bison' : 'close-file / opt-out (preview)'} />
         </div>
       )}
 

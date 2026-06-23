@@ -284,3 +284,11 @@ class BisonClient:
             "/api/tags/attach-to-leads",
             {"tag_ids": list(tag_ids), "lead_ids": list(lead_ids), "skip_webhooks": skip_webhooks},
         )
+
+    def unsubscribe_lead(self, lead_id):
+        """Unsubscribe a lead — stops all scheduled emails, keeps the record. Reversible."""
+        return self.patch(f"/api/leads/{lead_id}/unsubscribe", {})
+
+    def blacklist_lead(self, lead_id):
+        """Add a lead to the global suppression blacklist (blocks across all campaigns)."""
+        return self.post(f"/api/leads/{lead_id}/blacklist", {})
