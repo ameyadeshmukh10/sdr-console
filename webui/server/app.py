@@ -1496,7 +1496,9 @@ def interested_tag_id():
 
 
 def do_scan_replies(campaign_id=None, lookback_days=14):
-    args = [str(CLASSIFY_REPLIES), "--lookback", str(lookback_days)]
+    # Auto-apply: high-confidence unsubscribe / "close the file" replies are
+    # unsubscribed + blacklisted in Bison and kept out of the review queue.
+    args = [str(CLASSIFY_REPLIES), "--lookback", str(lookback_days), "--apply-unsubscribes"]
     if campaign_id:
         args += ["--campaign", str(campaign_id)]
     res = run_script(args, timeout=600)
