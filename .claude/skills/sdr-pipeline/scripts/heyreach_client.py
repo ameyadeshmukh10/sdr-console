@@ -76,6 +76,10 @@ class HeyReachClient:
         self._request("GET", "/auth/CheckApiKey")
         return True
 
+    def get_campaign(self, campaign_id):
+        """GET /campaign/GetById — campaign details (status, campaignAccountIds, …)."""
+        return self._request("GET", f"/campaign/GetById?campaignId={int(campaign_id)}")
+
     def add_leads_to_campaign(self, campaign_id, account_lead_pairs):
         """POST /campaign/AddLeadsToCampaignV2.
 

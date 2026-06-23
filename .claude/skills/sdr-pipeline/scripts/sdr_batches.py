@@ -313,6 +313,25 @@ def cmd_heyreach_backfill(args):
         print("HeyReach not configured — set HEYREACH_CAMPAIGN_ID + HEYREACH_LINKEDIN_ACCOUNT_ID in .env")
         return 1
 
+    # Preflight: AddLeadsToCampaignV2 only accepts leads when the campaign is live
+    # (ACTIVE/IN_PROGRESS) with senders assigned. Check once up front so we fail
+    # with a clear message instead of erroring on every lead.
+    try:
+        camp = E.HeyReachClient().get_campaign(hr_campaign)
+    except Exception as e:  # noqa: BLE001
+        print(f"could not read HeyReach campaign {hr_campaign}: {str(e)[:160]}")
+        return 1
+    status = (camp.get("status") or "").upper()
+    if status not in ("ACTIVE", "IN_PROGRESS"):
+        print(f"HeyReach campaign {hr_campaign} ({camp.get('name')!r}) is {status or 'UNKNOWN'} — "
+              f"activate it in HeyReach (ACTIVE/IN_PROGRESS) before adding leads.")
+        return 1
+    assigned = set(str(a) for a in (camp.get("campaignAccountIds") or []))
+    missing = [a for a in hr_accounts if a not in assigned]
+    if missing:
+        print(f"warning: sender account(s) {missing} are not assigned to campaign {hr_campaign} "
+              f"(assigned: {sorted(assigned)}); their leads may be rejected.")
+
     out_dir = db.GEN_DIR.parent
     conn = db.connect()
     cols = "contact_id, first_name, last_name, email, title, company, linkedin_url, variant"
