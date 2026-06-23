@@ -93,22 +93,22 @@ def main():
 
     hub = None if args.no_hubspot else HubSpotClient()
 
-    # 3. dedup against HubSpot by email
-    if hub:
-        existing = hub.find_existing_emails([c["email"] for c in icp])
-        net_new = [c for c in icp if c["email"] not in existing]
-    else:
-        existing, net_new = set(), icp
-    stats["already_in_hubspot"] = len(icp) - len(net_new)
+    # 3. resolve against HubSpot by email: contacts already present keep their id,
+    #    the rest are net-new. BOTH end up in the list + pipeline, so the batch
+    #    fully lands and re-running the same candidates is idempotent.
+    existing_ids = hub.find_existing_email_ids([c["email"] for c in icp]) if hub else {}
+    net_new = [c for c in icp if c["email"] not in existing_ids]
+    existing = [c for c in icp if c["email"] in existing_ids]
+    stats["already_in_hubspot"] = len(existing)
     stats["net_new"] = len(net_new)
 
-    # 4. even 3-way variant split, round-robin per contact
-    for i, c in enumerate(net_new):
+    # 4. even 3-way variant split across the whole ICP set (stable across re-runs)
+    for i, c in enumerate(icp):
         c["variant"] = VARIANTS[i % len(VARIANTS)]
 
-    # 5. create in HubSpot (one by one for clean id mapping + per-record resilience)
+    # 5. create the net-new contacts; reuse the existing ones' ids
     created, create_failed = [], 0
-    if hub and net_new:
+    if hub:
         for c in net_new:
             props = {"email": c["email"], "firstname": c["first_name"], "lastname": c["last_name"],
                      "jobtitle": c["title"], "company": c["company"]}
@@ -120,20 +120,26 @@ def main():
             except HubSpotError as e:
                 create_failed += 1
                 print(f"  ! create failed for {c['email']}: {str(e)[:120]}", file=sys.stderr)
+        for c in existing:
+            c["contact_id"] = existing_ids[c["email"]]
     else:
-        for i, c in enumerate(net_new):  # no-hubspot: synthetic ids so the jsonl is usable
+        for i, c in enumerate(icp):  # no-hubspot: synthetic ids so the jsonl is usable
             c["contact_id"] = f"clay-{i}"
             created.append(c)
     stats["created"] = len(created)
     stats["create_failed"] = create_failed
 
+    # working set = everything we have an id for (newly created + already present)
+    working = [c for c in icp if c.get("contact_id")]
+    stats["in_list"] = len(working)
+
     # 6. create a static HubSpot list + add the new contacts
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
     list_name = args.list_name or f"AI SDR Sourced {ts}"
     list_id = None
-    if hub and created:
+    if hub and working:
         list_id = hub.create_list(list_name)
-        hub.add_contacts_to_list(list_id, [c["contact_id"] for c in created])
+        hub.add_contacts_to_list(list_id, [c["contact_id"] for c in working])
     stats["hubspot_list_id"] = list_id
     stats["hubspot_list_name"] = list_name
 
@@ -141,7 +147,7 @@ def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out_file = OUT_DIR / f"sourced-{list_id or ts}.jsonl"
     with out_file.open("w") as f:
-        for c in created:
+        for c in working:
             f.write(json.dumps({
                 "contact_id": c["contact_id"], "first_name": c["first_name"],
                 "last_name": c["last_name"], "email": c["email"], "title": c["title"],
@@ -149,11 +155,11 @@ def main():
                 "buyer_role": c["buyer_role"], "persona": c["persona"], "variant": c["variant"],
             }) + "\n")
     stats["jsonl"] = str(out_file)
-    by_variant = {v: sum(1 for c in created if c["variant"] == v) for v in VARIANTS}
+    by_variant = {v: sum(1 for c in working if c["variant"] == v) for v in VARIANTS}
     stats["by_variant"] = by_variant
 
     # 8. ingest into the pipeline (upserts contacts with variant + assigns batches)
-    if created and not args.no_ingest:
+    if working and not args.no_ingest:
         proc = subprocess.run([sys.executable, str(SCRIPTS / "sdr_batches.py"), "init", "--from", str(out_file)],
                               cwd=str(PROJECT_ROOT), capture_output=True, text=True)
         stats["ingest"] = (proc.stdout or proc.stderr).strip()
