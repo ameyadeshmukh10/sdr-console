@@ -17,6 +17,7 @@ export default function SourcePanel({ list, onChanged }) {
   const [clay, setClay] = useState(null)        // connection status string
   const [mode, setMode] = useState('end-to-end')
   const [cap, setCap] = useState(25)
+  const [wholeList, setWholeList] = useState(false)   // auto-continue batches
   // Advanced enrichment knobs (surfaced from clay_enrich.py).
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [perCompanyCap, setPerCompanyCap] = useState('')   // '' = no limit
@@ -89,7 +90,8 @@ export default function SourcePanel({ list, onChanged }) {
       const r = await api.sourceEnrich({
         list_id: list.list_id,
         list_name: `AI SDR Sourced — ${list.name}`,
-        cap: Number(cap) || 25, mode,
+        cap: Number(cap) || 25, mode: wholeList ? 'end-to-end' : mode,
+        whole_list: wholeList,
         per_company_cap: Number(perCompanyCap) || 0,
         concurrency: Number(concurrency) || 8,
         titles: titles.trim() === DEFAULT_TITLES ? '' : titles.trim(),
@@ -159,19 +161,27 @@ export default function SourcePanel({ list, onChanged }) {
 
       <div className="toolbar" style={{ marginBottom: 0 }}>
         <label className="field">Mode
-          <select value={mode} onChange={(e) => setMode(e.target.value)} style={{ minWidth: 180 }}>
+          <select value={mode} disabled={wholeList}
+            onChange={(e) => setMode(e.target.value)} style={{ minWidth: 180 }}>
             <option value="end-to-end">Run end-to-end</option>
             <option value="review">Pause for review</option>
           </select>
         </label>
-        <label className="field">Max companies
-          <input type="number" min="1" max="200" value={cap}
-            onChange={(e) => setCap(e.target.value)} style={{ width: 100 }} />
+        <label className="field">{wholeList ? 'Batch size' : 'Max companies'}
+          <input type="number" min="1" max="500" value={cap}
+            onChange={(e) => setCap(e.target.value)} style={{ width: 110 }} />
         </label>
         <button onClick={enrich} disabled={!connected || busy || running}>
-          {busy || running ? <Spinner label="Enriching…" /> : 'Enrich buying group'}
+          {busy || running ? <Spinner label="Enriching…" />
+            : wholeList ? 'Enrich whole list' : 'Enrich buying group'}
         </button>
       </div>
+
+      <label className="row" style={{ gap: 8, marginTop: 10, fontSize: 13, cursor: 'pointer', alignItems: 'center' }}>
+        <input type="checkbox" checked={wholeList} onChange={(e) => setWholeList(e.target.checked)} />
+        <span><b>Process whole list</b> — auto-continue {Number(cap) || 25}-company batches
+          (end-to-end) until every remaining company is enriched. Resumes if interrupted.</span>
+      </label>
 
       <button className="linklike" onClick={() => setShowAdvanced((v) => !v)}
         style={{ marginTop: 10, fontSize: 12 }}>
@@ -226,12 +236,14 @@ function JobView({ job, onApprove, busy }) {
     const firing = p.phase === 'firing'
     const value = firing ? (p.fired || 0) : (p.completed || 0)
     const pct = total ? Math.round((100 * value) / total) : 0
+    const w = job.whole
     const label = !total ? 'Starting Clay enrichment…'
       : firing ? `Preparing ${value}/${total} companies…`
         : `Enriching ${value}/${total} companies…`
     return (
       <div style={{ marginTop: 14 }}>
-        <Spinner label={label} />
+        {w && <WholeProgress w={w} />}
+        <Spinner label={w ? `Batch ${w.batch} · ${label}` : label} />
         {total > 0 && (
           <div style={{ marginTop: 10 }}>
             <div style={{ height: 8, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
@@ -277,6 +289,16 @@ function JobView({ job, onApprove, busy }) {
   }
   if (job.status === 'done') {
     const s = job.stats
+    const w = job.whole
+    if (w) {
+      return (
+        <div className="banner info" style={{ marginTop: 14 }}>
+          Whole-list run complete — processed <b>{num(w.companies_processed)}</b> companies
+          across <b>{w.batches?.length || 0}</b> batches and created <b>{num(w.contacts_created)}</b> contacts.
+          {' '}Open the <b>Pipeline</b> tab to generate copy.
+        </div>
+      )
+    }
     return (
       <div className="banner info" style={{ marginTop: 14 }}>
         {s ? (
@@ -288,4 +310,23 @@ function JobView({ job, onApprove, busy }) {
     )
   }
   return null
+}
+
+function WholeProgress({ w }) {
+  const total = w.companies_total || 0
+  const done = w.companies_processed || 0
+  const pct = total ? Math.round((100 * done) / total) : 0
+  return (
+    <div className="banner info" style={{ marginBottom: 12, fontSize: 13 }}>
+      <div className="row between" style={{ marginBottom: 6 }}>
+        <span><b>Whole list</b> · batch {w.batch}{total ? <> · {num(done)}/{num(total)} companies</> : null}</span>
+        <span className="muted">{num(w.contacts_created)} contacts created</span>
+      </div>
+      {total > 0 && (
+        <div style={{ height: 8, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+          <div style={{ height: '100%', width: `${pct}%`, background: 'var(--accent, #0a7)', transition: 'width .4s ease' }} />
+        </div>
+      )}
+    </div>
+  )
 }

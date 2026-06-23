@@ -919,15 +919,20 @@ def read_source_progress(list_id):
 
 
 def start_source_job(list_id, list_name=None, cap=25, mode="end-to-end",
-                     per_company_cap=0, concurrency=8, titles="", locations="", reset=False):
+                     per_company_cap=0, concurrency=8, titles="", locations="",
+                     reset=False, whole_list=False):
     clay = _clay_oauth()
     if clay.status() != "connected":
         return {"ok": False, "error": "Clay is not connected — connect Clay first"}, 409
     job_id = _new_source_job_id()
+    whole_list = bool(whole_list)
+    # Whole-list runs are unattended, so they always commit (end-to-end); `cap` is
+    # the per-batch size and the job loops until the list is exhausted.
+    mode = "end-to-end" if whole_list else (mode if mode in ("end-to-end", "review") else "end-to-end")
     SOURCE_JOBS[job_id] = {
         "job_id": job_id, "kind": "source", "status": "running",
         "list_id": str(list_id), "list_name": list_name,
-        "cap": int(cap), "mode": mode if mode in ("end-to-end", "review") else "end-to-end",
+        "cap": int(cap), "mode": mode, "whole_list": whole_list,
         # Optional enrichment knobs surfaced from the UI's Advanced section.
         "per_company_cap": max(0, int(per_company_cap or 0)),
         "concurrency": max(1, int(concurrency or 8)),
@@ -944,61 +949,84 @@ def start_source_job(list_id, list_name=None, cap=25, mode="end-to-end",
     return {"ok": True, "job_id": job_id}, 200
 
 
+def _enrich_args(job, out_path, reset):
+    args = [str(CLAY_ENRICH), "--list-id", job["list_id"],
+            "--cap", str(job["cap"]),
+            "--concurrency", str(job.get("concurrency", 8)),
+            "--out", out_path]
+    if job.get("per_company_cap"):
+        args += ["--per-company-cap", str(job["per_company_cap"])]
+    if job.get("titles"):
+        args += ["--titles", job["titles"]]
+    if job.get("locations"):
+        args += ["--locations", job["locations"]]
+    if job.get("progress_file"):
+        args += ["--progress-file", job["progress_file"]]
+    if reset:
+        args += ["--reset-progress"]
+    return args
+
+
+def _make_progress_cb(job):
+    """Parse the enrich script's streamed stderr into job['progress'] live."""
+    def on_line(line):
+        p = job["progress"]
+        m = re.search(r"this run takes (\d+)", line)
+        if m:
+            p["total"], p["phase"] = int(m.group(1)), "firing"
+        m = re.search(r"firing (\d+)/(\d+) tasks", line)
+        if m:
+            p["fired"], p["total"], p["phase"] = int(m.group(1)), int(m.group(2)), "firing"
+        m = re.search(r"\[(\d+)/(\d+)\]\s+\S+\s+done", line)
+        if m:
+            p["completed"], p["total"], p["phase"] = int(m.group(1)), int(m.group(2)), "polling"
+        m = re.search(r"resolved:\s+(\d+)\s+contacts", line)
+        if m:
+            p["contacts"] += int(m.group(1))
+    return on_line
+
+
+def _run_enrich_batch(job, out_path, reset):
+    """Run one enrich batch into out_path. Returns (enrich_result, summary_dict)."""
+    job["progress"] = {"total": job["cap"], "completed": 0, "fired": 0, "contacts": 0,
+                       "phase": "starting", "batch": (job.get("whole") or {}).get("batch")}
+    enrich = run_script_streaming(_enrich_args(job, out_path, reset),
+                                  _make_progress_cb(job), timeout=3600)
+    job["progress"]["phase"] = "done"
+    job["enrich"] = enrich
+    summary = {}
+    if enrich["returncode"] == 0:
+        try:
+            summary = json.loads(enrich["stdout"])
+        except json.JSONDecodeError:
+            summary = {}
+    return enrich, summary
+
+
+def _commit_candidates(candidates_path, list_name):
+    """Run source_contacts.py on a candidates file: dedup, create in HubSpot,
+    make/reuse the static list, ingest into the pipeline. Returns a result dict."""
+    args = [str(SOURCE_CONTACTS), candidates_path]
+    if list_name:
+        args += ["--list-name", list_name]
+    res = run_script(args, timeout=1800)
+    if res["returncode"] != 0:
+        return {"ok": False, "error": (res["stderr"] or res["stdout"]).strip()[:500], "raw": res}
+    try:
+        stats = json.loads(res["stdout"])
+    except json.JSONDecodeError:
+        stats = {}
+    return {"ok": True, "raw": res, **stats}
+
+
 def _run_source_job(job_id):
     job = SOURCE_JOBS[job_id]
     try:
         SOURCE_JOBS_DIR.mkdir(parents=True, exist_ok=True)
-        enrich_args = [str(CLAY_ENRICH), "--list-id", job["list_id"],
-                       "--cap", str(job["cap"]),
-                       "--concurrency", str(job.get("concurrency", 8)),
-                       "--out", job["candidates_path"]]
-        if job.get("per_company_cap"):
-            enrich_args += ["--per-company-cap", str(job["per_company_cap"])]
-        if job.get("titles"):
-            enrich_args += ["--titles", job["titles"]]
-        if job.get("locations"):
-            enrich_args += ["--locations", job["locations"]]
-        if job.get("progress_file"):
-            enrich_args += ["--progress-file", job["progress_file"]]
-        if job.get("reset"):
-            enrich_args += ["--reset-progress"]
-
-        # Live progress parsed from the script's stderr as it streams.
-        job["progress"] = {"total": job["cap"], "completed": 0, "fired": 0,
-                           "contacts": 0, "phase": "starting"}
-
-        def on_line(line):
-            p = job["progress"]
-            m = re.search(r"this run takes (\d+)", line)
-            if m:
-                p["total"], p["phase"] = int(m.group(1)), "firing"
-            m = re.search(r"firing (\d+)/(\d+) tasks", line)
-            if m:
-                p["fired"], p["total"], p["phase"] = int(m.group(1)), int(m.group(2)), "firing"
-            m = re.search(r"\[(\d+)/(\d+)\]\s+\S+\s+done", line)
-            if m:
-                p["completed"], p["total"], p["phase"] = int(m.group(1)), int(m.group(2)), "polling"
-            m = re.search(r"resolved:\s+(\d+)\s+contacts", line)
-            if m:
-                p["contacts"] += int(m.group(1))
-
-        enrich = run_script_streaming(enrich_args, on_line, timeout=3600)
-        job["progress"]["phase"] = "done"
-        job["enrich"] = enrich
-        if enrich["returncode"] != 0:
-            job["status"] = "error"
-            job["error"] = (enrich["stderr"] or enrich["stdout"]).strip()[:500]
-            return
-        candidates = _read_json(Path(job["candidates_path"])) or []
-        job["candidates"] = candidates
-        if not candidates:
-            job["status"] = "done"
-            job["source"] = {"note": "no candidates with a work email were found"}
-            return
-        if job["mode"] == "review":
-            job["status"] = "awaiting_review"
-            return
-        _commit_source_job(job)
+        if job.get("whole_list"):
+            _run_whole_list_job(job)
+        else:
+            _run_single_batch_job(job)
     except Exception as e:  # noqa: BLE001
         job["status"] = "error"
         job["error"] = f"{type(e).__name__}: {e}"
@@ -1007,22 +1035,80 @@ def _run_source_job(job_id):
             job["finished_at"] = now_iso()
 
 
-def _commit_source_job(job):
-    """Run source_contacts.py on the candidate file: dedup, create in HubSpot,
-    make the static list, and ingest into the pipeline."""
-    args = [str(SOURCE_CONTACTS), job["candidates_path"]]
-    if job.get("list_name"):
-        args += ["--list-name", job["list_name"]]
-    res = run_script(args, timeout=1800)
-    job["source"] = res
-    if res["returncode"] != 0:
+def _run_single_batch_job(job):
+    enrich, _ = _run_enrich_batch(job, job["candidates_path"], job.get("reset"))
+    if enrich["returncode"] != 0:
         job["status"] = "error"
-        job["error"] = (res["stderr"] or res["stdout"]).strip()[:500]
+        job["error"] = (enrich["stderr"] or enrich["stdout"]).strip()[:500]
         return
-    try:
-        job["stats"] = json.loads(res["stdout"])
-    except json.JSONDecodeError:
-        job["stats"] = None
+    candidates = _read_json(Path(job["candidates_path"])) or []
+    job["candidates"] = candidates
+    if not candidates:
+        job["status"] = "done"
+        job["source"] = {"note": "no candidates with a work email were found"}
+        return
+    if job["mode"] == "review":
+        job["status"] = "awaiting_review"
+        return
+    _commit_source_job(job)
+
+
+def _run_whole_list_job(job):
+    """Auto-continue: enrich + commit batches back-to-back until the list is
+    exhausted. Each batch advances the cursor and commits, so a failure only
+    costs the current batch — re-running resumes from where it stopped."""
+    job["whole"] = {"batch": 0, "companies_total": None, "companies_processed": 0,
+                    "contacts_created": 0, "remaining": None, "batches": []}
+    MAX_BATCHES = 400  # safety stop; cap*400 dwarfs any real list
+    for n in range(1, MAX_BATCHES + 1):
+        job["whole"]["batch"] = n
+        out_path = str(SOURCE_JOBS_DIR / f"{job['job_id']}-batch{n}-candidates.json")
+        job["candidates_path"] = out_path
+        reset = bool(job.get("reset")) and n == 1  # reset cursor only on the first batch
+        enrich, summary = _run_enrich_batch(job, out_path, reset)
+        if enrich["returncode"] != 0:
+            job["status"] = "error"
+            job["error"] = f"batch {n} enrich failed: {(enrich['stderr'] or enrich['stdout']).strip()[:300]}"
+            return
+        companies = int(summary.get("companies", 0))
+        remaining = summary.get("remaining_after")
+        if job["whole"]["companies_total"] is None:
+            job["whole"]["companies_total"] = companies + int(remaining or 0)
+        if companies == 0:  # nothing left to enrich — list exhausted
+            break
+        candidates = _read_json(Path(out_path)) or []
+        job["candidates"] = candidates
+        if candidates:
+            commit = _commit_candidates(out_path, job.get("list_name"))
+            if not commit.get("ok"):
+                job["status"] = "error"
+                job["error"] = f"batch {n} commit failed: {commit.get('error', '')[:300]}"
+                return
+            job["stats"] = {k: v for k, v in commit.items() if k not in ("ok", "raw")}
+            job["whole"]["contacts_created"] += int(commit.get("created", 0))
+            job["whole"]["batches"].append({
+                "batch": n, "companies": companies, "candidates": len(candidates),
+                "created": int(commit.get("created", 0)), "list_id": commit.get("hubspot_list_id")})
+            INDEX.build()
+        else:
+            job["whole"]["batches"].append({"batch": n, "companies": companies,
+                                            "candidates": 0, "created": 0})
+        job["whole"]["companies_processed"] += companies
+        job["whole"]["remaining"] = remaining
+        if remaining is not None and int(remaining) <= 0:  # cursor reached the end
+            break
+    job["status"] = "done"
+
+
+def _commit_source_job(job):
+    """Commit a single batch's candidates (end-to-end / review-approve path)."""
+    result = _commit_candidates(job["candidates_path"], job.get("list_name"))
+    job["source"] = result.get("raw")
+    if not result.get("ok"):
+        job["status"] = "error"
+        job["error"] = result.get("error")
+        return
+    job["stats"] = {k: v for k, v in result.items() if k not in ("ok", "raw")}
     INDEX.build()
     job["status"] = "done"
 
@@ -1690,7 +1776,8 @@ class Handler(BaseHTTPRequestHandler):
                     per_company_cap=body.get("per_company_cap", 0),
                     concurrency=body.get("concurrency", 8),
                     titles=body.get("titles", ""), locations=body.get("locations", ""),
-                    reset=bool(body.get("reset", False)))
+                    reset=bool(body.get("reset", False)),
+                    whole_list=bool(body.get("whole_list", False)))
                 return self._json(payload, code=code)
             if path.startswith("/api/source/confirm/"):
                 job_id = path[len("/api/source/confirm/"):]
