@@ -192,6 +192,25 @@ class BisonClient:
         payload = self.post(f"/api/campaigns/{campaign_id}/duplicate")
         return payload.get("data", payload) if isinstance(payload, dict) else payload
 
+    def create_campaign(self, name, type="outbound"):
+        """Create a campaign. type: 'outbound' | 'reply_followup'. Returns the new
+        campaign dict {id, name, ...}."""
+        payload = self.post("/api/campaigns", {"name": name, "type": type})
+        return payload.get("data", payload) if isinstance(payload, dict) else payload
+
+    def push_reply_to_followup_campaign(self, reply_id, campaign_id, force_add_reply=True):
+        """Move a reply + its lead into a reply-followup campaign."""
+        return self.post(f"/api/replies/{reply_id}/followup-campaign/push",
+                         {"campaign_id": int(campaign_id), "force_add_reply": force_add_reply})
+
+    def send_reply(self, reply_id, message, sender_email_id, to_emails,
+                   content_type="html", inject_previous=True):
+        """Send a reply in the thread of an existing reply (the drafted follow-up)."""
+        return self.post(f"/api/replies/{reply_id}/reply", {
+            "message": message, "sender_email_id": sender_email_id,
+            "to_emails": list(to_emails), "content_type": content_type,
+            "inject_previous_email_body": inject_previous})
+
     def rename_campaign(self, campaign_id, name):
         """Rename a campaign (partial settings update — only the name field)."""
         payload = self.patch(f"/api/campaigns/{campaign_id}/update", {"name": name})
