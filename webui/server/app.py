@@ -62,6 +62,7 @@ SOURCE_JOBS_DIR = DATA / "outreach" / "source-jobs"
 CLASSIFY_REPLIES = SCRIPTS / "email-bison" / "scripts" / "classify_replies.py"
 DRAFT_FOLLOWUPS = SCRIPTS / "email-bison" / "scripts" / "draft_followups.py"
 FOLLOWUP_DRAFTS = DATA / "interested-replies" / "followup_drafts.json"
+SENT_FOLLOWUPS = DATA / "interested-replies" / "sent_followups.json"
 ANALYZE = SCRIPTS / "interested-trends" / "scripts"
 TRENDS_DIR = DATA / "interested-replies" / "analysis"
 REPLIES_LAST_RUN = DATA / "interested-replies" / "last_run.json"
@@ -1513,11 +1514,32 @@ def do_scan_replies(campaign_id=None, lookback_days=14):
     return payload
 
 
+def _load_sent():
+    """Set of reply_ids whose follow-up has already been sent (so the card clears)."""
+    data = _read_json(SENT_FOLLOWUPS) or {}
+    return set((data.get("sent") or {}).keys())
+
+
+def _mark_sent(reply_id, meta):
+    data = _read_json(SENT_FOLLOWUPS) or {}
+    data.setdefault("sent", {})[str(reply_id)] = meta
+    SENT_FOLLOWUPS.parent.mkdir(parents=True, exist_ok=True)
+    SENT_FOLLOWUPS.write_text(json.dumps(data, indent=2))
+
+
+def _stamp_handled(items):
+    sent = _load_sent()
+    for it in items or []:
+        it["handled"] = str(it.get("reply_id")) in sent
+    return items
+
+
 def review_queue_payload():
     data = _read_json(REVIEW_QUEUE)
     if not data:
         return {"available": False, "items": []}
     data["available"] = True
+    _stamp_handled(data.get("items"))
     return data
 
 
@@ -1559,44 +1581,47 @@ def do_draft_followups():
 def followup_drafts_payload():
     payload = _read_json(FOLLOWUP_DRAFTS) or {"items": []}
     payload["available"] = FOLLOWUP_DRAFTS.is_file()
+    _stamp_handled(payload.get("items"))
     return payload
 
 
 def do_approve_followup(reply_id, message):
-    """Approve a drafted follow-up: tag interested + push the lead into the
-    Interested Follow-up campaign + send the (edited) reply in the thread."""
-    env = read_env()
-    raw = (env.get("BISON_INTERESTED_FOLLOWUP_CAMPAIGN_ID") or "").strip()
-    if not raw.isdigit():
-        return {"ok": False, "error": "BISON_INTERESTED_FOLLOWUP_CAMPAIGN_ID not set"}, 409
-    campaign_id = int(raw)
+    """Approve a drafted follow-up: tag interested + send the (edited) reply
+    DIRECTLY in the prospect's Bison thread, then mark it handled so the card
+    clears. The enriched review-queue item is the source of truth for the
+    recipient + sending inbox; the draft file supplies the body text."""
+    queue = _read_json(REVIEW_QUEUE) or {}
+    qitem = next((it for it in queue.get("items", []) if str(it.get("reply_id")) == str(reply_id)), {})
     drafts = _read_json(FOLLOWUP_DRAFTS) or {"items": []}
-    item = next((d for d in drafts.get("items", []) if str(d.get("reply_id")) == str(reply_id)), None)
-    if not item:
-        return {"ok": False, "error": f"no draft for reply {reply_id}"}, 404
-    if not item.get("lead_id"):
-        return {"ok": False, "error": "reply has no associated lead — cannot set the follow-up variable"}, 409
+    draft = next((d for d in drafts.get("items", []) if str(d.get("reply_id")) == str(reply_id)), {})
+    src = qitem or draft
+    lead_id = src.get("lead_id")
+    to_email = src.get("from_email") or src.get("lead_email")
+    sender_email_id = src.get("sender_email_id")
+    body_text = message or draft.get("draft") or ""
+    if not body_text.strip():
+        return {"ok": False, "error": "no follow-up draft to send — click Draft follow-up first"}, 409
+    if not (to_email and sender_email_id):
+        return {"ok": False, "error": "missing recipient or sending inbox for this reply"}, 409
     bison = _bison()
-    # Templated send: set the (edited) draft as the lead's `followup_body` custom
-    # variable, then push the lead into the Interested Follow-up campaign. The
-    # campaign's sequence step ({{followup_body}}, thread_reply) does the sending —
-    # we don't send the email directly.
-    # The campaign's sequence step renders {FOLLOWUP_BODY}; the subject is
-    # auto-generated in the followup thread, so we only set the body variable.
-    body = (message or item.get("draft", "")).replace("\n", "<br>")
+    body_html = body_text.replace("\n", "<br>")
     try:
-        bison.mark_reply_interested(reply_id)
-        bison.attach_tags_to_leads([interested_tag_id()], [item["lead_id"]])
-        bison.update_lead(item["lead_id"],
-                          custom_variables=[{"name": "followup_body", "value": body}])
-        bison.push_reply_to_followup_campaign(reply_id, campaign_id)
+        if lead_id:  # idempotent — covers approve on an item tagged out-of-band
+            bison.mark_reply_interested(reply_id)
+            bison.attach_tags_to_leads([interested_tag_id()], [lead_id])
+        bison.send_reply(reply_id, body_html, sender_email_id,
+                         [{"email_address": to_email, "name": src.get("from_name")}],
+                         content_type="html", inject_previous=True)
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)[:300]}, 502
-    item["status"] = "queued"
-    item["queued_at"] = now_iso()
-    item["sent_message"] = message or item.get("draft", "")
-    FOLLOWUP_DRAFTS.write_text(json.dumps(drafts, indent=2, ensure_ascii=False))
-    return {"ok": True, "reply_id": reply_id, "campaign_id": campaign_id}, 200
+    _mark_sent(reply_id, {"sent_at": now_iso(), "to_email": to_email,
+                          "sender_email_id": sender_email_id})
+    if draft:
+        draft["status"] = "sent"
+        draft["sent_at"] = now_iso()
+        draft["sent_message"] = body_text
+        FOLLOWUP_DRAFTS.write_text(json.dumps(drafts, indent=2, ensure_ascii=False))
+    return {"ok": True, "reply_id": reply_id, "to_email": to_email}, 200
 
 
 # ----------------------------------------------------------------------------

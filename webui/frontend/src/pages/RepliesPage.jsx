@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api.js'
 import { Stat, Spinner, ErrorBanner, num } from '../components/ui.jsx'
 
@@ -14,25 +14,54 @@ const INTENT_COLOR = {
   positive_later: 'var(--green)', positive_other: 'var(--green)', referral: 'var(--amber)',
   not_interested: 'var(--muted)', auto_reply: 'var(--muted)', unsubscribe: 'var(--red)', error: 'var(--red)',
 }
+const MIN_CONF = 0.50  // only interested/referral above this confidence are surfaced
 
-// Replies — one flow: scan the Bison inbox → Claude classifies (junk/auto-replies
-// filtered, opt-outs auto-suppressed) → each interested reply gets an AI follow-up
-// draft you edit and approve. Approving tags the lead Interested and queues the
-// follow-up into the Interested Follow-up campaign (which sends it once active).
+// Collapsible list of the outbound sequence emails we sent this prospect.
+function SentEmails({ emails }) {
+  const [open, setOpen] = useState(false)
+  if (!emails?.length) return null
+  return (
+    <div style={{ margin: '4px 0 8px' }}>
+      <button className="linklike" style={{ fontSize: 12 }} onClick={() => setOpen((v) => !v)}>
+        {open ? '▾' : '▸'} Emails we sent ({emails.length})
+      </button>
+      {open && emails.map((m, i) => (
+        <div key={i} style={{ borderLeft: '2px solid var(--border)', paddingLeft: 10, margin: '6px 0', fontSize: 12 }}>
+          <div className="muted">{m.subject || '(no subject)'}{m.date ? ` · ${new Date(m.date).toLocaleDateString()}` : ''}</div>
+          <div style={{ whiteSpace: 'pre-wrap', color: 'var(--muted)' }}>{(m.text || '').slice(0, 600)}</div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function ProgressBar({ pct }) {
+  return (
+    <div style={{ height: 8, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+      <div style={{ height: '100%', width: `${pct}%`, background: 'var(--accent, #0a7)', transition: 'width .25s ease' }} />
+    </div>
+  )
+}
+
+// Replies — one loop: scan the Bison inbox → Claude classifies → review the possible
+// interested/referrals (with the prospect's title + the emails we sent + the sending
+// inbox) → Tag interested → draft the follow-up → Approve, which sends the reply
+// directly in the prospect's Bison thread and clears the card. A re-reply reappears.
 export default function RepliesPage() {
   const [queue, setQueue] = useState(null)
   const [drafts, setDrafts] = useState(null)
-  const [error, setError] = useState(null)        // load errors only
+  const [error, setError] = useState(null)
   const [msg, setMsg] = useState(null)            // unified action feedback {err, text}
   const [scanning, setScanning] = useState(false)
   const [drafting, setDrafting] = useState(false)
+  const [tagging, setTagging] = useState(null)    // reply_id being tagged
   const [busy, setBusy] = useState(null)          // reply_id being approved
   const [lookback, setLookback] = useState(14)
   const [campaign, setCampaign] = useState('')
   const [edits, setEdits] = useState({})          // reply_id -> edited draft
   const [showOthers, setShowOthers] = useState(false)
-  const [samples, setSamples] = useState(null)
-  const [samplesBusy, setSamplesBusy] = useState(null)
+  const [pct, setPct] = useState({})              // reply_id -> send progress %
+  const timers = useRef({})
 
   const loadQueue = () => api.repliesQueue().then(setQueue).catch((e) => setError(e.message))
   const loadDrafts = () => api.followupDrafts().then(setDrafts).catch(() => {})
@@ -48,6 +77,16 @@ export default function RepliesPage() {
     finally { setScanning(false) }
   }
 
+  async function tag(it) {
+    setTagging(it.reply_id); setMsg(null)
+    try {
+      const r = await api.tagReplies([it.reply_id])
+      if (!r.ok) setMsg({ err: true, text: `Failed to tag ${it.from_name || it.from_email}.` })
+      await loadQueue()
+    } catch (e) { setMsg({ err: true, text: e.message }) }
+    finally { setTagging(null) }
+  }
+
   async function generateDrafts() {
     setDrafting(true); setMsg(null)
     try { await api.draftFollowups(); await loadDrafts() }
@@ -56,21 +95,24 @@ export default function RepliesPage() {
   }
 
   async function approve(it) {
-    setBusy(it.reply_id); setMsg(null)
+    const id = it.reply_id
+    setBusy(id); setMsg(null)
+    setPct((p) => ({ ...p, [id]: 8 }))
+    timers.current[id] = setInterval(
+      () => setPct((p) => ({ ...p, [id]: Math.min((p[id] || 8) + 11, 90) })), 180)
+    const stop = () => { clearInterval(timers.current[id]); delete timers.current[id] }
     try {
-      const r = await api.approveFollowup(it.reply_id, edits[it.reply_id] ?? draftFor(it)?.draft)
-      if (r.ok === false) setMsg({ err: true, text: r.error || 'approve failed' })
-      else setMsg({ err: false, text: `${it.from_name || it.from_email}: tagged Interested and queued into the Interested Follow-up campaign.` })
-      await Promise.all([loadDrafts(), loadQueue()])
-    } catch (e) { setMsg({ err: true, text: e.message }) }
+      const r = await api.approveFollowup(id, edits[id] ?? draftFor(it)?.draft)
+      stop()
+      if (r.ok === false) {
+        setPct((p) => ({ ...p, [id]: 0 })); setMsg({ err: true, text: r.error || 'send failed' })
+      } else {
+        setPct((p) => ({ ...p, [id]: 100 }))
+        setMsg({ err: false, text: `Sent follow-up to ${it.from_name || it.from_email} in the thread.` })
+        setTimeout(() => { Promise.all([loadQueue(), loadDrafts()]); setPct((p) => { const n = { ...p }; delete n[id]; return n }) }, 850)
+      }
+    } catch (e) { stop(); setPct((p) => ({ ...p, [id]: 0 })); setMsg({ err: true, text: e.message }) }
     finally { setBusy(null) }
-  }
-
-  async function draftSamples(it) {
-    setSamplesBusy(it.reply_id); setSamples(null)
-    try { setSamples({ ...(await api.samples({ from_email: it.from_email })), from_name: it.from_name }) }
-    catch (e) { setMsg({ err: true, text: e.message }) }
-    finally { setSamplesBusy(null) }
   }
 
   const items = queue?.items || []
@@ -78,17 +120,45 @@ export default function RepliesPage() {
   const draftBy = useMemo(
     () => Object.fromEntries((drafts?.items || []).map((d) => [String(d.reply_id), d])), [drafts])
   const draftFor = (it) => draftBy[String(it.reply_id)]
-  const interested = items.filter((it) => it.classifier?.interested)
-  const others = items.filter((it) => !it.classifier?.interested)
-  const needDrafts = interested.filter((it) => !draftFor(it) && !it.already_interested).length
+
+  const isCandidate = (it) => it.classifier?.interested && (it.classifier.confidence || 0) > MIN_CONF && !it.handled
+  const possible = items.filter((it) => isCandidate(it) && !it.already_interested)
+  const tagged = items.filter((it) => it.already_interested && !it.handled
+    && it.classifier?.interested && (it.classifier.confidence || 0) > MIN_CONF)
+  const others = items.filter((it) => !isCandidate(it) && !(it.already_interested && it.classifier?.interested))
+  const needDrafts = tagged.filter((it) => !draftFor(it)).length
+
+  // Shared header block for a reply card: who, title, sending inbox, intent/conf.
+  const CardHead = ({ it, cls, extra }) => (
+    <>
+      <div className="row between" style={{ marginBottom: 4 }}>
+        <span>
+          <b>{it.from_name || `${it.first_name || ''} ${it.last_name || ''}`.trim() || it.from_email}</b>
+          <span className="muted" style={{ fontSize: 12, marginLeft: 6 }}>{it.from_email}</span>
+        </span>
+        <span className="row" style={{ gap: 8, alignItems: 'center' }}>
+          <span className="badge" style={{ color: INTENT_COLOR[cls.intent] || 'var(--muted)' }}>{cls.intent}</span>
+          {cls.confidence != null && <span className="muted" style={{ fontSize: 12 }}>{Math.round(cls.confidence * 100)}%</span>}
+          {extra}
+        </span>
+      </div>
+      {it.title && <div className="muted" style={{ fontSize: 12 }}>{it.title}</div>}
+      {it.sending_email && <div className="muted" style={{ fontSize: 11 }}>sent from {it.sending_email}</div>}
+      <SentEmails emails={it.sent_emails} />
+      {it.subject && <div className="muted" style={{ fontSize: 12 }}>{it.subject}</div>}
+      <div style={{ fontSize: 13, margin: '6px 0 10px', borderLeft: '2px solid var(--border)', paddingLeft: 10, whiteSpace: 'pre-wrap' }}>
+        {it.text_body}
+      </div>
+    </>
+  )
 
   return (
     <div>
       <h1 className="page-title">Replies</h1>
       <p className="page-sub">
-        Scan the Bison inbox — Claude classifies each reply, auto-replies / non-lead senders / test mail are
-        filtered out, and explicit opt-outs are unsubscribed automatically. Review each interested reply, edit its
-        AI follow-up, and approve to tag the lead Interested and queue the follow-up into the Interested Follow-up campaign.
+        Scan the Bison inbox — Claude classifies each reply (auto-replies / non-lead senders / test mail filtered,
+        opt-outs auto-unsubscribed). Review the possible interested replies & referrals, tag the real ones, draft the
+        AI follow-up, and approve to send it straight back in the prospect's thread.
       </p>
 
       <div className="panel" style={{ marginBottom: 18 }}>
@@ -114,60 +184,62 @@ export default function RepliesPage() {
       {queue && (
         <div className="grid stat-grid" style={{ marginBottom: 22 }}>
           <Stat label="Scanned" value={num(counts.scanned || 0)} sub={`last ${queue.lookback_days || 14}d`} />
-          <Stat label="Interested" value={num(interested.length)} sub="to follow up" />
-          <Stat label="Filtered out" value={num(counts.filtered || 0)} sub="auto-reply / non-lead / test" />
+          <Stat label="Possible interested" value={num(possible.length)} sub={`> ${Math.round(MIN_CONF * 100)}% conf · to review`} />
+          <Stat label="Tagged" value={num(tagged.length)} sub="draft + send" />
           <Stat label="Unsubscribed" value={num(counts.unsubscribed || 0)} sub="opt-outs, suppressed in Bison" />
         </div>
       )}
 
       {!queue ? <Spinner label="Loading…" /> : (
         <>
-          {/* Interested replies — the work */}
-          <div className="row between" style={{ marginBottom: 10 }}>
-            <h2 className="section-h" style={{ margin: 0 }}>Interested replies <span className="muted">({num(interested.length)})</span></h2>
+          {/* 1 — Possible interested: review + tag */}
+          <h2 className="section-h" style={{ margin: '0 0 10px' }}>Possible interested <span className="muted">({num(possible.length)})</span></h2>
+          {possible.length === 0 ? (
+            <div className="empty">Nothing to review. Adjust the lookback and <b>Scan inbox</b>.</div>
+          ) : (
+            <div className="grid" style={{ gap: 12 }}>
+              {possible.map((it) => {
+                const cls = it.classifier || {}
+                return (
+                  <div className="panel" key={it.reply_id}>
+                    <CardHead it={it} cls={cls} />
+                    <div className="row" style={{ justifyContent: 'flex-end' }}>
+                      <button onClick={() => tag(it)} disabled={tagging === it.reply_id} style={{ background: 'var(--green)' }}>
+                        {tagging === it.reply_id ? <Spinner label="Tagging…" /> : 'Tag interested →'}
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {/* 2 — Interested replies: draft + approve (sends in-thread) */}
+          <div className="row between" style={{ margin: '28px 0 10px' }}>
+            <h2 className="section-h" style={{ margin: 0 }}>Interested replies <span className="muted">({num(tagged.length)})</span></h2>
             {needDrafts > 0 && (
               <button onClick={generateDrafts} disabled={drafting}>
                 {drafting ? <Spinner label="Drafting…" /> : `✎ Draft follow-ups (${needDrafts})`}
               </button>
             )}
           </div>
-
-          {interested.length === 0 ? (
-            <div className="empty">No interested replies in this window. Adjust the lookback and <b>Scan inbox</b>.</div>
+          {tagged.length === 0 ? (
+            <div className="empty">Tag a reply above to start a follow-up.</div>
           ) : (
             <div className="grid" style={{ gap: 12 }}>
-              {interested.map((it) => {
+              {tagged.map((it) => {
                 const cls = it.classifier || {}
                 const d = draftFor(it)
-                // "queued" = the follow-up was approved into the campaign. Being
-                // already tagged Interested is separate — you can still follow up.
-                const queued = d?.status === 'queued' || d?.status === 'sent'
+                const sending = busy === it.reply_id || pct[it.reply_id] != null
                 return (
-                  <div className="panel" key={it.reply_id} style={{ opacity: queued ? 0.75 : 1 }}>
-                    <div className="row between" style={{ marginBottom: 6 }}>
-                      <span>
-                        <b>{it.from_name || it.from_email}</b>
-                        <span className="muted" style={{ fontSize: 12, marginLeft: 6 }}>{it.from_email}</span>
-                      </span>
-                      <span className="row" style={{ gap: 8, alignItems: 'center' }}>
-                        <span className="badge" style={{ color: INTENT_COLOR[cls.intent] || 'var(--muted)' }}>{cls.intent}</span>
-                        {cls.confidence != null && <span className="muted" style={{ fontSize: 12 }}>{Math.round(cls.confidence * 100)}%</span>}
-                        {it.already_interested && <span className="badge status-enrolled">tagged</span>}
-                        {queued && <span className="badge" style={{ color: 'var(--green)', borderColor: 'var(--green)' }}>queued ✓</span>}
-                      </span>
-                    </div>
-                    {it.subject && <div className="muted" style={{ fontSize: 12 }}>{it.subject}</div>}
-                    <div style={{ fontSize: 13, margin: '6px 0 10px', borderLeft: '2px solid var(--border)', paddingLeft: 10, whiteSpace: 'pre-wrap' }}>
-                      {it.text_body}
-                    </div>
-
-                    {/* the AI follow-up */}
+                  <div className="panel" key={it.reply_id}>
+                    <CardHead it={it} cls={cls} extra={<span className="badge status-enrolled">tagged</span>} />
                     {d?.error ? (
                       <div className="banner warn">Draft error: {d.error}</div>
                     ) : d ? (
                       <>
-                        <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>AI follow-up draft — edit before approving:</div>
-                        <textarea value={edits[it.reply_id] ?? d.draft} disabled={queued}
+                        <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>AI follow-up draft — edit before sending:</div>
+                        <textarea value={edits[it.reply_id] ?? d.draft} disabled={sending}
                           onChange={(e) => setEdits((m) => ({ ...m, [it.reply_id]: e.target.value }))}
                           rows={5} style={{ width: '100%', boxSizing: 'border-box', fontSize: 13 }} />
                         {d.rationale && <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>why: {d.rationale}</div>}
@@ -176,29 +248,33 @@ export default function RepliesPage() {
                       <div className="muted" style={{ fontSize: 12 }}>No draft yet — click <b>Draft follow-ups</b> above.</div>
                     )}
 
-                    <div className="row between" style={{ marginTop: 10, alignItems: 'center' }}>
-                      <button className="linklike" style={{ fontSize: 12 }}
-                        onClick={() => draftSamples(it)} disabled={samplesBusy === it.reply_id}
-                        title="Draft 3 sample emails our AI would write for this lead's company">
-                        {samplesBusy === it.reply_id ? <Spinner /> : 'Draft 3 samples'}
-                      </button>
-                      {!queued && d && !d.error && (
+                    {pct[it.reply_id] != null && (
+                      <div style={{ marginTop: 10 }}>
+                        <ProgressBar pct={pct[it.reply_id]} />
+                        <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                          {pct[it.reply_id] >= 100 ? 'sent ✓' : 'sending the reply in the thread…'}
+                        </div>
+                      </div>
+                    )}
+
+                    {d && !d.error && pct[it.reply_id] == null && (
+                      <div className="row" style={{ justifyContent: 'flex-end', marginTop: 10 }}>
                         <button onClick={() => approve(it)} disabled={busy === it.reply_id} style={{ background: 'var(--green)' }}>
-                          {busy === it.reply_id ? <Spinner label="Approving…" /> : 'Approve follow-up →'}
+                          Approve follow-up →
                         </button>
-                      )}
-                    </div>
+                      </div>
+                    )}
                   </div>
                 )
               })}
             </div>
           )}
 
-          {/* Everything else — collapsed, low-priority */}
+          {/* Everything else — collapsed */}
           {others.length > 0 && (
-            <div style={{ marginTop: 26 }}>
+            <div style={{ marginTop: 28 }}>
               <button className="linklike" onClick={() => setShowOthers((v) => !v)} style={{ fontSize: 13 }}>
-                {showOthers ? '▾' : '▸'} {num(others.length)} other replies (not interested)
+                {showOthers ? '▾' : '▸'} {num(others.length)} other replies (not interested / low confidence)
               </button>
               {showOthers && (
                 <div className="panel" style={{ padding: 0, marginTop: 8 }}>
@@ -222,29 +298,6 @@ export default function RepliesPage() {
               )}
             </div>
           )}
-        </>
-      )}
-
-      {samples && (
-        <>
-          <div className="drawer-backdrop" onClick={() => setSamples(null)} />
-          <div className="drawer">
-            <button className="close-x" onClick={() => setSamples(null)}>Close ✕</button>
-            <h2 className="page-title" style={{ marginBottom: 2 }}>3 samples for {samples.company || '—'}</h2>
-            <p className="page-sub" style={{ marginBottom: 12 }}>
-              What our AI SDR would write for {samples.from_name ? `${samples.from_name}'s` : 'their'} own outbound.
-              Paste these into your reply to prove the product.
-            </p>
-            <div className="banner info"><b>Their ICP:</b> {samples.icp_summary || '—'}</div>
-            {(samples.samples || []).map((s, i) => (
-              <div className="touch" key={i}>
-                <div className="step">Sample {i + 1} · {s.account}</div>
-                {s.signal && <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>signal: {s.signal}</div>}
-                <div className="body">{s.opener}</div>
-              </div>
-            ))}
-            {(samples.samples || []).length === 0 && <div className="empty">No samples returned — try again.</div>}
-          </div>
         </>
       )}
     </div>

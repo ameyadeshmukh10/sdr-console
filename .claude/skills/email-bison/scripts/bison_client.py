@@ -261,6 +261,12 @@ class BisonClient:
         payload = self.get(f"/api/leads/{lead_id}")
         return payload.get("data", {})
 
+    def get_lead_sent_emails(self, lead_id):
+        """Emails we actually sent this lead: [{email_subject, email_body, sent_at,
+        sender_email, campaign_id, ...}] (the outbound sequence in the thread)."""
+        payload = self.get(f"/api/leads/{lead_id}/sent-emails")
+        return payload.get("data", payload) if isinstance(payload, dict) else (payload or [])
+
     def get_campaign(self, campaign_id):
         if campaign_id in self._campaign_cache:
             return self._campaign_cache[campaign_id]
