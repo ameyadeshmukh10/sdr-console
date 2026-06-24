@@ -1574,29 +1574,26 @@ def do_approve_followup(reply_id, message):
     item = next((d for d in drafts.get("items", []) if str(d.get("reply_id")) == str(reply_id)), None)
     if not item:
         return {"ok": False, "error": f"no draft for reply {reply_id}"}, 404
+    if not item.get("lead_id"):
+        return {"ok": False, "error": "reply has no associated lead — cannot set the follow-up variable"}, 409
     bison = _bison()
-    # Resolve the sender inbox + recipient live if the draft predates that field.
-    sender_email_id, to_email = item.get("sender_email_id"), item.get("from_email")
-    if not (sender_email_id and to_email):
-        for r in bison.list_replies(folder="inbox"):
-            if str(r.get("id")) == str(reply_id):
-                sender_email_id = sender_email_id or r.get("sender_email_id")
-                to_email = to_email or r.get("from_email_address")
-                break
-    if not (sender_email_id and to_email):
-        return {"ok": False, "error": "could not resolve sender inbox / recipient for this reply"}, 409
+    # Templated send: set the (edited) draft as the lead's `followup_body` custom
+    # variable, then push the lead into the Interested Follow-up campaign. The
+    # campaign's sequence step ({{followup_body}}, thread_reply) does the sending —
+    # we don't send the email directly.
+    # The campaign's sequence step renders {FOLLOWUP_BODY}; the subject is
+    # auto-generated in the followup thread, so we only set the body variable.
+    body = (message or item.get("draft", "")).replace("\n", "<br>")
     try:
-        if item.get("lead_id"):  # mark interested + tag, like the normal flow
-            bison.mark_reply_interested(reply_id)
-            bison.attach_tags_to_leads([interested_tag_id()], [item["lead_id"]])
+        bison.mark_reply_interested(reply_id)
+        bison.attach_tags_to_leads([interested_tag_id()], [item["lead_id"]])
+        bison.update_lead(item["lead_id"],
+                          custom_variables=[{"name": "followup_body", "value": body}])
         bison.push_reply_to_followup_campaign(reply_id, campaign_id)
-        body = (message or item.get("draft", "")).replace("\n", "<br>")  # plain text -> html
-        bison.send_reply(reply_id, body, sender_email_id,
-                         [{"email_address": to_email, "name": item.get("from_name")}])
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)[:300]}, 502
-    item["status"] = "sent"
-    item["sent_at"] = now_iso()
+    item["status"] = "queued"
+    item["queued_at"] = now_iso()
     item["sent_message"] = message or item.get("draft", "")
     FOLLOWUP_DRAFTS.write_text(json.dumps(drafts, indent=2, ensure_ascii=False))
     return {"ok": True, "reply_id": reply_id, "campaign_id": campaign_id}, 200

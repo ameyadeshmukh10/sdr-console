@@ -142,11 +142,18 @@ class BisonClient:
         if last_err:
             raise last_err
 
+    def put(self, path, body=None):
+        """Single authenticated PUT returning parsed JSON (mirrors patch)."""
+        return self._write("PUT", path, body)
+
     def patch(self, path, body=None):
         """Single authenticated PATCH returning parsed JSON (mirrors post)."""
+        return self._write("PATCH", path, body)
+
+    def _write(self, method, path, body=None):
         url = self.base_url + path
         data = json.dumps(body or {}).encode("utf-8")
-        req = urllib.request.Request(url, data=data, method="PATCH")
+        req = urllib.request.Request(url, data=data, method=method)
         req.add_header("Authorization", f"Bearer {self.api_key}")
         req.add_header("Accept", "application/json")
         req.add_header("Content-Type", "application/json")
@@ -197,6 +204,20 @@ class BisonClient:
         campaign dict {id, name, ...}."""
         payload = self.post("/api/campaigns", {"name": name, "type": type})
         return payload.get("data", payload) if isinstance(payload, dict) else payload
+
+    def create_sequence_steps(self, campaign_id, sequence_steps, title="Sequence"):
+        """Create the sequence steps for a campaign. Each step:
+        {email_subject, email_body, wait_in_days, order, thread_reply?}."""
+        return self.post(f"/api/campaigns/{campaign_id}/sequence-steps",
+                         {"title": title, "sequence_steps": sequence_steps})
+
+    def get_sequence_steps(self, campaign_id):
+        return self.get(f"/api/campaigns/{campaign_id}/sequence-steps")
+
+    def update_sequence_steps(self, sequence_id, sequence_steps, title="Sequence"):
+        """Replace a campaign's sequence steps (PUT). sequence_id is the step/sequence id."""
+        return self.put(f"/api/campaigns/sequence-steps/{sequence_id}",
+                       {"title": title, "sequence_steps": sequence_steps})
 
     def push_reply_to_followup_campaign(self, reply_id, campaign_id, force_add_reply=True):
         """Move a reply + its lead into a reply-followup campaign."""

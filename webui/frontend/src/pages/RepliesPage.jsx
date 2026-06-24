@@ -56,7 +56,7 @@ export default function RepliesPage() {
       const msg = edits[it.reply_id] ?? it.draft
       const r = await api.approveFollowup(it.reply_id, msg)
       if (r.ok === false) setFuMsg({ err: true, text: r.error || 'send failed' })
-      else setFuMsg({ err: false, text: `Sent follow-up to ${it.from_name || it.from_email} and pushed to the Interested Follow-up campaign.` })
+      else setFuMsg({ err: false, text: `Queued follow-up for ${it.from_name || it.from_email} — set as the lead's variable and pushed into the Interested Follow-up campaign, which sends it.` })
       loadDrafts()
     } catch (e) { setFuMsg({ err: true, text: e.message }) }
     finally { setSending(null) }
@@ -219,14 +219,14 @@ export default function RepliesPage() {
       ) : (
         <div className="grid" style={{ gap: 12 }}>
           {drafts.items.map((it) => {
-            const sent = it.status === 'sent'
+            const sent = it.status === 'queued' || it.status === 'sent'
             return (
               <div className="panel" key={it.reply_id} style={{ opacity: sent ? 0.7 : 1 }}>
                 <div className="row between" style={{ marginBottom: 6 }}>
                   <span><b>{it.from_name || it.from_email}</b> <span className="muted" style={{ fontSize: 12 }}>{it.from_email}</span></span>
                   <span className="row" style={{ gap: 8 }}>
                     <span className="badge" style={{ color: INTENT_COLOR[it.intent] || 'var(--muted)' }}>{it.intent}</span>
-                    {sent && <span className="badge" style={{ color: 'var(--green)', borderColor: 'var(--green)' }}>sent ✓</span>}
+                    {sent && <span className="badge" style={{ color: 'var(--green)', borderColor: 'var(--green)' }}>{it.status === 'queued' ? 'queued ✓' : 'sent ✓'}</span>}
                   </span>
                 </div>
                 {it.original_reply && <div className="muted" style={{ fontSize: 12, marginBottom: 8, borderLeft: '2px solid var(--border)', paddingLeft: 8 }}>{it.original_reply.slice(0, 220)}</div>}
