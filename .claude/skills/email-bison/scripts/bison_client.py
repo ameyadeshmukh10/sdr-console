@@ -205,10 +205,14 @@ class BisonClient:
 
     def send_reply(self, reply_id, message, sender_email_id, to_emails,
                    content_type="html", inject_previous=True):
-        """Send a reply in the thread of an existing reply (the drafted follow-up)."""
+        """Send a reply in the thread of an existing reply (the drafted follow-up).
+
+        to_emails accepts plain address strings or {email_address, name} dicts;
+        the API requires the object shape, so strings are wrapped here."""
+        recipients = [{"email_address": t} if isinstance(t, str) else t for t in to_emails]
         return self.post(f"/api/replies/{reply_id}/reply", {
             "message": message, "sender_email_id": sender_email_id,
-            "to_emails": list(to_emails), "content_type": content_type,
+            "to_emails": recipients, "content_type": content_type,
             "inject_previous_email_body": inject_previous})
 
     def rename_campaign(self, campaign_id, name):

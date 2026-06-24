@@ -1590,8 +1590,9 @@ def do_approve_followup(reply_id, message):
             bison.mark_reply_interested(reply_id)
             bison.attach_tags_to_leads([interested_tag_id()], [item["lead_id"]])
         bison.push_reply_to_followup_campaign(reply_id, campaign_id)
-        bison.send_reply(reply_id, message or item.get("draft", ""),
-                         sender_email_id, [to_email])
+        body = (message or item.get("draft", "")).replace("\n", "<br>")  # plain text -> html
+        bison.send_reply(reply_id, body, sender_email_id,
+                         [{"email_address": to_email, "name": item.get("from_name")}])
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)[:300]}, 502
     item["status"] = "sent"
