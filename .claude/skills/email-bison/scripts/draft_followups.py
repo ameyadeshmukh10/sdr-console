@@ -117,6 +117,7 @@ def main():
                 d = fut.result()
                 drafted.append({
                     "reply_id": it.get("reply_id"), "lead_id": it.get("lead_id"),
+                    "sender_email_id": it.get("sender_email_id"),
                     "from_name": it.get("from_name"), "from_email": it.get("from_email"),
                     "subject": it.get("subject"), "campaign_id": it.get("campaign_id"),
                     "original_reply": (it.get("text_body") or "")[:1500],

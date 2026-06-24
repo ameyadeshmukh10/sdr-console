@@ -60,6 +60,8 @@ CLAY_ENRICH = SCRIPTS / "sdr-pipeline" / "scripts" / "clay_enrich.py"
 PIPELINE_SCRIPTS = SCRIPTS / "sdr-pipeline" / "scripts"
 SOURCE_JOBS_DIR = DATA / "outreach" / "source-jobs"
 CLASSIFY_REPLIES = SCRIPTS / "email-bison" / "scripts" / "classify_replies.py"
+DRAFT_FOLLOWUPS = SCRIPTS / "email-bison" / "scripts" / "draft_followups.py"
+FOLLOWUP_DRAFTS = DATA / "interested-replies" / "followup_drafts.json"
 ANALYZE = SCRIPTS / "interested-trends" / "scripts"
 TRENDS_DIR = DATA / "interested-replies" / "analysis"
 REPLIES_LAST_RUN = DATA / "interested-replies" / "last_run.json"
@@ -1544,6 +1546,53 @@ def do_tag_replies(reply_ids):
     return {"ok": failed == 0, "tagged": tagged, "failed": failed, "results": results}
 
 
+# ---- Interested follow-up: draft -> approve (push to campaign + send) ----------
+def do_draft_followups():
+    """Generate follow-up drafts for the interested replies in the review queue."""
+    res = run_script([str(DRAFT_FOLLOWUPS)], timeout=600)
+    payload = _read_json(FOLLOWUP_DRAFTS) or {"items": []}
+    payload["ok"] = res["returncode"] == 0
+    payload["scan"] = res
+    return payload
+
+
+def followup_drafts_payload():
+    payload = _read_json(FOLLOWUP_DRAFTS) or {"items": []}
+    payload["available"] = FOLLOWUP_DRAFTS.is_file()
+    return payload
+
+
+def do_approve_followup(reply_id, message):
+    """Approve a drafted follow-up: tag interested + push the lead into the
+    Interested Follow-up campaign + send the (edited) reply in the thread."""
+    env = read_env()
+    raw = (env.get("BISON_INTERESTED_FOLLOWUP_CAMPAIGN_ID") or "").strip()
+    if not raw.isdigit():
+        return {"ok": False, "error": "BISON_INTERESTED_FOLLOWUP_CAMPAIGN_ID not set"}, 409
+    campaign_id = int(raw)
+    drafts = _read_json(FOLLOWUP_DRAFTS) or {"items": []}
+    item = next((d for d in drafts.get("items", []) if str(d.get("reply_id")) == str(reply_id)), None)
+    if not item:
+        return {"ok": False, "error": f"no draft for reply {reply_id}"}, 404
+    if not (item.get("sender_email_id") and item.get("from_email")):
+        return {"ok": False, "error": "draft missing sender inbox / recipient"}, 409
+    bison = _bison()
+    try:
+        if item.get("lead_id"):  # mark interested + tag, like the normal flow
+            bison.mark_reply_interested(reply_id)
+            bison.attach_tags_to_leads([interested_tag_id()], [item["lead_id"]])
+        bison.push_reply_to_followup_campaign(reply_id, campaign_id)
+        bison.send_reply(reply_id, message or item.get("draft", ""),
+                         item["sender_email_id"], [item["from_email"]])
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": str(e)[:300]}, 502
+    item["status"] = "sent"
+    item["sent_at"] = now_iso()
+    item["sent_message"] = message or item.get("draft", "")
+    FOLLOWUP_DRAFTS.write_text(json.dumps(drafts, indent=2, ensure_ascii=False))
+    return {"ok": True, "reply_id": reply_id, "campaign_id": campaign_id}, 200
+
+
 # ----------------------------------------------------------------------------
 # Per-company signal cache (read + force-refresh).
 # ----------------------------------------------------------------------------
@@ -1747,6 +1796,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(trends_payload())
             if path == "/api/replies/queue":
                 return self._json(review_queue_payload())
+            if path == "/api/replies/followup/drafts":
+                return self._json(followup_drafts_payload())
             if path == "/api/signals":
                 return self._json(signals_payload())
             if path == "/api/variants":
@@ -1902,6 +1953,16 @@ class Handler(BaseHTTPRequestHandler):
                 if not reply_ids:
                     return self._error(400, "reply_ids required")
                 return self._json(do_tag_replies(reply_ids))
+            if path == "/api/replies/followup/draft":
+                return self._json(do_draft_followups())
+            if path == "/api/replies/followup/approve":
+                body = self._read_body()
+                if body.get("confirm") is not True:
+                    return self._error(400, "sending requires confirm=true")
+                if not body.get("reply_id"):
+                    return self._error(400, "reply_id required")
+                payload, code = do_approve_followup(body.get("reply_id"), body.get("message"))
+                return self._json(payload, code=code)
             if path == "/api/reindex":
                 n = INDEX.build()
                 return self._json({"indexed": n, "built_at": INDEX.built_at})

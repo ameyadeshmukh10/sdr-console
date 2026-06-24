@@ -221,6 +221,7 @@ def main():
         return {
             "reply_id": reply.get("id"),
             "lead_id": reply.get("lead_id"),
+            "sender_email_id": reply.get("sender_email_id"),  # Bison inbox to reply FROM
             "from_name": reply.get("from_name"),
             "from_email": reply.get("from_email_address"),
             "subject": reply.get("subject"),
