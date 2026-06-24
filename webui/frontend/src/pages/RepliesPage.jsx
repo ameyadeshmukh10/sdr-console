@@ -61,6 +61,7 @@ export default function RepliesPage() {
   const [edits, setEdits] = useState({})          // reply_id -> edited draft
   const [showOthers, setShowOthers] = useState(false)
   const [pct, setPct] = useState({})              // reply_id -> send progress %
+  const [sendErr, setSendErr] = useState({})      // reply_id -> inline send error
   const timers = useRef({})
 
   const loadQueue = () => api.repliesQueue().then(setQueue).catch((e) => setError(e.message))
@@ -94,24 +95,27 @@ export default function RepliesPage() {
     finally { setDrafting(false) }
   }
 
+  const clearPct = (id) => setPct((p) => { const n = { ...p }; delete n[id]; return n })
+
   async function approve(it) {
     const id = it.reply_id
     setBusy(id); setMsg(null)
+    setSendErr((e) => { const n = { ...e }; delete n[id]; return n })
     setPct((p) => ({ ...p, [id]: 8 }))
     timers.current[id] = setInterval(
       () => setPct((p) => ({ ...p, [id]: Math.min((p[id] || 8) + 11, 90) })), 180)
     const stop = () => { clearInterval(timers.current[id]); delete timers.current[id] }
+    const fail = (text) => { clearPct(id); setSendErr((e) => ({ ...e, [id]: text })); setMsg({ err: true, text }) }
     try {
       const r = await api.approveFollowup(id, edits[id] ?? draftFor(it)?.draft)
       stop()
-      if (r.ok === false) {
-        setPct((p) => ({ ...p, [id]: 0 })); setMsg({ err: true, text: r.error || 'send failed' })
-      } else {
+      if (r.ok === false) { fail(r.error || 'send failed') }
+      else {
         setPct((p) => ({ ...p, [id]: 100 }))
         setMsg({ err: false, text: `Sent follow-up to ${it.from_name || it.from_email} in the thread.` })
-        setTimeout(() => { Promise.all([loadQueue(), loadDrafts()]); setPct((p) => { const n = { ...p }; delete n[id]; return n }) }, 850)
+        setTimeout(() => { Promise.all([loadQueue(), loadDrafts()]); clearPct(id) }, 850)
       }
-    } catch (e) { stop(); setPct((p) => ({ ...p, [id]: 0 })); setMsg({ err: true, text: e.message }) }
+    } catch (e) { stop(); fail(e.message) }
     finally { setBusy(null) }
   }
 
@@ -257,10 +261,14 @@ export default function RepliesPage() {
                       </div>
                     )}
 
+                    {sendErr[it.reply_id] && (
+                      <div className="banner warn" style={{ marginTop: 8 }}>Send failed: {sendErr[it.reply_id]}</div>
+                    )}
+
                     {d && !d.error && pct[it.reply_id] == null && (
                       <div className="row" style={{ justifyContent: 'flex-end', marginTop: 10 }}>
                         <button onClick={() => approve(it)} disabled={busy === it.reply_id} style={{ background: 'var(--green)' }}>
-                          Approve follow-up →
+                          {sendErr[it.reply_id] ? 'Retry send →' : 'Approve follow-up →'}
                         </button>
                       </div>
                     )}

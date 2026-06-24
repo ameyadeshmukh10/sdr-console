@@ -13,6 +13,16 @@ cd "$ROOT"
 
 MODE="${1:-prod}"
 
+# Free :8787 if a previous instance is still bound — otherwise the new server
+# can't bind and a stale process keeps serving old code (a recurring footgun).
+STALE="$(lsof -nP -iTCP:8787 -sTCP:LISTEN -t 2>/dev/null || true)"
+if [ -n "$STALE" ]; then
+  echo "[run] :8787 in use by PID $STALE — stopping it so this instance can bind ..."
+  kill "$STALE" 2>/dev/null || true
+  sleep 1
+  kill -9 "$STALE" 2>/dev/null || true
+fi
+
 if [ "$MODE" = "dev" ]; then
   echo "[run] starting Python API on :8787 ..."
   python3 webui/server/app.py --port 8787 &
