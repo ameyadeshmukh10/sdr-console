@@ -1574,16 +1574,24 @@ def do_approve_followup(reply_id, message):
     item = next((d for d in drafts.get("items", []) if str(d.get("reply_id")) == str(reply_id)), None)
     if not item:
         return {"ok": False, "error": f"no draft for reply {reply_id}"}, 404
-    if not (item.get("sender_email_id") and item.get("from_email")):
-        return {"ok": False, "error": "draft missing sender inbox / recipient"}, 409
     bison = _bison()
+    # Resolve the sender inbox + recipient live if the draft predates that field.
+    sender_email_id, to_email = item.get("sender_email_id"), item.get("from_email")
+    if not (sender_email_id and to_email):
+        for r in bison.list_replies(folder="inbox"):
+            if str(r.get("id")) == str(reply_id):
+                sender_email_id = sender_email_id or r.get("sender_email_id")
+                to_email = to_email or r.get("from_email_address")
+                break
+    if not (sender_email_id and to_email):
+        return {"ok": False, "error": "could not resolve sender inbox / recipient for this reply"}, 409
     try:
         if item.get("lead_id"):  # mark interested + tag, like the normal flow
             bison.mark_reply_interested(reply_id)
             bison.attach_tags_to_leads([interested_tag_id()], [item["lead_id"]])
         bison.push_reply_to_followup_campaign(reply_id, campaign_id)
         bison.send_reply(reply_id, message or item.get("draft", ""),
-                         item["sender_email_id"], [item["from_email"]])
+                         sender_email_id, [to_email])
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)[:300]}, 502
     item["status"] = "sent"

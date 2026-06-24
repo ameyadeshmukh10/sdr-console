@@ -36,6 +36,7 @@ export default function RepliesPage() {
   const [drafting, setDrafting] = useState(false)
   const [edits, setEdits] = useState({})       // reply_id -> edited draft text
   const [sending, setSending] = useState(null)  // reply_id being approved
+  const [fuMsg, setFuMsg] = useState(null)     // inline follow-up action feedback
 
   function loadDrafts() {
     api.followupDrafts().then(setDrafts).catch(() => {})
@@ -50,13 +51,14 @@ export default function RepliesPage() {
   }
 
   async function approveFollowup(it) {
-    setSending(it.reply_id); setError(null)
+    setSending(it.reply_id); setError(null); setFuMsg(null)
     try {
       const msg = edits[it.reply_id] ?? it.draft
       const r = await api.approveFollowup(it.reply_id, msg)
-      if (r.ok === false) setError(r.error || 'send failed')
+      if (r.ok === false) setFuMsg({ err: true, text: r.error || 'send failed' })
+      else setFuMsg({ err: false, text: `Sent follow-up to ${it.from_name || it.from_email} and pushed to the Interested Follow-up campaign.` })
       loadDrafts()
-    } catch (e) { setError(e.message) }
+    } catch (e) { setFuMsg({ err: true, text: e.message }) }
     finally { setSending(null) }
   }
 
@@ -211,6 +213,7 @@ export default function RepliesPage() {
       <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
         AI-drafted reply per interested lead. Approve to push the lead into the <b>Interested Follow-up</b> campaign and send the (edited) reply in the thread.
       </p>
+      {fuMsg && <div className={`banner ${fuMsg.err ? 'warn' : 'info'}`} style={{ marginBottom: 10 }}>{fuMsg.text}</div>}
       {!drafts?.items?.length ? (
         <div className="empty">No follow-up drafts yet. Click <b>Draft follow-ups</b> to generate them for the interested replies above.</div>
       ) : (
