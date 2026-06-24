@@ -15,9 +15,11 @@ guardrail linter (unless --no-lint).
 Run:  python3 .claude/skills/sdr-pipeline/scripts/enroll.py [--dry-run] [--no-lint]
 """
 
+import concurrent.futures
 import json
 import os
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -30,6 +32,9 @@ import lint_sequence as L  # noqa: E402
 PROJECT_ROOT = SCRIPTS.parents[3]
 OUT_DIR = PROJECT_ROOT / "data" / "outreach"
 GEN_DIR = OUT_DIR / "generated"
+
+ENROLL_WORKERS = 8   # concurrent lead create/update calls
+HR_CHUNK = 100       # max HeyReach leads per add_leads_to_campaign call
 STATE_FILE = OUT_DIR / "enroll_state.json"
 
 
@@ -48,6 +53,24 @@ def _load_dotenv():
 
 EMAIL_KEYS = [f"{k}{i}" for i in range(1, 5) for k in ("subject", "body")]
 LI_KEYS = ["li_connect", "li_msg1", "li_msg2"]
+
+
+def heyreach_accounts():
+    """LinkedIn sender account ids from HEYREACH_LINKEDIN_ACCOUNT_ID. Comma-separated
+    when the campaign has multiple senders — leads are spread across them."""
+    raw = os.environ.get("HEYREACH_LINKEDIN_ACCOUNT_ID") or ""
+    return [a.strip() for a in raw.split(",") if a.strip()]
+
+
+def heyreach_account_for(accounts, contact_id):
+    """Stable round-robin pick — balances leads across senders, deterministic and
+    thread-safe (no shared counter)."""
+    n = len(accounts)
+    try:
+        idx = int(str(contact_id)) % n
+    except ValueError:
+        idx = sum(map(ord, str(contact_id))) % n
+    return accounts[idx]
 
 # Per-persona Bison campaign routing (legacy; kept as a fallback).
 PERSONA_CAMPAIGN_ENV = {
@@ -129,7 +152,7 @@ def main():
                 (json.loads(l) for l in contacts_path.open() if l.strip())}
 
     hr_campaign = os.environ.get("HEYREACH_CAMPAIGN_ID")
-    hr_account = os.environ.get("HEYREACH_LINKEDIN_ACCOUNT_ID")
+    hr_accounts = heyreach_accounts()
 
     # Lazy clients (only built when actually sending).
     bison = heyreach = None
@@ -146,80 +169,117 @@ def main():
         return 1
 
     counts = {"email": 0, "linkedin": 0, "skipped_lint": 0, "skipped_done": 0, "no_li": 0}
-    for gf in gen_files:
+
+    # Phase 1 — per-contact lint (local) + the lead create/update (network) run
+    # concurrently. The Bison/HeyReach clients are stateless per call (and already
+    # retry on 429/5xx), so this parallelizes cleanly. Workers only READ shared
+    # state and return a result; state mutation + attaching happen single-threaded
+    # below, so there's no lock to manage. The campaign attach is deferred and
+    # batched (see phase 2) — one call per campaign instead of one per contact.
+    def worker(gf):
+        res = {"cid": None, "logs": [], "counts": {},
+               "bison_new": None, "hr_pair": None}
         asset = json.loads(gf.read_text())
         cid = str(asset.get("contact_id"))
+        res["cid"] = cid
         contact = contacts.get(cid) or contacts.get(asset.get("contact_id"))
         if not contact:
-            print(f"  ! {gf.name}: no matching contact in contacts.jsonl — skipping")
-            continue
-        st = state.setdefault(cid, {})
-        email = asset.get("email", {})
-        linkedin = asset.get("linkedin", {})
+            res["logs"].append(f"  ! {gf.name}: no matching contact in contacts.jsonl — skipping")
+            return res
+        st = state.get(cid, {})
+        email, linkedin = asset.get("email", {}), asset.get("linkedin", {})
 
-        # ---- guardrail lint ----
         if not no_lint:
             issues = lint_email_assets(email)
             if issues:
-                counts["skipped_lint"] += 1
-                print(f"  ✗ {contact.get('email')} [{contact.get('persona')}] FAILED lint:")
-                for it in issues[:6]:
-                    print(f"      - {it}")
-                continue
+                res["counts"]["skipped_lint"] = 1
+                res["logs"].append(f"  ✗ {contact.get('email')} [{contact.get('persona')}] FAILED lint:")
+                res["logs"] += [f"      - {it}" for it in issues[:6]]
+                return res
 
-        # ---- Email Bison (per-VARIANT campaign; persona routing is the fallback) ----
         variant = asset.get("variant") or contact.get("variant") or "value-give"
         campaign = bison_campaign_for_variant(variant) or bison_campaign_for(contact.get("persona"))
         if st.get("bison"):
-            # Already enrolled → refresh the copy (custom_variables) on the existing lead.
             lead_id = st["bison"]["lead_id"]
             cvars = bison_custom_vars(email)
             if dry:
-                print(f"  [dry] BISON update lead {lead_id} ({contact.get('email')}) custom_variables refreshed")
+                res["logs"].append(f"  [dry] BISON update lead {lead_id} ({contact.get('email')}) custom_variables refreshed")
             else:
                 bison.update_lead(lead_id, email=contact.get("email"), custom_variables=cvars,
                                   first_name=contact.get("first_name"), last_name=contact.get("last_name"),
                                   title=contact.get("title"), company=contact.get("company"))
-            counts["updated"] = counts.get("updated", 0) + 1
+            res["counts"]["updated"] = 1
         elif not campaign:
-            counts["no_campaign"] = counts.get("no_campaign", 0) + 1
-            print(f"  ! {contact.get('email')} [{contact.get('persona')}]: no Bison campaign configured — skipping email")
+            res["counts"]["no_campaign"] = 1
+            res["logs"].append(f"  ! {contact.get('email')} [{contact.get('persona')}]: no Bison campaign configured — skipping email")
         else:
             cvars = bison_custom_vars(email)
             if dry:
-                print(f"  [dry] BISON create_lead {contact.get('email')} [{contact.get('persona')}] "
-                      f"custom_variables={[c['name'] for c in cvars]} → attach campaign {campaign}")
+                res["logs"].append(f"  [dry] BISON create_lead {contact.get('email')} [{contact.get('persona')}] "
+                                   f"custom_variables={[c['name'] for c in cvars]} → attach campaign {campaign}")
             else:
                 lead_id = bison.create_lead(
                     first_name=contact.get("first_name"), last_name=contact.get("last_name"),
                     email=contact.get("email"), title=contact.get("title"),
                     company=contact.get("company"), custom_variables=cvars)
-                bison.attach_leads_to_campaign(campaign, [lead_id])
-                st["bison"] = {"lead_id": lead_id, "campaign_id": campaign}
-            counts["email"] += 1
+                res["bison_new"] = (campaign, lead_id)  # attached in batch below
+            res["counts"]["email"] = 1
 
-        # ---- HeyReach (LinkedIn) ----
         li_url = contact.get("linkedin_url")
         if not li_url:
-            counts["no_li"] += 1
+            res["counts"]["no_li"] = 1
         elif st.get("heyreach"):
             pass
-        elif not (hr_campaign and hr_account):
+        elif not (hr_campaign and hr_accounts):
             if dry:
-                print("  [dry] HEYREACH skipped (HEYREACH_CAMPAIGN_ID / LINKEDIN_ACCOUNT_ID not set)")
+                res["logs"].append("  [dry] HEYREACH skipped (HEYREACH_CAMPAIGN_ID / LINKEDIN_ACCOUNT_ID not set)")
         else:
             custom_fields = {k: linkedin.get(k, "") for k in LI_KEYS}
             pair = HeyReachClient.build_pair(
-                hr_account, contact.get("first_name"), contact.get("last_name"), li_url,
+                heyreach_account_for(hr_accounts, cid),
+                contact.get("first_name"), contact.get("last_name"), li_url,
                 company=contact.get("company"), position=contact.get("title"),
                 email=contact.get("email"), custom_fields=custom_fields)
             if dry:
-                print(f"  [dry] HEYREACH add lead {li_url} → campaign {hr_campaign} "
-                      f"customUserFields={list(custom_fields.keys())}")
+                res["logs"].append(f"  [dry] HEYREACH add lead {li_url} → campaign {hr_campaign} "
+                                   f"customUserFields={list(custom_fields.keys())}")
             else:
-                heyreach.add_leads_to_campaign(hr_campaign, [pair])
-                st["heyreach"] = {"campaign_id": hr_campaign}
-            counts["linkedin"] += 1
+                res["hr_pair"] = (hr_campaign, pair)
+            res["counts"]["linkedin"] = 1
+        return res
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=ENROLL_WORKERS) as ex:
+        results = list(ex.map(worker, gen_files))  # preserves gen_files order
+
+    # Aggregate single-threaded: print logs, tally counts, collect batch work.
+    bison_by_campaign, hr_by_campaign = defaultdict(list), defaultdict(list)
+    for res in results:
+        for line in res["logs"]:
+            print(line)
+        for k, v in res["counts"].items():
+            counts[k] = counts.get(k, 0) + v
+        if res["bison_new"]:
+            campaign, lead_id = res["bison_new"]
+            bison_by_campaign[campaign].append((res["cid"], lead_id))
+        if res["hr_pair"]:
+            hr_by_campaign[res["hr_pair"][0]].append((res["cid"], res["hr_pair"][1]))
+
+    # Phase 2 — batch the campaign attaches: one call per campaign, not per lead.
+    for campaign, items in bison_by_campaign.items():
+        lead_ids = [lid for _, lid in items]
+        if not dry:
+            bison.attach_leads_to_campaign(campaign, lead_ids)
+            for cid, lid in items:  # mark enrolled only after a successful attach
+                state.setdefault(cid, {})["bison"] = {"lead_id": lid, "campaign_id": campaign}
+        print(f"  BISON attached {len(lead_ids)} leads → campaign {campaign}")
+    for campaign, items in hr_by_campaign.items():
+        pairs = [p for _, p in items]
+        if not dry:
+            for i in range(0, len(pairs), HR_CHUNK):  # chunk large adds
+                heyreach.add_leads_to_campaign(campaign, pairs[i:i + HR_CHUNK])
+            for cid, _ in items:
+                state.setdefault(cid, {})["heyreach"] = {"campaign_id": campaign}
+        print(f"  HEYREACH added {len(pairs)} leads → campaign {campaign}")
 
     if not dry:
         save_state(state)

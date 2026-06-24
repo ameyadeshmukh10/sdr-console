@@ -15,16 +15,29 @@ independent request/response HTTP POST that carries the session header.
 
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 
 import clay_oauth
 
 PROTOCOL_VERSION = "2025-06-18"
+RETRY_STATUS = {429, 500, 502, 503, 504, 529}
+MAX_ATTEMPTS = 6           # firing/polling hundreds of companies bursts requests
+MAX_BACKOFF_SECONDS = 30
 
 
 class ClayMCPError(RuntimeError):
     pass
+
+
+def _retry_after(headers):
+    """Seconds to wait from a Retry-After header (integer-seconds form), or None."""
+    val = headers.get("Retry-After") or headers.get("retry-after")
+    try:
+        return max(0, int(val))
+    except (TypeError, ValueError):
+        return None
 
 
 class ClayMCP:
@@ -38,7 +51,7 @@ class ClayMCP:
         self._initialize()
 
     # ---- transport -------------------------------------------------------
-    def _post(self, body):
+    def _build_request(self, body):
         req = urllib.request.Request(self.url, data=json.dumps(body).encode(), method="POST")
         req.add_header("Authorization", f"Bearer {self.token}")
         req.add_header("Content-Type", "application/json")
@@ -46,11 +59,31 @@ class ClayMCP:
         req.add_header("MCP-Protocol-Version", PROTOCOL_VERSION)
         if self.session_id:
             req.add_header("Mcp-Session-Id", self.session_id)
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                return resp.status, dict(resp.headers), resp.read().decode("utf-8", "replace")
-        except urllib.error.HTTPError as e:
-            return e.code, dict(e.headers), e.read().decode("utf-8", "replace")
+        return req
+
+    def _post(self, body):
+        """POST with retry+backoff on rate limits (429) and transient 5xx — large
+        runs fire/poll hundreds of requests, so a burst will occasionally throttle."""
+        last_err = None
+        for attempt in range(MAX_ATTEMPTS):
+            try:
+                with urllib.request.urlopen(self._build_request(body), timeout=self.timeout) as resp:
+                    return resp.status, dict(resp.headers), resp.read().decode("utf-8", "replace")
+            except urllib.error.HTTPError as e:
+                detail = e.read().decode("utf-8", "replace")
+                if e.code in RETRY_STATUS and attempt < MAX_ATTEMPTS - 1:
+                    wait = _retry_after(e.headers)
+                    time.sleep(wait if wait is not None else min(2 ** attempt, MAX_BACKOFF_SECONDS))
+                    last_err = ClayMCPError(f"HTTP {e.code}: {detail[:160]}")
+                    continue
+                return e.code, dict(e.headers), detail
+            except urllib.error.URLError as e:
+                if attempt < MAX_ATTEMPTS - 1:
+                    time.sleep(min(2 ** attempt, MAX_BACKOFF_SECONDS))
+                    last_err = ClayMCPError(f"network error: {e.reason}")
+                    continue
+                raise ClayMCPError(f"network error after {MAX_ATTEMPTS} attempts: {e.reason}")
+        raise last_err or ClayMCPError("request failed")
 
     @staticmethod
     def _parse(body):

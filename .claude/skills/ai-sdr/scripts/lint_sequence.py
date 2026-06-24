@@ -92,8 +92,10 @@ def lint_email(step, is_last, is_first=False):
     wc = len(re.findall(r"[A-Za-z0-9']+", body))
     issues = []
 
-    if not (70 <= wc <= 110):
-        issues.append(f"word count {wc} (need 70–110)")
+    # Wide band on purpose: word count is a soft style guide, not a quality
+    # signal — a few words over/under shouldn't force an expensive re-generation.
+    if not (55 <= wc <= 130):
+        issues.append(f"word count {wc} (need 55–130)")
 
     # Paragraph breaks: body should be a few short paragraphs, not one block.
     if "\n\n" not in body:

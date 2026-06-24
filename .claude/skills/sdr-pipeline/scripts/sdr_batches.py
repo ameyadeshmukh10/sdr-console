@@ -16,9 +16,13 @@ generation sub-agents in parallel between `init` and `enroll`.
 """
 
 import argparse
+import concurrent.futures
 import json
 import sys
+from collections import defaultdict
 from pathlib import Path
+
+ENROLL_WORKERS = 8   # concurrent Bison create_lead calls
 
 SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
@@ -165,11 +169,25 @@ def cmd_enroll(args):
     if not rows:
         print("nothing to enroll (no 'generated' contacts).")
         return 0
-    bison = None
+    # HeyReach (LinkedIn) is a single campaign for everyone; enabled when both env
+    # vars are set. Bison is the email channel (per-variant campaigns).
+    hr_campaign = os.environ.get("HEYREACH_CAMPAIGN_ID")
+    hr_accounts = E.heyreach_accounts()
+    hr_enabled = bool(hr_campaign and hr_accounts)
+    bison = heyreach = None
     if not args.dry_run:
         from bison_client import BisonClient  # noqa: E402
         bison = BisonClient()
-    counts = {"enrolled": 0, "no_campaign": 0, "missing_file": 0, "skipped": 0}
+        if hr_enabled:
+            heyreach = E.HeyReachClient()
+    counts = {"enrolled": 0, "no_campaign": 0, "missing_file": 0, "skipped": 0,
+              "linkedin": 0, "no_li": 0, "heyreach_failed": 0}
+
+    # Resolve campaign + copy per contact (local, fast). Skip missing-file /
+    # no-campaign here so the network phase only sees real work. Build the
+    # HeyReach pair now too (local) — it's batch-added after a successful enroll.
+    tasks = []         # (row, campaign, cvars)
+    hr_pairs = {}      # contact_id -> HeyReach lead pair (li_url present + hr_enabled)
     for r in rows:
         p = db.GEN_DIR / f"{r['contact_id']}.json"
         if not p.is_file():
@@ -182,25 +200,91 @@ def cmd_enroll(args):
         if not campaign:
             counts["no_campaign"] += 1
             continue
-        cvars = E.bison_custom_vars(asset["email"])
-        if args.dry_run:
-            print(f"  [dry] {r['email']} [{r['persona']}] -> campaign {campaign} ({len(cvars)} vars)")
+        tasks.append((r, campaign, E.bison_custom_vars(asset["email"])))
+        if hr_enabled:
+            if r["linkedin_url"]:
+                cf = {k: (asset.get("linkedin") or {}).get(k, "") for k in E.LI_KEYS}
+                hr_pairs[r["contact_id"]] = E.HeyReachClient.build_pair(
+                    E.heyreach_account_for(hr_accounts, r["contact_id"]),
+                    r["first_name"], r["last_name"], r["linkedin_url"],
+                    company=r["company"], position=r["title"], email=r["email"], custom_fields=cf)
+            else:
+                counts["no_li"] += 1
+
+    if args.dry_run:
+        for r, campaign, cvars in tasks:
+            li = " +LinkedIn" if hr_pairs.get(r["contact_id"]) else ""
+            print(f"  [dry] {r['email']} [{r['persona']}] -> bison campaign {campaign} ({len(cvars)} vars){li}")
+        counts["enrolled"], counts["linkedin"] = len(tasks), len(hr_pairs)
+        print(f"  [dry] HEYREACH would add {len(hr_pairs)} leads -> campaign {hr_campaign}" if hr_enabled
+              else "  [dry] HEYREACH disabled (set HEYREACH_CAMPAIGN_ID + HEYREACH_LINKEDIN_ACCOUNT_ID)")
+        print(f"enroll (dry-run): {counts}")
+        return 0
+
+    # Phase 1 — create leads concurrently (network-bound; BisonClient is stateless
+    # per call and retries on 429/5xx). Workers do NOT touch the sqlite conn — they
+    # just return results; status writes + attaches happen single-threaded below.
+    def create(task):
+        r, campaign, cvars = task
+        try:
+            lead_id = bison.create_lead(first_name=r["first_name"], last_name=r["last_name"],
+                                        email=r["email"], title=r["title"], company=r["company"],
+                                        custom_variables=cvars)
+            return ("ok", r, campaign, lead_id)
+        except Exception as e:  # benign per-lead rejection (already enrolled, bounced…)
+            return ("err", r, campaign, str(e))
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=ENROLL_WORKERS) as ex:
+        results = list(ex.map(create, tasks))
+
+    # Phase 2 — batch the attach: one attach_leads_to_campaign call per campaign
+    # instead of one per lead. Mark 'enrolled' only after a successful attach.
+    by_campaign = defaultdict(list)  # campaign -> [(row, lead_id)]
+    for status, r, campaign, payload in results:
+        if status == "err":
+            db.set_contact_status(conn, r["contact_id"], "skipped", error=payload[:500])
+            counts["skipped"] += 1
+            print(f"  [skip] {r['email']} [{r['persona']}] -> campaign {campaign}: {payload[:120]}")
         else:
-            try:
-                lead_id = bison.create_lead(first_name=r["first_name"], last_name=r["last_name"],
-                                            email=r["email"], title=r["title"], company=r["company"],
-                                            custom_variables=cvars)
-                bison.attach_leads_to_campaign(campaign, [lead_id])
-            except Exception as e:
-                # Benign per-lead rejections (already in a sequence, bounced, unsubscribed)
-                # should not abort the whole run — record and continue.
-                db.set_contact_status(conn, r["contact_id"], "skipped", error=str(e)[:500])
+            by_campaign[campaign].append((r, payload))
+
+    hr_batch = []  # HeyReach pairs for contacts that successfully enrolled in Bison
+    for campaign, items in by_campaign.items():
+        lead_ids = [lid for _, lid in items]
+        try:
+            bison.attach_leads_to_campaign(campaign, lead_ids)
+        except Exception as e:  # whole-batch attach failure: leads created, not attached
+            for r, _ in items:
+                db.set_contact_status(conn, r["contact_id"], "skipped", error=f"attach: {str(e)[:480]}")
                 counts["skipped"] += 1
-                print(f"  [skip] {r['email']} [{r['persona']}] -> campaign {campaign}: {str(e)[:120]}")
-                continue
+            print(f"  [skip] campaign {campaign} attach failed ({len(lead_ids)} leads): {str(e)[:120]}")
+            continue
+        for r, _ in items:
             db.set_contact_status(conn, r["contact_id"], "enrolled")
             counts["enrolled"] += 1
-    print(f"enroll{' (dry-run)' if args.dry_run else ''}: {counts}")
+            if r["contact_id"] in hr_pairs:
+                hr_batch.append(hr_pairs[r["contact_id"]])
+        print(f"  attached {len(lead_ids)} leads -> bison campaign {campaign}")
+
+    # Phase 3 — HeyReach: batch-add the LinkedIn leads to the HeyReach campaign.
+    # A HeyReach failure does NOT undo the Bison enrollment — it's a second channel,
+    # so we just log + count it.
+    if heyreach and hr_batch:
+        added = 0
+        for i in range(0, len(hr_batch), E.HR_CHUNK):
+            chunk = hr_batch[i:i + E.HR_CHUNK]
+            try:
+                heyreach.add_leads_to_campaign(hr_campaign, chunk)
+                added += len(chunk)
+            except Exception as e:
+                counts["heyreach_failed"] += len(chunk)
+                print(f"  [skip] HEYREACH add of {len(chunk)} leads failed: {str(e)[:120]}")
+        counts["linkedin"] = added
+        print(f"  HEYREACH added {added} leads -> campaign {hr_campaign}")
+    elif not hr_enabled:
+        print("  HEYREACH disabled (set HEYREACH_CAMPAIGN_ID + HEYREACH_LINKEDIN_ACCOUNT_ID to enable LinkedIn)")
+
+    print(f"enroll: {counts}")
     return 0
 
 
@@ -215,6 +299,107 @@ def cmd_reset_batch(args):
     return 0
 
 
+def cmd_heyreach_backfill(args):
+    """Push already-enrolled contacts (Bison-only) into the HeyReach campaign.
+
+    For catching up contacts enrolled before HeyReach was wired in. Idempotent
+    via data/outreach/heyreach_state.json so re-runs skip ones already added.
+    Scope with --job <batch_job_id> to limit to that batch's contacts.
+    """
+    import os
+    hr_campaign = os.environ.get("HEYREACH_CAMPAIGN_ID")
+    hr_accounts = E.heyreach_accounts()
+    if not (hr_campaign and hr_accounts):
+        print("HeyReach not configured — set HEYREACH_CAMPAIGN_ID + HEYREACH_LINKEDIN_ACCOUNT_ID in .env")
+        return 1
+
+    # Preflight: AddLeadsToCampaignV2 only accepts leads when the campaign is live
+    # (ACTIVE/IN_PROGRESS) with senders assigned. Check once up front so we fail
+    # with a clear message instead of erroring on every lead.
+    try:
+        camp = E.HeyReachClient().get_campaign(hr_campaign)
+    except Exception as e:  # noqa: BLE001
+        print(f"could not read HeyReach campaign {hr_campaign}: {str(e)[:160]}")
+        return 1
+    status = (camp.get("status") or "").upper()
+    if status not in ("ACTIVE", "IN_PROGRESS"):
+        print(f"HeyReach campaign {hr_campaign} ({camp.get('name')!r}) is {status or 'UNKNOWN'} — "
+              f"activate it in HeyReach (ACTIVE/IN_PROGRESS) before adding leads.")
+        return 1
+    assigned = set(str(a) for a in (camp.get("campaignAccountIds") or []))
+    missing = [a for a in hr_accounts if a not in assigned]
+    if missing:
+        print(f"warning: sender account(s) {missing} are not assigned to campaign {hr_campaign} "
+              f"(assigned: {sorted(assigned)}); their leads may be rejected.")
+
+    out_dir = db.GEN_DIR.parent
+    conn = db.connect()
+    cols = "contact_id, first_name, last_name, email, title, company, linkedin_url, variant"
+    where = "status='enrolled' AND linkedin_url IS NOT NULL AND linkedin_url != ''"
+    params = []
+    if args.job:
+        jp = out_dir / "batch-jobs" / f"{args.job}.json"
+        if not jp.is_file():
+            print(f"no batch job file: {jp}")
+            return 1
+        batch_ids = json.loads(jp.read_text()).get("pipeline_batch_ids") or []
+        if not batch_ids:
+            print(f"batch job {args.job} has no pipeline_batch_ids")
+            return 1
+        where += f" AND batch_id IN ({','.join('?' * len(batch_ids))})"
+        params = batch_ids
+    rows = [dict(r) for r in conn.execute(f"SELECT {cols} FROM contacts WHERE {where}", params)]
+
+    state_path = out_dir / "heyreach_state.json"
+    done = set()
+    if state_path.is_file():
+        try:
+            done = set(json.loads(state_path.read_text()).get("added", []))
+        except (ValueError, OSError):
+            done = set()
+
+    pairs, skipped_done, missing_file = [], 0, 0
+    for r in rows:
+        cid = r["contact_id"]
+        if cid in done:
+            skipped_done += 1
+            continue
+        p = db.GEN_DIR / f"{cid}.json"
+        if not p.is_file():
+            missing_file += 1
+            continue
+        asset = json.loads(p.read_text())
+        cf = {k: (asset.get("linkedin") or {}).get(k, "") for k in E.LI_KEYS}
+        pairs.append((cid, E.HeyReachClient.build_pair(
+            E.heyreach_account_for(hr_accounts, cid),
+            r["first_name"], r["last_name"], r["linkedin_url"],
+            company=r["company"], position=r["title"], email=r["email"], custom_fields=cf)))
+
+    scope = f"job {args.job}" if args.job else "all enrolled"
+    print(f"heyreach-backfill [{scope}]: {len(rows)} enrolled w/ LinkedIn, "
+          f"{len(pairs)} to add, {skipped_done} already done, {missing_file} missing copy")
+    if args.dry_run:
+        print(f"  [dry] would add {len(pairs)} leads -> HeyReach campaign {hr_campaign}")
+        return 0
+    if not pairs:
+        return 0
+
+    heyreach = E.HeyReachClient()
+    added, failed = 0, 0
+    for i in range(0, len(pairs), E.HR_CHUNK):
+        chunk = pairs[i:i + E.HR_CHUNK]
+        try:
+            heyreach.add_leads_to_campaign(hr_campaign, [pr for _, pr in chunk])
+            added += len(chunk)
+            done.update(cid for cid, _ in chunk)
+            state_path.write_text(json.dumps({"added": sorted(done)}, indent=2))  # persist per chunk
+        except Exception as e:  # noqa: BLE001
+            failed += len(chunk)
+            print(f"  [skip] HEYREACH add of {len(chunk)} leads failed: {str(e)[:140]}")
+    print(f"heyreach-backfill: added={added} failed={failed} skipped_done={skipped_done} missing_file={missing_file}")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="SDR batch pipeline")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -224,6 +409,7 @@ def main():
     p = sub.add_parser("get-batch"); p.add_argument("batch_id", type=int); p.set_defaults(func=cmd_get_batch)
     p = sub.add_parser("ingest"); p.add_argument("batch_id", type=int); p.set_defaults(func=cmd_ingest)
     p = sub.add_parser("enroll"); p.add_argument("--dry-run", action="store_true"); p.set_defaults(func=cmd_enroll)
+    p = sub.add_parser("heyreach-backfill"); p.add_argument("--job"); p.add_argument("--dry-run", action="store_true"); p.set_defaults(func=cmd_heyreach_backfill)
     p = sub.add_parser("setup-variant-campaigns"); p.add_argument("--template", type=int); p.add_argument("--force", action="store_true"); p.set_defaults(func=cmd_setup_variant_campaigns)
     p = sub.add_parser("reset-batch"); p.add_argument("batch_id", type=int); p.set_defaults(func=cmd_reset_batch)
     args = ap.parse_args()

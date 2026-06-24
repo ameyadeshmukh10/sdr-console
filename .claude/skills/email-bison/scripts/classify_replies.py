@@ -33,6 +33,25 @@ from anthropic_client import (                              # noqa: E402
 OUT = PROJECT_ROOT / "data" / "interested-replies" / "review_queue.json"
 DATASET = PROJECT_ROOT / "data" / "interested-replies" / "dataset.jsonl"
 
+# Senders that are never real leads — system/alert mail + known non-prospect domains.
+JUNK_SENDER_DOMAINS = {"thepreachtruck.com"}
+JUNK_SENDER_SUBSTR = ("google-workspace-alerts", "workspace-alerts-noreply",
+                      "calendar-notification@google", "mailer-daemon", "postmaster@",
+                      "no-reply@google", "noreply@google")
+# Subjects that are our own infra/test mail, not prospect replies.
+SKIP_SUBJECT = re.compile(r"everworker connection test", re.I)
+# Confidence at/above which an unsubscribe/"close the file" reply is auto-suppressed.
+UNSUB_CONFIDENCE = 0.80
+
+
+def is_junk_sender(email):
+    e = (email or "").lower()
+    if not e or "@" not in e:
+        return True
+    if any(s in e for s in JUNK_SENDER_SUBSTR):
+        return True
+    return e.rsplit("@", 1)[-1] in JUNK_SENDER_DOMAINS
+
 DEFINITION = """\
 You label B2B sales email replies by whether the sender shows INTEREST in eventually meeting/buying.
 
@@ -43,16 +62,20 @@ pricing or how it works with positive intent; loops in a colleague to evaluate. 
 deferral that still expresses interest IS interested, e.g. "love to set up a time but we're not
 ready yet, let's talk in July", "circle back after our launch", "reach out to me in Q3", "great
 emails, ping me next quarter". These are positive-later leads (intent=positive_later); tag them
-interested.
+interested. A REFERRAL that hands you to the right person — "reach out to Jane, she owns this",
+"talk to our VP of Sales", "forwarding to our RevOps lead" — is interested=true, intent=referral:
+it's an actionable warm handoff, treat it as a positive outcome.
 
-NOT INTERESTED (interested=false): out-of-office / auto-reply; unsubscribe / remove me; a FLAT
-decline with no positive sentiment and no future commitment ("not interested", "no budget", "not a
-fit", "wrong person", a vague "not now / maybe someday" brush-off); pure bounce / delivery notices;
-hostile or spam complaints; marketing newsletters. A referral that just says "talk to X" with no
-buying intent is intent=referral, interested=false.
+NOT INTERESTED (interested=false): out-of-office / auto-reply; a FLAT decline with no positive
+sentiment and no future commitment ("not interested", "no budget", "not a fit", "wrong person", a
+vague "not now / maybe someday" brush-off); pure bounce / delivery notices; marketing newsletters.
 
-The line: positive sentiment + a real forward intent (even a future date) = interested. A flat or
-vague brush-off with no warmth = not interested.
+UNSUBSCRIBE (interested=false, intent=unsubscribe): an explicit ask to stop / opt out / be removed,
+INCLUDING "please close the file", "close us out", "stop contacting me", "remove me from your list",
+"do not reach out again", or a hostile spam complaint. These get suppressed automatically.
+
+The line: positive sentiment OR an actionable handoff = interested. A flat brush-off = not
+interested. An explicit "stop / close the file" = unsubscribe.
 
 Judge ONLY the sender's new message text (quoted history is stripped)."""
 
@@ -69,6 +92,10 @@ NEG_EXAMPLES = [
      '{"interested": false, "confidence": 0.97, "reason": "Automated out-of-office reply.", "intent": "auto_reply"}'),
     ("Please remove me from your list and do not contact me again.",
      '{"interested": false, "confidence": 0.98, "reason": "Explicit unsubscribe request.", "intent": "unsubscribe"}'),
+    ("We're not moving forward on this — please close the file and stop reaching out.",
+     '{"interested": false, "confidence": 0.95, "reason": "Explicit ask to close the file / stop contact.", "intent": "unsubscribe"}'),
+    ("I'm not the right person for this — reach out to Jenna, our VP of Sales, she owns this.",
+     '{"interested": true, "confidence": 0.88, "reason": "Actionable referral to the VP of Sales.", "intent": "referral"}'),
     ("Not interested, this isn't a fit for us.",
      '{"interested": false, "confidence": 0.9, "reason": "Flat decline with no positive intent.", "intent": "not_interested"}'),
 ]
@@ -123,11 +150,15 @@ def classify_one(client, system, text):
         res = client.complete(system, f"REPLY:\n{text}\n\nLABEL:", use_web_search=False,
                               max_tokens=300)
         data = extract_json(res["text"])
+        intent = str(data.get("intent", ""))
+        interested = bool(data.get("interested"))
+        if intent == "referral":  # a referral is an actionable handoff — always interested
+            interested = True
         return {
-            "interested": bool(data.get("interested")),
+            "interested": interested,
             "confidence": float(data.get("confidence", 0)),
             "reason": str(data.get("reason", ""))[:300],
-            "intent": str(data.get("intent", "")),
+            "intent": intent,
         }
     except (AnthropicError, AnthropicJSONError, ValueError) as e:
         return {"interested": False, "confidence": 0.0, "reason": f"classify error: {e}"[:200],
@@ -143,6 +174,9 @@ def main():
     ap.add_argument("--lookback", type=int, default=14)
     ap.add_argument("--campaign", type=int, default=None)
     ap.add_argument("--max", type=int, default=300)
+    ap.add_argument("--apply-unsubscribes", action="store_true",
+                    help="actually unsubscribe + blacklist high-confidence unsubscribe replies "
+                         "in Bison (default: dry-run, just preview them)")
     args = ap.parse_args()
 
     client = AnthropicClient()
@@ -150,12 +184,15 @@ def main():
     system = build_system(load_fewshot())
     cutoff = datetime.now(timezone.utc) - timedelta(days=args.lookback)
 
-    # gather candidate inbound replies
+    # gather candidate inbound replies, dropping ones that should never surface:
+    # auto-replies, out-of-window, non-lead senders, junk/system senders, infra test mail.
     candidates = []
+    filtered = {"automated": 0, "non_lead": 0, "junk_sender": 0, "skip_subject": 0}
     for reply in bison.list_replies(folder="inbox"):
         if len(candidates) >= args.max:
             break
         if reply.get("automated_reply"):
+            filtered["automated"] += 1
             continue
         if args.campaign and reply.get("campaign_id") != args.campaign:
             continue
@@ -167,6 +204,15 @@ def main():
                     continue
             except ValueError:
                 pass
+        if not reply.get("lead_id"):                       # not a known lead (e.g. random sender)
+            filtered["non_lead"] += 1
+            continue
+        if is_junk_sender(reply.get("from_email_address")):  # system/alert mail, junk domains
+            filtered["junk_sender"] += 1
+            continue
+        if SKIP_SUBJECT.search(reply.get("subject") or ""):  # our own connection-test mail
+            filtered["skip_subject"] += 1
+            continue
         candidates.append(reply)
 
     def work(reply):
@@ -175,6 +221,7 @@ def main():
         return {
             "reply_id": reply.get("id"),
             "lead_id": reply.get("lead_id"),
+            "sender_email_id": reply.get("sender_email_id"),  # Bison inbox to reply FROM
             "from_name": reply.get("from_name"),
             "from_email": reply.get("from_email_address"),
             "subject": reply.get("subject"),
@@ -185,12 +232,36 @@ def main():
             "classifier": cls,
         }
 
-    items = []
+    classified = []
     if candidates:
         with ThreadPoolExecutor(max_workers=4) as ex:
             futures = [ex.submit(work, r) for r in candidates]
             for fut in as_completed(futures):
-                items.append(fut.result())
+                classified.append(fut.result())
+
+    # Partition off high-confidence unsubscribe / "close the file" replies — these
+    # get suppressed in Bison and never shown in the review queue.
+    def is_unsub(it):
+        c = it["classifier"]
+        return c["intent"] == "unsubscribe" and c["confidence"] >= UNSUB_CONFIDENCE and it["lead_id"]
+
+    unsub = [it for it in classified if is_unsub(it)]
+    items = [it for it in classified if not is_unsub(it)]
+
+    # Apply (or preview) the unsubscribe + blacklist in Bison.
+    unsub_done, unsub_errors = [], []
+    for it in unsub:
+        rec = {"reply_id": it["reply_id"], "lead_id": it["lead_id"],
+               "from_email": it["from_email"], "reason": it["classifier"]["reason"]}
+        if args.apply_unsubscribes:
+            try:
+                bison.unsubscribe_lead(it["lead_id"])
+                bison.blacklist_lead(it["lead_id"])
+                unsub_done.append(rec)
+            except BisonError as e:
+                unsub_errors.append({**rec, "error": str(e)[:200]})
+        else:
+            unsub_done.append({**rec, "dry_run": True})
 
     items.sort(key=lambda it: (not it["classifier"]["interested"],
                                -it["classifier"]["confidence"]))
@@ -200,12 +271,18 @@ def main():
         "lookback_days": args.lookback,
         "campaign_id": args.campaign,
         "counts": {"scanned": len(items), "flagged": flagged,
-                   "already": sum(1 for it in items if it["already_interested"])},
+                   "already": sum(1 for it in items if it["already_interested"]),
+                   "unsubscribed": len(unsub), "filtered": sum(filtered.values())},
+        "filtered": filtered,
+        "unsubscribed": {"applied": args.apply_unsubscribes, "items": unsub_done,
+                         "errors": unsub_errors},
         "items": items,
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
-    print(f"scanned {len(items)} replies, flagged {flagged} interested (not yet tagged) -> {OUT}")
+    mode = "unsubscribed" if args.apply_unsubscribes else "would unsubscribe (dry-run)"
+    print(f"scanned {len(items)} replies, flagged {flagged} interested, "
+          f"{mode} {len(unsub)}, filtered {sum(filtered.values())} -> {OUT}")
     return 0
 
 

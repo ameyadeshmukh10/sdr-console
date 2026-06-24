@@ -27,6 +27,7 @@ Design notes:
     pipeline scripts via subprocess; we never reimplement their logic.
 """
 
+import concurrent.futures
 import json
 import re
 import sqlite3
@@ -59,6 +60,8 @@ CLAY_ENRICH = SCRIPTS / "sdr-pipeline" / "scripts" / "clay_enrich.py"
 PIPELINE_SCRIPTS = SCRIPTS / "sdr-pipeline" / "scripts"
 SOURCE_JOBS_DIR = DATA / "outreach" / "source-jobs"
 CLASSIFY_REPLIES = SCRIPTS / "email-bison" / "scripts" / "classify_replies.py"
+DRAFT_FOLLOWUPS = SCRIPTS / "email-bison" / "scripts" / "draft_followups.py"
+FOLLOWUP_DRAFTS = DATA / "interested-replies" / "followup_drafts.json"
 ANALYZE = SCRIPTS / "interested-trends" / "scripts"
 TRENDS_DIR = DATA / "interested-replies" / "analysis"
 REPLIES_LAST_RUN = DATA / "interested-replies" / "last_run.json"
@@ -461,6 +464,61 @@ def analytics_payload():
     }
 
 
+_HEYREACH_NAME_CACHE = {}
+
+
+def linkedin_channel():
+    """The HeyReach (LinkedIn) channel all personas feed into: campaign id/name +
+    how many leads we've pushed. Name is fetched once and cached so the diagram
+    still loads instantly on later requests / if HeyReach is unreachable."""
+    env = read_env()
+    raw = (env.get("HEYREACH_CAMPAIGN_ID") or "").strip()
+    cid = int(raw) if raw.isdigit() else None
+    if cid is None:
+        return None
+    leads = 0
+    sp = DATA / "outreach" / "heyreach_state.json"
+    if sp.is_file():
+        try:
+            leads = len(json.loads(sp.read_text()).get("added", []))
+        except (ValueError, OSError):
+            pass
+    if cid not in _HEYREACH_NAME_CACHE:
+        try:
+            sys.path.insert(0, str(SCRIPTS / "sdr-pipeline" / "scripts"))
+            from heyreach_client import HeyReachClient
+            _HEYREACH_NAME_CACHE[cid] = (HeyReachClient().get_campaign(cid) or {}).get("name") or ""
+        except Exception:  # noqa: BLE001 — never block the diagram on a HeyReach hiccup
+            _HEYREACH_NAME_CACHE[cid] = ""
+    return {"campaign_id": cid, "campaign_name": _HEYREACH_NAME_CACHE[cid] or None, "leads": leads}
+
+
+def linkedin_analytics_payload():
+    """Live HeyReach (LinkedIn) analytics for the configured campaign: the lead
+    funnel (GetById progressStats) + connection/message/reply metrics
+    (GetOverallStats). Degrades to {error}/{configured:false} so the Analytics
+    page never breaks on a HeyReach hiccup."""
+    env = read_env()
+    raw = (env.get("HEYREACH_CAMPAIGN_ID") or "").strip()
+    cid = int(raw) if raw.isdigit() else None
+    if cid is None:
+        return {"configured": False}
+    try:
+        sys.path.insert(0, str(SCRIPTS / "sdr-pipeline" / "scripts"))
+        from heyreach_client import HeyReachClient
+        hr = HeyReachClient()
+        camp = hr.get_campaign(cid) or {}
+        stats = (hr.get_overall_stats([cid]) or {}).get("overallStats") or {}
+    except Exception as e:  # noqa: BLE001
+        return {"configured": True, "campaign_id": cid, "error": str(e)[:200]}
+    return {
+        "configured": True, "campaign_id": cid,
+        "campaign_name": camp.get("name"), "status": camp.get("status"),
+        "funnel": camp.get("progressStats") or {}, "stats": stats,
+        "fetched_at": now_iso(),
+    }
+
+
 def rollup_payload():
     st = db_status()
     cmap = persona_campaign_map()
@@ -470,8 +528,10 @@ def rollup_payload():
     for p in PERSONA_ORDER:
         cid = cmap.get(p)
         stats = None
+        campaign_name = None
         if cid is not None and cid in by_campaign:
             c = by_campaign[cid]
+            campaign_name = c.get("campaign_name")
             stats = {
                 "total_leads": c.get("total_leads"),
                 "total_leads_contacted": c.get("total_leads_contacted"),
@@ -483,11 +543,13 @@ def rollup_payload():
         personas.append({
             "persona": p,
             "campaign_id": cid,
+            "campaign_name": campaign_name,
             "contacts": st["by_persona"].get(p, 0),
             "by_status": st["persona_status"].get(p, {}),
             "campaign_stats": stats,
         })
-    return {"personas": personas, "personas_order": PERSONA_ORDER}
+    return {"personas": personas, "personas_order": PERSONA_ORDER,
+            "linkedin": linkedin_channel()}
 
 
 # ----------------------------------------------------------------------------
@@ -919,15 +981,20 @@ def read_source_progress(list_id):
 
 
 def start_source_job(list_id, list_name=None, cap=25, mode="end-to-end",
-                     per_company_cap=0, concurrency=8, titles="", locations="", reset=False):
+                     per_company_cap=0, concurrency=8, titles="", locations="",
+                     reset=False, whole_list=False):
     clay = _clay_oauth()
     if clay.status() != "connected":
         return {"ok": False, "error": "Clay is not connected — connect Clay first"}, 409
     job_id = _new_source_job_id()
+    whole_list = bool(whole_list)
+    # Whole-list runs are unattended, so they always commit (end-to-end); `cap` is
+    # the per-batch size and the job loops until the list is exhausted.
+    mode = "end-to-end" if whole_list else (mode if mode in ("end-to-end", "review") else "end-to-end")
     SOURCE_JOBS[job_id] = {
         "job_id": job_id, "kind": "source", "status": "running",
         "list_id": str(list_id), "list_name": list_name,
-        "cap": int(cap), "mode": mode if mode in ("end-to-end", "review") else "end-to-end",
+        "cap": int(cap), "mode": mode, "whole_list": whole_list,
         # Optional enrichment knobs surfaced from the UI's Advanced section.
         "per_company_cap": max(0, int(per_company_cap or 0)),
         "concurrency": max(1, int(concurrency or 8)),
@@ -944,61 +1011,84 @@ def start_source_job(list_id, list_name=None, cap=25, mode="end-to-end",
     return {"ok": True, "job_id": job_id}, 200
 
 
+def _enrich_args(job, out_path, reset):
+    args = [str(CLAY_ENRICH), "--list-id", job["list_id"],
+            "--cap", str(job["cap"]),
+            "--concurrency", str(job.get("concurrency", 8)),
+            "--out", out_path]
+    if job.get("per_company_cap"):
+        args += ["--per-company-cap", str(job["per_company_cap"])]
+    if job.get("titles"):
+        args += ["--titles", job["titles"]]
+    if job.get("locations"):
+        args += ["--locations", job["locations"]]
+    if job.get("progress_file"):
+        args += ["--progress-file", job["progress_file"]]
+    if reset:
+        args += ["--reset-progress"]
+    return args
+
+
+def _make_progress_cb(job):
+    """Parse the enrich script's streamed stderr into job['progress'] live."""
+    def on_line(line):
+        p = job["progress"]
+        m = re.search(r"this run takes (\d+)", line)
+        if m:
+            p["total"], p["phase"] = int(m.group(1)), "firing"
+        m = re.search(r"firing (\d+)/(\d+) tasks", line)
+        if m:
+            p["fired"], p["total"], p["phase"] = int(m.group(1)), int(m.group(2)), "firing"
+        m = re.search(r"\[(\d+)/(\d+)\]\s+\S+\s+done", line)
+        if m:
+            p["completed"], p["total"], p["phase"] = int(m.group(1)), int(m.group(2)), "polling"
+        m = re.search(r"resolved:\s+(\d+)\s+contacts", line)
+        if m:
+            p["contacts"] += int(m.group(1))
+    return on_line
+
+
+def _run_enrich_batch(job, out_path, reset):
+    """Run one enrich batch into out_path. Returns (enrich_result, summary_dict)."""
+    job["progress"] = {"total": job["cap"], "completed": 0, "fired": 0, "contacts": 0,
+                       "phase": "starting", "batch": (job.get("whole") or {}).get("batch")}
+    enrich = run_script_streaming(_enrich_args(job, out_path, reset),
+                                  _make_progress_cb(job), timeout=3600)
+    job["progress"]["phase"] = "done"
+    job["enrich"] = enrich
+    summary = {}
+    if enrich["returncode"] == 0:
+        try:
+            summary = json.loads(enrich["stdout"])
+        except json.JSONDecodeError:
+            summary = {}
+    return enrich, summary
+
+
+def _commit_candidates(candidates_path, list_name):
+    """Run source_contacts.py on a candidates file: dedup, create in HubSpot,
+    make/reuse the static list, ingest into the pipeline. Returns a result dict."""
+    args = [str(SOURCE_CONTACTS), candidates_path]
+    if list_name:
+        args += ["--list-name", list_name]
+    res = run_script(args, timeout=1800)
+    if res["returncode"] != 0:
+        return {"ok": False, "error": (res["stderr"] or res["stdout"]).strip()[:500], "raw": res}
+    try:
+        stats = json.loads(res["stdout"])
+    except json.JSONDecodeError:
+        stats = {}
+    return {"ok": True, "raw": res, **stats}
+
+
 def _run_source_job(job_id):
     job = SOURCE_JOBS[job_id]
     try:
         SOURCE_JOBS_DIR.mkdir(parents=True, exist_ok=True)
-        enrich_args = [str(CLAY_ENRICH), "--list-id", job["list_id"],
-                       "--cap", str(job["cap"]),
-                       "--concurrency", str(job.get("concurrency", 8)),
-                       "--out", job["candidates_path"]]
-        if job.get("per_company_cap"):
-            enrich_args += ["--per-company-cap", str(job["per_company_cap"])]
-        if job.get("titles"):
-            enrich_args += ["--titles", job["titles"]]
-        if job.get("locations"):
-            enrich_args += ["--locations", job["locations"]]
-        if job.get("progress_file"):
-            enrich_args += ["--progress-file", job["progress_file"]]
-        if job.get("reset"):
-            enrich_args += ["--reset-progress"]
-
-        # Live progress parsed from the script's stderr as it streams.
-        job["progress"] = {"total": job["cap"], "completed": 0, "fired": 0,
-                           "contacts": 0, "phase": "starting"}
-
-        def on_line(line):
-            p = job["progress"]
-            m = re.search(r"this run takes (\d+)", line)
-            if m:
-                p["total"], p["phase"] = int(m.group(1)), "firing"
-            m = re.search(r"firing (\d+)/(\d+) tasks", line)
-            if m:
-                p["fired"], p["total"], p["phase"] = int(m.group(1)), int(m.group(2)), "firing"
-            m = re.search(r"\[(\d+)/(\d+)\]\s+\S+\s+done", line)
-            if m:
-                p["completed"], p["total"], p["phase"] = int(m.group(1)), int(m.group(2)), "polling"
-            m = re.search(r"resolved:\s+(\d+)\s+contacts", line)
-            if m:
-                p["contacts"] += int(m.group(1))
-
-        enrich = run_script_streaming(enrich_args, on_line, timeout=3600)
-        job["progress"]["phase"] = "done"
-        job["enrich"] = enrich
-        if enrich["returncode"] != 0:
-            job["status"] = "error"
-            job["error"] = (enrich["stderr"] or enrich["stdout"]).strip()[:500]
-            return
-        candidates = _read_json(Path(job["candidates_path"])) or []
-        job["candidates"] = candidates
-        if not candidates:
-            job["status"] = "done"
-            job["source"] = {"note": "no candidates with a work email were found"}
-            return
-        if job["mode"] == "review":
-            job["status"] = "awaiting_review"
-            return
-        _commit_source_job(job)
+        if job.get("whole_list"):
+            _run_whole_list_job(job)
+        else:
+            _run_single_batch_job(job)
     except Exception as e:  # noqa: BLE001
         job["status"] = "error"
         job["error"] = f"{type(e).__name__}: {e}"
@@ -1007,22 +1097,80 @@ def _run_source_job(job_id):
             job["finished_at"] = now_iso()
 
 
-def _commit_source_job(job):
-    """Run source_contacts.py on the candidate file: dedup, create in HubSpot,
-    make the static list, and ingest into the pipeline."""
-    args = [str(SOURCE_CONTACTS), job["candidates_path"]]
-    if job.get("list_name"):
-        args += ["--list-name", job["list_name"]]
-    res = run_script(args, timeout=1800)
-    job["source"] = res
-    if res["returncode"] != 0:
+def _run_single_batch_job(job):
+    enrich, _ = _run_enrich_batch(job, job["candidates_path"], job.get("reset"))
+    if enrich["returncode"] != 0:
         job["status"] = "error"
-        job["error"] = (res["stderr"] or res["stdout"]).strip()[:500]
+        job["error"] = (enrich["stderr"] or enrich["stdout"]).strip()[:500]
         return
-    try:
-        job["stats"] = json.loads(res["stdout"])
-    except json.JSONDecodeError:
-        job["stats"] = None
+    candidates = _read_json(Path(job["candidates_path"])) or []
+    job["candidates"] = candidates
+    if not candidates:
+        job["status"] = "done"
+        job["source"] = {"note": "no candidates with a work email were found"}
+        return
+    if job["mode"] == "review":
+        job["status"] = "awaiting_review"
+        return
+    _commit_source_job(job)
+
+
+def _run_whole_list_job(job):
+    """Auto-continue: enrich + commit batches back-to-back until the list is
+    exhausted. Each batch advances the cursor and commits, so a failure only
+    costs the current batch — re-running resumes from where it stopped."""
+    job["whole"] = {"batch": 0, "companies_total": None, "companies_processed": 0,
+                    "contacts_created": 0, "remaining": None, "batches": []}
+    MAX_BATCHES = 400  # safety stop; cap*400 dwarfs any real list
+    for n in range(1, MAX_BATCHES + 1):
+        job["whole"]["batch"] = n
+        out_path = str(SOURCE_JOBS_DIR / f"{job['job_id']}-batch{n}-candidates.json")
+        job["candidates_path"] = out_path
+        reset = bool(job.get("reset")) and n == 1  # reset cursor only on the first batch
+        enrich, summary = _run_enrich_batch(job, out_path, reset)
+        if enrich["returncode"] != 0:
+            job["status"] = "error"
+            job["error"] = f"batch {n} enrich failed: {(enrich['stderr'] or enrich['stdout']).strip()[:300]}"
+            return
+        companies = int(summary.get("companies", 0))
+        remaining = summary.get("remaining_after")
+        if job["whole"]["companies_total"] is None:
+            job["whole"]["companies_total"] = companies + int(remaining or 0)
+        if companies == 0:  # nothing left to enrich — list exhausted
+            break
+        candidates = _read_json(Path(out_path)) or []
+        job["candidates"] = candidates
+        if candidates:
+            commit = _commit_candidates(out_path, job.get("list_name"))
+            if not commit.get("ok"):
+                job["status"] = "error"
+                job["error"] = f"batch {n} commit failed: {commit.get('error', '')[:300]}"
+                return
+            job["stats"] = {k: v for k, v in commit.items() if k not in ("ok", "raw")}
+            job["whole"]["contacts_created"] += int(commit.get("created", 0))
+            job["whole"]["batches"].append({
+                "batch": n, "companies": companies, "candidates": len(candidates),
+                "created": int(commit.get("created", 0)), "list_id": commit.get("hubspot_list_id")})
+            INDEX.build()
+        else:
+            job["whole"]["batches"].append({"batch": n, "companies": companies,
+                                            "candidates": 0, "created": 0})
+        job["whole"]["companies_processed"] += companies
+        job["whole"]["remaining"] = remaining
+        if remaining is not None and int(remaining) <= 0:  # cursor reached the end
+            break
+    job["status"] = "done"
+
+
+def _commit_source_job(job):
+    """Commit a single batch's candidates (end-to-end / review-approve path)."""
+    result = _commit_candidates(job["candidates_path"], job.get("list_name"))
+    job["source"] = result.get("raw")
+    if not result.get("ok"):
+        job["status"] = "error"
+        job["error"] = result.get("error")
+        return
+    job["stats"] = {k: v for k, v in result.items() if k not in ("ok", "raw")}
     INDEX.build()
     job["status"] = "done"
 
@@ -1054,6 +1202,7 @@ def _confirm_source_thread(job_id):
 # JSON file per job so they survive restart, with a daemon poller per job.
 # ----------------------------------------------------------------------------
 BATCH_POLL_SECONDS = 30
+BATCH_RETRY_WORKERS = 6   # concurrency for re-generating lint-failed copy
 _BATCH_POLLERS = set()  # job_ids with a live poller (avoid duplicates on resume)
 _BATCH_LOCK = threading.Lock()
 
@@ -1222,16 +1371,26 @@ def _poll_batch_job(job_id):
                     linted += 1
                 elif r["status"] == "retry":
                     retries.append(r.get("contact"))
-            # synchronous retry tail for lint failures / errored requests
+            # Retry tail for lint failures / errored requests — run concurrently.
+            # A large batch can have hundreds of lint failures; doing these one at
+            # a time (each a fresh web-search generation) turned into hours. Each
+            # generate_one writes its own per-contact file, so they parallelize
+            # cleanly (the AnthropicClient is stateless across calls).
             knowledge = G.load_knowledge()
             retry_client = G.AnthropicClient()
             retry_variant = job.get("variant", "value-give")
-            for contact in [c for c in retries if c]:
+            retry_contacts = [c for c in retries if c]
+
+            def _retry_one(contact):
                 try:
                     G.generate_one(contact, knowledge, retry_client,
                                    variant=contact.get("variant") or retry_variant)
                 except Exception:  # noqa: BLE001
                     pass
+
+            if retry_contacts:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=BATCH_RETRY_WORKERS) as ex:
+                    list(ex.map(_retry_one, retry_contacts))
             # record results via the canonical ingest path, mark batches done
             for bid in job["pipeline_batch_ids"]:
                 run_script([str(SDR_BATCHES), "ingest", str(bid)], timeout=180)
@@ -1339,7 +1498,9 @@ def interested_tag_id():
 
 
 def do_scan_replies(campaign_id=None, lookback_days=14):
-    args = [str(CLASSIFY_REPLIES), "--lookback", str(lookback_days)]
+    # Auto-apply: high-confidence unsubscribe / "close the file" replies are
+    # unsubscribed + blacklisted in Bison and kept out of the review queue.
+    args = [str(CLASSIFY_REPLIES), "--lookback", str(lookback_days), "--apply-unsubscribes"]
     if campaign_id:
         args += ["--campaign", str(campaign_id)]
     res = run_script(args, timeout=600)
@@ -1383,6 +1544,53 @@ def do_tag_replies(reply_ids):
     if queue:
         REVIEW_QUEUE.write_text(json.dumps(queue, indent=2))
     return {"ok": failed == 0, "tagged": tagged, "failed": failed, "results": results}
+
+
+# ---- Interested follow-up: draft -> approve (push to campaign + send) ----------
+def do_draft_followups():
+    """Generate follow-up drafts for the interested replies in the review queue."""
+    res = run_script([str(DRAFT_FOLLOWUPS)], timeout=600)
+    payload = _read_json(FOLLOWUP_DRAFTS) or {"items": []}
+    payload["ok"] = res["returncode"] == 0
+    payload["scan"] = res
+    return payload
+
+
+def followup_drafts_payload():
+    payload = _read_json(FOLLOWUP_DRAFTS) or {"items": []}
+    payload["available"] = FOLLOWUP_DRAFTS.is_file()
+    return payload
+
+
+def do_approve_followup(reply_id, message):
+    """Approve a drafted follow-up: tag interested + push the lead into the
+    Interested Follow-up campaign + send the (edited) reply in the thread."""
+    env = read_env()
+    raw = (env.get("BISON_INTERESTED_FOLLOWUP_CAMPAIGN_ID") or "").strip()
+    if not raw.isdigit():
+        return {"ok": False, "error": "BISON_INTERESTED_FOLLOWUP_CAMPAIGN_ID not set"}, 409
+    campaign_id = int(raw)
+    drafts = _read_json(FOLLOWUP_DRAFTS) or {"items": []}
+    item = next((d for d in drafts.get("items", []) if str(d.get("reply_id")) == str(reply_id)), None)
+    if not item:
+        return {"ok": False, "error": f"no draft for reply {reply_id}"}, 404
+    if not (item.get("sender_email_id") and item.get("from_email")):
+        return {"ok": False, "error": "draft missing sender inbox / recipient"}, 409
+    bison = _bison()
+    try:
+        if item.get("lead_id"):  # mark interested + tag, like the normal flow
+            bison.mark_reply_interested(reply_id)
+            bison.attach_tags_to_leads([interested_tag_id()], [item["lead_id"]])
+        bison.push_reply_to_followup_campaign(reply_id, campaign_id)
+        bison.send_reply(reply_id, message or item.get("draft", ""),
+                         item["sender_email_id"], [item["from_email"]])
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": str(e)[:300]}, 502
+    item["status"] = "sent"
+    item["sent_at"] = now_iso()
+    item["sent_message"] = message or item.get("draft", "")
+    FOLLOWUP_DRAFTS.write_text(json.dumps(drafts, indent=2, ensure_ascii=False))
+    return {"ok": True, "reply_id": reply_id, "campaign_id": campaign_id}, 200
 
 
 # ----------------------------------------------------------------------------
@@ -1580,12 +1788,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(rollup_payload())
             if path == "/api/analytics":
                 return self._json(analytics_payload())
+            if path == "/api/analytics/linkedin":
+                return self._json(linkedin_analytics_payload())
             if path == "/api/progress":
                 return self._json(progress_payload())
             if path == "/api/trends":
                 return self._json(trends_payload())
             if path == "/api/replies/queue":
                 return self._json(review_queue_payload())
+            if path == "/api/replies/followup/drafts":
+                return self._json(followup_drafts_payload())
             if path == "/api/signals":
                 return self._json(signals_payload())
             if path == "/api/variants":
@@ -1690,7 +1902,8 @@ class Handler(BaseHTTPRequestHandler):
                     per_company_cap=body.get("per_company_cap", 0),
                     concurrency=body.get("concurrency", 8),
                     titles=body.get("titles", ""), locations=body.get("locations", ""),
-                    reset=bool(body.get("reset", False)))
+                    reset=bool(body.get("reset", False)),
+                    whole_list=bool(body.get("whole_list", False)))
                 return self._json(payload, code=code)
             if path.startswith("/api/source/confirm/"):
                 job_id = path[len("/api/source/confirm/"):]
@@ -1740,6 +1953,16 @@ class Handler(BaseHTTPRequestHandler):
                 if not reply_ids:
                     return self._error(400, "reply_ids required")
                 return self._json(do_tag_replies(reply_ids))
+            if path == "/api/replies/followup/draft":
+                return self._json(do_draft_followups())
+            if path == "/api/replies/followup/approve":
+                body = self._read_body()
+                if body.get("confirm") is not True:
+                    return self._error(400, "sending requires confirm=true")
+                if not body.get("reply_id"):
+                    return self._error(400, "reply_id required")
+                payload, code = do_approve_followup(body.get("reply_id"), body.get("message"))
+                return self._json(payload, code=code)
             if path == "/api/reindex":
                 n = INDEX.build()
                 return self._json({"indexed": n, "built_at": INDEX.built_at})
