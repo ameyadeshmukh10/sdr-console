@@ -146,6 +146,10 @@ class BisonClient:
         """Single authenticated PUT returning parsed JSON (mirrors patch)."""
         return self._write("PUT", path, body)
 
+    def delete(self, path, body=None):
+        """Single authenticated DELETE returning parsed JSON."""
+        return self._write("DELETE", path, body)
+
     def patch(self, path, body=None):
         """Single authenticated PATCH returning parsed JSON (mirrors post)."""
         return self._write("PATCH", path, body)
@@ -218,6 +222,11 @@ class BisonClient:
         """Replace a campaign's sequence steps (PUT). sequence_id is the step/sequence id."""
         return self.put(f"/api/campaigns/sequence-steps/{sequence_id}",
                        {"title": title, "sequence_steps": sequence_steps})
+
+    def remove_leads_from_campaign(self, campaign_id, lead_ids):
+        """Remove leads from a campaign (DELETE /api/campaigns/{id}/leads)."""
+        return self.delete(f"/api/campaigns/{campaign_id}/leads",
+                          {"lead_ids": [int(x) for x in lead_ids]})
 
     def push_reply_to_followup_campaign(self, reply_id, campaign_id, force_add_reply=True):
         """Move a reply + its lead into a reply-followup campaign."""
