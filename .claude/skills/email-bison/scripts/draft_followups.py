@@ -29,7 +29,15 @@ from anthropic_client import (                              # noqa: E402
 KNOWLEDGE_DIR = SKILLS / "ai-sdr" / "knowledge"
 PLAYBOOK = SKILLS / "ai-sdr" / "examples" / "reply-handling.md"
 REVIEW_QUEUE = PROJECT_ROOT / "data" / "interested-replies" / "review_queue.json"
+LI_REVIEW_QUEUE = PROJECT_ROOT / "data" / "interested-replies" / "li_review_queue.json"
 DRAFTS = PROJECT_ROOT / "data" / "interested-replies" / "followup_drafts.json"
+
+# Extra steer for LinkedIn replies — same playbook voice, but a DM, not an email.
+LINKEDIN_NOTE = (
+    "CHANNEL = LinkedIn DM. Write a LinkedIn direct-message reply, NOT an email: no subject "
+    "line, no email signature, no '[attached]' (you can't attach files in a DM — offer to send "
+    "the artifact via a link or a quick call instead). Keep it tight — ideally under 600 "
+    "characters — warm and conversational. One idea, one low-friction ask.")
 
 DEFINITION = """\
 You are an SDR drafting the follow-up reply to an INTERESTED B2B prospect who answered a cold
@@ -68,8 +76,9 @@ def draft_one(client, system, item):
     name = item.get("from_name") or "there"
     hint = (item.get("classifier") or {}).get("intent") or ""
     reply = (item.get("text_body") or "").strip()[:2500]
+    channel_note = f"\n\n{LINKEDIN_NOTE}" if item.get("channel") == "linkedin" else ""
     user = (f"Prospect: {name}\nTheir interested reply:\n\"\"\"\n{reply}\n\"\"\"\n\n"
-            f"(pre-classified as: {hint}). Draft the follow-up. Return ONLY the JSON.")
+            f"(pre-classified as: {hint}).{channel_note} Draft the follow-up. Return ONLY the JSON.")
     try:
         res = client.complete(system, user, use_web_search=False, max_tokens=700)
         data = extract_json(res["text"])
@@ -89,9 +98,23 @@ def main():
     ap.add_argument("--refresh", action="store_true", help="re-draft even already-drafted replies")
     args = ap.parse_args()
 
-    queue = json.loads(REVIEW_QUEUE.read_text()) if REVIEW_QUEUE.is_file() else {}
-    interested = [it for it in (queue.get("items") or [])
-                  if (it.get("classifier") or {}).get("interested")]
+    def load_items(path, default_channel):
+        if not path.is_file():
+            return [], {}
+        try:
+            data = json.loads(path.read_text())
+        except (ValueError, OSError):
+            return [], {}
+        items = []
+        for it in (data.get("items") or []):
+            it.setdefault("channel", default_channel)
+            items.append(it)
+        return items, data
+
+    email_items, queue = load_items(REVIEW_QUEUE, "email")
+    li_items, _ = load_items(LI_REVIEW_QUEUE, "linkedin")
+    all_items = email_items + li_items
+    interested = [it for it in all_items if (it.get("classifier") or {}).get("interested")]
     if not interested:
         DRAFTS.write_text(json.dumps({"generated_at": now_iso(), "items": []}, indent=2))
         print("no interested replies to draft for.")
@@ -117,7 +140,10 @@ def main():
                 d = fut.result()
                 drafted.append({
                     "reply_id": it.get("reply_id"), "lead_id": it.get("lead_id"),
+                    "channel": it.get("channel", "email"),
                     "sender_email_id": it.get("sender_email_id"),
+                    "linkedin_account_id": it.get("linkedin_account_id"),
+                    "conversation_id": it.get("conversation_id"),
                     "from_name": it.get("from_name"), "from_email": it.get("from_email"),
                     "subject": it.get("subject"), "campaign_id": it.get("campaign_id"),
                     "original_reply": (it.get("text_body") or "")[:1500],

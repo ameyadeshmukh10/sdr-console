@@ -16,14 +16,27 @@ const INTENT_COLOR = {
 }
 const MIN_CONF = 0.50  // only interested/referral above this confidence are surfaced
 
-// Collapsible list of the outbound sequence emails we sent this prospect.
-function SentEmails({ emails }) {
+// Email vs LinkedIn channel pill — the LinkedIn replies come from HeyReach, the
+// email ones from the Bison master inbox.
+function ChannelBadge({ channel }) {
+  const li = channel === 'linkedin'
+  return (
+    <span className={`badge channel-${li ? 'linkedin' : 'email'}`}>
+      {li ? 'in LinkedIn' : '✉ Email'}
+    </span>
+  )
+}
+
+// Collapsible list of the outbound messages we sent this prospect (email sequence
+// or LinkedIn DMs — the channel only changes the label).
+function SentEmails({ emails, channel }) {
   const [open, setOpen] = useState(false)
   if (!emails?.length) return null
+  const noun = channel === 'linkedin' ? 'Messages we sent' : 'Emails we sent'
   return (
     <div style={{ margin: '4px 0 8px' }}>
       <button className="linklike" style={{ fontSize: 12 }} onClick={() => setOpen((v) => !v)}>
-        {open ? '▾' : '▸'} Emails we sent ({emails.length})
+        {open ? '▾' : '▸'} {noun} ({emails.length})
       </button>
       {open && emails.map((m, i) => (
         <div key={i} style={{ borderLeft: '2px solid var(--border)', paddingLeft: 10, margin: '6px 0', fontSize: 12 }}>
@@ -58,6 +71,7 @@ export default function RepliesPage() {
   const [busy, setBusy] = useState(null)          // reply_id being approved
   const [lookback, setLookback] = useState(14)
   const [campaign, setCampaign] = useState('')
+  const [channelFilter, setChannelFilter] = useState('all')   // all | email | linkedin
   const [edits, setEdits] = useState({})          // reply_id -> edited draft
   const [showOthers, setShowOthers] = useState(false)
   const [pct, setPct] = useState({})              // reply_id -> send progress %
@@ -112,7 +126,8 @@ export default function RepliesPage() {
       if (r.ok === false) { fail(r.error || 'send failed') }
       else {
         setPct((p) => ({ ...p, [id]: 100 }))
-        setMsg({ err: false, text: `Sent follow-up to ${it.from_name || it.from_email} in the thread.` })
+        const via = it.channel === 'linkedin' ? 'via LinkedIn' : 'in the thread'
+        setMsg({ err: false, text: `Sent follow-up to ${it.from_name || it.from_email} ${via}.` })
         setTimeout(() => { Promise.all([loadQueue(), loadDrafts()]); clearPct(id) }, 850)
       }
     } catch (e) { stop(); fail(e.message) }
@@ -125,44 +140,55 @@ export default function RepliesPage() {
     () => Object.fromEntries((drafts?.items || []).map((d) => [String(d.reply_id), d])), [drafts])
   const draftFor = (it) => draftBy[String(it.reply_id)]
 
+  const inChannel = (it) => channelFilter === 'all' || (it.channel || 'email') === channelFilter
   const isCandidate = (it) => it.classifier?.interested && (it.classifier.confidence || 0) > MIN_CONF && !it.handled
-  const possible = items.filter((it) => isCandidate(it) && !it.already_interested)
-  const tagged = items.filter((it) => it.already_interested && !it.handled
+  const possible = items.filter((it) => inChannel(it) && isCandidate(it) && !it.already_interested)
+  const tagged = items.filter((it) => inChannel(it) && it.already_interested && !it.handled
     && it.classifier?.interested && (it.classifier.confidence || 0) > MIN_CONF)
-  const others = items.filter((it) => !isCandidate(it) && !(it.already_interested && it.classifier?.interested))
+  const others = items.filter((it) => inChannel(it) && !isCandidate(it) && !(it.already_interested && it.classifier?.interested))
+  const liCount = items.filter((it) => it.channel === 'linkedin').length
   const needDrafts = tagged.filter((it) => !draftFor(it)).length
 
-  // Shared header block for a reply card: who, title, sending inbox, intent/conf.
-  const CardHead = ({ it, cls, extra }) => (
+  // Shared header block for a reply card: who, title, sending inbox/account,
+  // channel, intent/conf, plus the messages we sent + the inbound reply.
+  const CardHead = ({ it, cls, extra }) => {
+    const li = it.channel === 'linkedin'
+    const contact = li ? it.profile_url : it.from_email
+    return (
     <>
       <div className="row between" style={{ marginBottom: 4 }}>
         <span>
-          <b>{it.from_name || `${it.first_name || ''} ${it.last_name || ''}`.trim() || it.from_email}</b>
-          <span className="muted" style={{ fontSize: 12, marginLeft: 6 }}>{it.from_email}</span>
+          <b>{it.from_name || `${it.first_name || ''} ${it.last_name || ''}`.trim() || it.from_email || 'LinkedIn lead'}</b>
+          {contact && (li
+            ? <a className="muted" href={contact} target="_blank" rel="noreferrer" style={{ fontSize: 12, marginLeft: 6 }}>LinkedIn profile ↗</a>
+            : <span className="muted" style={{ fontSize: 12, marginLeft: 6 }}>{contact}</span>)}
         </span>
         <span className="row" style={{ gap: 8, alignItems: 'center' }}>
+          <ChannelBadge channel={it.channel} />
           <span className="badge" style={{ color: INTENT_COLOR[cls.intent] || 'var(--muted)' }}>{cls.intent}</span>
           {cls.confidence != null && <span className="muted" style={{ fontSize: 12 }}>{Math.round(cls.confidence * 100)}%</span>}
           {extra}
         </span>
       </div>
-      {it.title && <div className="muted" style={{ fontSize: 12 }}>{it.title}</div>}
-      {it.sending_email && <div className="muted" style={{ fontSize: 11 }}>sent from {it.sending_email}</div>}
-      <SentEmails emails={it.sent_emails} />
+      {(it.title || it.company) && <div className="muted" style={{ fontSize: 12 }}>{[it.title, it.company].filter(Boolean).join(' · ')}</div>}
+      {it.sending_email && <div className="muted" style={{ fontSize: 11 }}>sent from {it.sending_email}{li ? ' · LinkedIn' : ''}</div>}
+      <SentEmails emails={it.sent_emails} channel={it.channel} />
       {it.subject && <div className="muted" style={{ fontSize: 12 }}>{it.subject}</div>}
       <div style={{ fontSize: 13, margin: '6px 0 10px', borderLeft: '2px solid var(--border)', paddingLeft: 10, whiteSpace: 'pre-wrap' }}>
         {it.text_body}
       </div>
     </>
-  )
+    )
+  }
 
   return (
     <div>
       <h1 className="page-title">Replies</h1>
       <p className="page-sub">
-        Scan the Bison inbox — Claude classifies each reply (auto-replies / non-lead senders / test mail filtered,
-        opt-outs auto-unsubscribed). Review the possible interested replies & referrals, tag the real ones, draft the
-        AI follow-up, and approve to send it straight back in the prospect's thread.
+        Scan the email (Bison) inbox <b>and</b> the LinkedIn (HeyReach) inbox — Claude classifies each reply
+        (auto-replies / non-lead senders / test mail filtered, opt-outs auto-unsubscribed). Review the possible
+        interested replies & referrals, draft the AI follow-up, and approve to send it straight back in the
+        prospect's own thread — in Bison for email, from the right LinkedIn sender for LinkedIn.
       </p>
 
       <div className="panel" style={{ marginBottom: 18 }}>
@@ -180,6 +206,20 @@ export default function RepliesPage() {
           </button>
           {queue?.scanned_at && <span className="muted" style={{ alignSelf: 'center' }}>last scan {new Date(queue.scanned_at).toLocaleString()}</span>}
         </div>
+        {liCount > 0 && (
+          <div className="row" style={{ gap: 6, marginTop: 12, alignItems: 'center' }}>
+            <span className="muted" style={{ fontSize: 12 }}>Channel</span>
+            {[['all', 'All'], ['email', '✉ Email'], ['linkedin', 'in LinkedIn']].map(([v, label]) => (
+              <button key={v} onClick={() => setChannelFilter(v)}
+                className={channelFilter === v ? '' : 'linklike'}
+                style={channelFilter === v
+                  ? { fontSize: 12, padding: '3px 12px' }
+                  : { fontSize: 12, padding: '3px 12px', border: '1px solid var(--border)', background: 'transparent', borderRadius: 999 }}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <ErrorBanner error={error} />
@@ -187,9 +227,10 @@ export default function RepliesPage() {
 
       {queue && (
         <div className="grid stat-grid" style={{ marginBottom: 22 }}>
-          <Stat label="Scanned" value={num(counts.scanned || 0)} sub={`last ${queue.lookback_days || 14}d`} />
+          <Stat label="Scanned" value={num(counts.scanned || 0)}
+            sub={liCount > 0 ? `${num(counts.email_scanned || 0)} email · ${num(counts.linkedin_scanned || 0)} LinkedIn` : `last ${queue.lookback_days || 14}d`} />
           <Stat label="Possible interested" value={num(possible.length)} sub={`> ${Math.round(MIN_CONF * 100)}% conf · to review`} />
-          <Stat label="Tagged" value={num(tagged.length)} sub="draft + send" />
+          <Stat label="Interested" value={num(tagged.length)} sub="draft + send" />
           <Stat label="Unsubscribed" value={num(counts.unsubscribed || 0)} sub="opt-outs, suppressed in Bison" />
         </div>
       )}
@@ -237,7 +278,7 @@ export default function RepliesPage() {
                 const sending = busy === it.reply_id || pct[it.reply_id] != null
                 return (
                   <div className="panel" key={it.reply_id}>
-                    <CardHead it={it} cls={cls} extra={<span className="badge status-enrolled">tagged</span>} />
+                    <CardHead it={it} cls={cls} extra={<span className="badge status-enrolled">{it.channel === 'linkedin' ? 'interested' : 'tagged'}</span>} />
                     {d?.error ? (
                       <div className="banner warn">Draft error: {d.error}</div>
                     ) : d ? (
@@ -293,7 +334,13 @@ export default function RepliesPage() {
                         const cls = it.classifier || {}
                         return (
                           <tr key={it.reply_id}>
-                            <td>{it.from_name || it.from_email}<div className="muted" style={{ fontSize: 11 }}>{it.from_email}</div></td>
+                            <td>
+                              <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+                                {it.from_name || it.from_email || 'LinkedIn lead'}
+                                <ChannelBadge channel={it.channel} />
+                              </div>
+                              <div className="muted" style={{ fontSize: 11 }}>{it.channel === 'linkedin' ? it.title : it.from_email}</div>
+                            </td>
                             <td><span className="badge" style={{ color: INTENT_COLOR[cls.intent] || 'var(--muted)' }}>{cls.intent}</span></td>
                             <td className="muted" style={{ fontSize: 12, maxWidth: 360 }}>{cls.reason}</td>
                             <td>{cls.confidence != null ? `${Math.round(cls.confidence * 100)}%` : '—'}</td>

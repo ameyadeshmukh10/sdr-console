@@ -8,6 +8,7 @@ import json
 import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -98,6 +99,80 @@ class HeyReachClient:
         """
         return self._request("POST", "/campaign/AddLeadsToCampaignV2",
                              {"campaignId": int(campaign_id), "accountLeadPairs": account_lead_pairs})
+
+    # ---- LinkedIn sender accounts ---------------------------------------
+    def list_accounts(self, offset=0, limit=100):
+        """POST /li_account/GetAll — the LinkedIn sender accounts on the workspace.
+        Returns {totalCount, items:[{id, emailAddress, firstName, lastName,
+        profileUrl, ...}]}."""
+        return self._request("POST", "/li_account/GetAll",
+                             {"offset": int(offset), "limit": int(limit)})
+
+    # ---- Inbox (LinkedIn conversations) ---------------------------------
+    def list_conversations(self, campaign_ids=None, account_ids=None, seen=None,
+                           search=None, offset=0, limit=100):
+        """POST /inbox/GetConversationsV2 — paginated LinkedIn conversations.
+
+        Returns {totalCount, items:[conversation]} where each conversation has
+        id (the conversationId), read, lastMessageAt, lastMessageText,
+        lastMessageSender ('ME'|'CORRESPONDENT'), totalMessages, linkedInAccountId,
+        correspondentProfile {firstName, lastName, profileUrl, position, companyName,
+        emailAddress, ...}, linkedInAccount {id, firstName, lastName, emailAddress},
+        and messages:[{createdAt, body, subject, isInMail, sender}]."""
+        filters = {}
+        if campaign_ids:
+            filters["campaignIds"] = [int(c) for c in campaign_ids]
+        if account_ids:
+            filters["linkedInAccountIds"] = [int(a) for a in account_ids]
+        if search:
+            filters["searchString"] = search
+        if seen is not None:
+            filters["seen"] = bool(seen)
+        return self._request("POST", "/inbox/GetConversationsV2",
+                             {"offset": int(offset), "limit": int(limit), "filters": filters})
+
+    def iter_conversations(self, campaign_ids=None, account_ids=None, seen=None,
+                           search=None, page_size=100, max_items=1000):
+        """Yield every conversation across pages (GetConversationsV2 is offset based,
+        max 100/page)."""
+        offset, fetched = 0, 0
+        while fetched < max_items:
+            page = self.list_conversations(campaign_ids=campaign_ids, account_ids=account_ids,
+                                           seen=seen, search=search, offset=offset, limit=page_size)
+            items = (page or {}).get("items") or []
+            for it in items:
+                yield it
+                fetched += 1
+                if fetched >= max_items:
+                    return
+            total = (page or {}).get("totalCount") or 0
+            offset += page_size
+            if offset >= total or not items:
+                return
+
+    def get_chatroom(self, account_id, conversation_id):
+        """GET /inbox/GetChatroom/{accountId}/{conversationId} — one conversation with
+        its full message list (same shape as a GetConversationsV2 item)."""
+        path = "/inbox/GetChatroom/%s/%s" % (
+            urllib.parse.quote(str(int(account_id))),
+            urllib.parse.quote(str(conversation_id), safe=""))
+        return self._request("GET", path)
+
+    def send_message(self, conversation_id, linkedin_account_id, message, subject=None):
+        """POST /inbox/SendMessage — send a LinkedIn message in an existing
+        conversation, from the given sender account to the correspondent."""
+        body = {"conversationId": conversation_id,
+                "linkedInAccountId": int(linkedin_account_id),
+                "message": message}
+        if subject:
+            body["subject"] = subject
+        return self._request("POST", "/inbox/SendMessage", body)
+
+    def set_seen(self, conversation_id, linkedin_account_id, seen=True):
+        """POST /inbox/SetSeenStatus — mark a conversation seen/unseen."""
+        return self._request("POST", "/inbox/SetSeenStatus", {
+            "conversationId": conversation_id,
+            "linkedInAccountId": int(linkedin_account_id), "seen": bool(seen)})
 
     @staticmethod
     def build_pair(linkedin_account_id, first_name, last_name, profile_url,

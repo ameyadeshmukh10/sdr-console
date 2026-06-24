@@ -60,6 +60,7 @@ CLAY_ENRICH = SCRIPTS / "sdr-pipeline" / "scripts" / "clay_enrich.py"
 PIPELINE_SCRIPTS = SCRIPTS / "sdr-pipeline" / "scripts"
 SOURCE_JOBS_DIR = DATA / "outreach" / "source-jobs"
 CLASSIFY_REPLIES = SCRIPTS / "email-bison" / "scripts" / "classify_replies.py"
+CLASSIFY_LI_REPLIES = SCRIPTS / "email-bison" / "scripts" / "classify_li_replies.py"
 DRAFT_FOLLOWUPS = SCRIPTS / "email-bison" / "scripts" / "draft_followups.py"
 FOLLOWUP_DRAFTS = DATA / "interested-replies" / "followup_drafts.json"
 SENT_FOLLOWUPS = DATA / "interested-replies" / "sent_followups.json"
@@ -67,6 +68,7 @@ ANALYZE = SCRIPTS / "interested-trends" / "scripts"
 TRENDS_DIR = DATA / "interested-replies" / "analysis"
 REPLIES_LAST_RUN = DATA / "interested-replies" / "last_run.json"
 REVIEW_QUEUE = DATA / "interested-replies" / "review_queue.json"
+LI_REVIEW_QUEUE = DATA / "interested-replies" / "li_review_queue.json"
 BATCH_JOBS_DIR = DATA / "outreach" / "batch-jobs"
 
 PERSONA_ORDER = ["sales-leadership", "revops", "partnerships", "sdr-bdr"]
@@ -1493,24 +1495,45 @@ def _bison():
     return BisonClient()
 
 
+def _heyreach():
+    sys.path.insert(0, str(SCRIPTS / "sdr-pipeline" / "scripts"))
+    from heyreach_client import HeyReachClient  # noqa: E402
+    return HeyReachClient()
+
+
 def interested_tag_id():
     raw = read_env().get("BISON_INTERESTED_TAG_ID", "11")
     return int(raw) if str(raw).isdigit() else 11
 
 
+def _merged_queue_items():
+    """All review-queue items across channels, each stamped with its channel.
+    Email items (review_queue.json) default to channel='email'; LinkedIn items
+    (li_review_queue.json) already carry channel='linkedin'."""
+    items = []
+    for default_channel, path in (("email", REVIEW_QUEUE), ("linkedin", LI_REVIEW_QUEUE)):
+        data = _read_json(path) or {}
+        for it in (data.get("items") or []):
+            it.setdefault("channel", default_channel)
+            items.append(it)
+    return items
+
+
 def do_scan_replies(campaign_id=None, lookback_days=14):
-    # Auto-apply: high-confidence unsubscribe / "close the file" replies are
-    # unsubscribed + blacklisted in Bison and kept out of the review queue.
+    # Email: auto-apply high-confidence unsubscribe / "close the file" replies
+    # (unsubscribed + blacklisted in Bison, kept out of the review queue).
     args = [str(CLASSIFY_REPLIES), "--lookback", str(lookback_days), "--apply-unsubscribes"]
     if campaign_id:
         args += ["--campaign", str(campaign_id)]
     res = run_script(args, timeout=600)
-    payload = _read_json(REVIEW_QUEUE) or {"available": False}
-    if isinstance(payload, dict):
-        payload["available"] = REVIEW_QUEUE.is_file()
-    payload = {"available": REVIEW_QUEUE.is_file(), **(payload if isinstance(payload, dict) else {})}
+    # LinkedIn: HeyReach conversations aren't scoped by a Bison campaign id, so the
+    # campaign filter narrows only the email side — the LinkedIn inbox is always
+    # refreshed (the classifier no-ops cleanly if HeyReach isn't configured).
+    li_res = run_script([str(CLASSIFY_LI_REPLIES), "--lookback", str(lookback_days)], timeout=600)
+    payload = review_queue_payload()
     payload["scan"] = res
-    payload["ok"] = res["returncode"] == 0
+    payload["li_scan"] = li_res
+    payload["ok"] = res["returncode"] == 0 and li_res["returncode"] == 0
     return payload
 
 
@@ -1535,25 +1558,59 @@ def _stamp_handled(items):
 
 
 def review_queue_payload():
-    data = _read_json(REVIEW_QUEUE)
-    if not data:
+    """Unified review queue: email (Bison) + LinkedIn (HeyReach) replies in one
+    list, each item carrying a `channel`. Counts are summed across channels."""
+    email = _read_json(REVIEW_QUEUE) or {}
+    li = _read_json(LI_REVIEW_QUEUE) or {}
+    if not email and not li:
         return {"available": False, "items": []}
-    data["available"] = True
-    _stamp_handled(data.get("items"))
-    return data
+    for it in (email.get("items") or []):
+        it.setdefault("channel", "email")
+    items = list(email.get("items") or []) + list(li.get("items") or [])
+    _stamp_handled(items)
+    ec, lc = (email.get("counts") or {}), (li.get("counts") or {})
+    counts = {
+        "scanned": (ec.get("scanned") or 0) + (lc.get("scanned") or 0),
+        "flagged": (ec.get("flagged") or 0) + (lc.get("flagged") or 0),
+        "already": ec.get("already") or 0,
+        "unsubscribed": ec.get("unsubscribed") or 0,
+        "filtered": (ec.get("filtered") or 0) + (lc.get("filtered") or 0),
+        "email_scanned": ec.get("scanned") or 0,
+        "linkedin_scanned": lc.get("scanned") or 0,
+    }
+    return {
+        "available": True,
+        "items": items,
+        "counts": counts,
+        "scanned_at": email.get("scanned_at") or li.get("scanned_at"),
+        "lookback_days": email.get("lookback_days") or li.get("lookback_days"),
+        "linkedin": {"configured": bool(li.get("configured")), "error": li.get("error")},
+    }
 
 
 def do_tag_replies(reply_ids):
-    """For each reply: mark-as-interested + attach the Interested tag to its lead."""
-    queue = _read_json(REVIEW_QUEUE) or {}
-    by_id = {str(it.get("reply_id")): it for it in queue.get("items", [])}
+    """Mark replies interested. Email (Bison): mark-as-interested + attach the
+    Interested tag to the lead. LinkedIn: there's no Bison lead, so 'interested'
+    is a local state flip in the LinkedIn queue that advances the card to draft —
+    HeyReach interested replies otherwise skip straight past this step."""
+    email_q = _read_json(REVIEW_QUEUE) or {}
+    li_q = _read_json(LI_REVIEW_QUEUE) or {}
+    email_by_id = {str(it.get("reply_id")): it for it in email_q.get("items", [])}
+    li_by_id = {str(it.get("reply_id")): it for it in li_q.get("items", [])}
     tag_id = interested_tag_id()
-    bison = _bison()
+    bison = None
     results, tagged, failed = [], 0, 0
     for rid in reply_ids:
-        item = by_id.get(str(rid), {})
+        li_item = li_by_id.get(str(rid))
+        if li_item is not None:                          # LinkedIn — local flip only
+            li_item["already_interested"] = True
+            results.append({"reply_id": rid, "channel": "linkedin", "ok": True})
+            tagged += 1
+            continue
+        item = email_by_id.get(str(rid), {})
         lead_id = item.get("lead_id")
         try:
+            bison = bison or _bison()
             bison.mark_reply_interested(rid)
             if lead_id:
                 bison.attach_tags_to_leads([tag_id], [lead_id])
@@ -1563,8 +1620,10 @@ def do_tag_replies(reply_ids):
         except Exception as e:  # noqa: BLE001 - one bad reply must not abort the rest
             results.append({"reply_id": rid, "lead_id": lead_id, "ok": False, "error": str(e)[:200]})
             failed += 1
-    if queue:
-        REVIEW_QUEUE.write_text(json.dumps(queue, indent=2))
+    if email_q:
+        REVIEW_QUEUE.write_text(json.dumps(email_q, indent=2))
+    if li_q:
+        LI_REVIEW_QUEUE.write_text(json.dumps(li_q, indent=2))
     return {"ok": failed == 0, "tagged": tagged, "failed": failed, "results": results}
 
 
@@ -1585,22 +1644,54 @@ def followup_drafts_payload():
     return payload
 
 
+def _mark_draft_sent(drafts, draft, body_text):
+    """Record a sent draft in followup_drafts.json (shared by both channels)."""
+    if draft:
+        draft["status"] = "sent"
+        draft["sent_at"] = now_iso()
+        draft["sent_message"] = body_text
+        FOLLOWUP_DRAFTS.write_text(json.dumps(drafts, indent=2, ensure_ascii=False))
+
+
 def do_approve_followup(reply_id, message):
-    """Approve a drafted follow-up: tag interested + send the (edited) reply
-    DIRECTLY in the prospect's Bison thread, then mark it handled so the card
-    clears. The enriched review-queue item is the source of truth for the
-    recipient + sending inbox; the draft file supplies the body text."""
-    queue = _read_json(REVIEW_QUEUE) or {}
-    qitem = next((it for it in queue.get("items", []) if str(it.get("reply_id")) == str(reply_id)), {})
+    """Approve a drafted follow-up and send the (edited) reply in the prospect's
+    own thread, then mark it handled so the card clears. The enriched review-queue
+    item is the source of truth for the recipient + sender; the draft supplies the
+    body. Email replies send in the Bison thread; LinkedIn replies send via
+    HeyReach (SendMessage) from the right LinkedIn sender to the right person."""
+    qitem = next((it for it in _merged_queue_items() if str(it.get("reply_id")) == str(reply_id)), {})
     drafts = _read_json(FOLLOWUP_DRAFTS) or {"items": []}
     draft = next((d for d in drafts.get("items", []) if str(d.get("reply_id")) == str(reply_id)), {})
     src = qitem or draft
-    lead_id = src.get("lead_id")
-    to_email = src.get("from_email") or src.get("lead_email")
-    sender_email_id = src.get("sender_email_id")
+    channel = src.get("channel") or draft.get("channel") or "email"
     body_text = message or draft.get("draft") or ""
     if not body_text.strip():
         return {"ok": False, "error": "no follow-up draft to send — click Draft follow-up first"}, 409
+
+    if channel == "linkedin":
+        conv_id = src.get("conversation_id") or src.get("reply_id") or draft.get("conversation_id")
+        acct_id = src.get("linkedin_account_id") or draft.get("linkedin_account_id")
+        if not (conv_id and acct_id):
+            return {"ok": False, "error": "missing conversation or LinkedIn sender for this reply"}, 409
+        try:
+            hr = _heyreach()
+            hr.send_message(conv_id, acct_id, body_text)
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e)[:300]}, 502
+        try:  # best-effort: mark the conversation seen; never fail a sent message on this
+            hr.set_seen(conv_id, acct_id, True)
+        except Exception:  # noqa: BLE001
+            pass
+        _mark_sent(reply_id, {"sent_at": now_iso(), "channel": "linkedin",
+                              "conversation_id": conv_id, "linkedin_account_id": acct_id})
+        _mark_draft_sent(drafts, draft, body_text)
+        return {"ok": True, "reply_id": reply_id, "channel": "linkedin",
+                "to_name": src.get("from_name")}, 200
+
+    # ---- email (Bison) -------------------------------------------------------
+    lead_id = src.get("lead_id")
+    to_email = src.get("from_email") or src.get("lead_email")
+    sender_email_id = src.get("sender_email_id")
     if not (to_email and sender_email_id):
         return {"ok": False, "error": "missing recipient or sending inbox for this reply"}, 409
     bison = _bison()
@@ -1614,14 +1705,10 @@ def do_approve_followup(reply_id, message):
                          content_type="html", inject_previous=True)
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)[:300]}, 502
-    _mark_sent(reply_id, {"sent_at": now_iso(), "to_email": to_email,
+    _mark_sent(reply_id, {"sent_at": now_iso(), "channel": "email", "to_email": to_email,
                           "sender_email_id": sender_email_id})
-    if draft:
-        draft["status"] = "sent"
-        draft["sent_at"] = now_iso()
-        draft["sent_message"] = body_text
-        FOLLOWUP_DRAFTS.write_text(json.dumps(drafts, indent=2, ensure_ascii=False))
-    return {"ok": True, "reply_id": reply_id, "to_email": to_email}, 200
+    _mark_draft_sent(drafts, draft, body_text)
+    return {"ok": True, "reply_id": reply_id, "channel": "email", "to_email": to_email}, 200
 
 
 # ----------------------------------------------------------------------------
@@ -1682,13 +1769,11 @@ def _interested_emails():
         e = ((row.get("lead") or {}).get("email") or "").strip().lower()
         if e:
             emails.add(e)
-    q = _read_json(REVIEW_QUEUE)
-    if q:
-        for it in q.get("items", []):
-            if it.get("already_interested") or (it.get("classifier") or {}).get("interested"):
-                e = (it.get("from_email") or "").strip().lower()
-                if e:
-                    emails.add(e)
+    for it in _merged_queue_items():
+        if it.get("already_interested") or (it.get("classifier") or {}).get("interested"):
+            e = (it.get("from_email") or "").strip().lower()
+            if e:
+                emails.add(e)
     return emails
 
 
