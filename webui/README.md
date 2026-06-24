@@ -49,10 +49,19 @@ npm --prefix webui/frontend run dev              # dev server with /api proxy
 6. **Outreach** (`/outreach`) — search/filter/group the generated sequences by persona,
    CTA play, status, company; click any lead for the full 4-touch email + LinkedIn copy.
 
-7. **Replies** (`/replies`) — interested-reply detection. **Scan** the Bison inbox (lookback +
-   optional campaign) → each inbound reply is classified by Claude (`classify_replies.py`) into a
-   review queue → select the flagged ones → **Tag in Bison** (gated) applies `mark-as-interested`
-   + the Interested tag (id 11) to each lead.
+7. **Replies** (`/replies`) — unified interested-reply triage across **email (Bison)** and
+   **LinkedIn (HeyReach)**, with a channel badge on every card and a channel filter. **Scan**
+   classifies each inbound reply with Claude — email via `classify_replies.py` (Bison master
+   inbox), LinkedIn via `classify_li_replies.py` (HeyReach conversations where the lead messaged
+   us last). Each card carries the lead, the sending account/inbox, and the messages we sent.
+   - **Email:** review the possible interested → **Tag in Bison** (gated: `mark-as-interested`
+     + the Interested tag, id 11) → draft → **Approve** sends the reply in the prospect's Bison
+     thread.
+   - **LinkedIn:** interested replies skip straight to draft (no Bison tag) → **Approve** sends
+     via HeyReach `SendMessage` from the LinkedIn sender that got the reply, to that lead.
+   Drafts are channel-aware (`draft_followups.py` writes shorter, DM-shaped copy for LinkedIn).
+   On send the card clears (`sent_followups.json`); a fresh reply reappears on the next scan.
+   The campaign filter narrows only the email side — LinkedIn always scans `HEYREACH_CAMPAIGN_ID`.
 8. **Signals** (`/signals`) — the per-company research cache. Research is account-level, so it's
    cached by email domain in `account_signals` (pipeline.db) and reused for **90 days** — a company
    is web-searched once instead of once per contact / per re-run. Browse cached accounts (domain,

@@ -25,7 +25,7 @@ sys.path.insert(0, str(HERE))                              # bison_client, fetch
 sys.path.insert(0, str(SKILLS / "ai-sdr" / "scripts"))     # anthropic_client
 
 from bison_client import BisonClient, BisonError            # noqa: E402
-from fetch_interested_replies import message_text           # noqa: E402
+from fetch_interested_replies import message_text, html_to_text  # noqa: E402
 from anthropic_client import (                              # noqa: E402
     AnthropicClient, extract_json, AnthropicError, AnthropicJSONError,
 )
@@ -42,6 +42,40 @@ JUNK_SENDER_SUBSTR = ("google-workspace-alerts", "workspace-alerts-noreply",
 SKIP_SUBJECT = re.compile(r"everworker connection test", re.I)
 # Confidence at/above which an unsubscribe/"close the file" reply is auto-suppressed.
 UNSUB_CONFIDENCE = 0.80
+# Only interested/referral replies above this confidence are surfaced + enriched.
+INTERESTED_MIN_CONFIDENCE = 0.50
+
+
+def enrich_item(bison, item):
+    """Attach the prospect's profile (name/title), the outbound emails we sent, and
+    the sending inbox to a candidate item — so the Replies card has full context.
+    Degrades silently on any lookup failure (one bad lead/thread won't fail a scan)."""
+    try:
+        lead = bison.get_lead(item["lead_id"]) or {}
+    except BisonError:
+        lead = {}
+    item["first_name"] = lead.get("first_name")
+    item["last_name"] = lead.get("last_name")
+    item["title"] = lead.get("title")
+    item["lead_email"] = lead.get("email")
+    # The emails WE sent this lead (the outbound sequence) come from the dedicated
+    # sent-emails endpoint — the conversation-thread often omits them.
+    sent, sending = [], None
+    try:
+        rows = bison.get_lead_sent_emails(item["lead_id"]) or []
+    except BisonError:
+        rows = []
+    rows = sorted(rows, key=lambda m: m.get("sent_at") or "", reverse=True)[:5]
+    for m in rows:
+        se = m.get("sender_email")
+        addr = (se.get("email") if isinstance(se, dict) else se) or None
+        sending = sending or addr
+        sent.append({"subject": m.get("email_subject"), "date": m.get("sent_at"),
+                     "from_email": addr, "text": html_to_text(m.get("email_body"))[:1500]})
+    item["sending_email"] = sending
+    item["sent_emails"] = sent  # newest first, the outbound sequence we sent
+    item["enriched"] = True
+    return item
 
 
 def is_junk_sender(email):
@@ -262,6 +296,16 @@ def main():
                 unsub_errors.append({**rec, "error": str(e)[:200]})
         else:
             unsub_done.append({**rec, "dry_run": True})
+
+    # Enrich only the candidates the UI surfaces (interested/referral > 0.50) with
+    # the lead profile + the outbound emails we sent + the sending inbox. Bounded
+    # so the 2 Bison calls/candidate stay proportional to what's shown.
+    to_enrich = [it for it in items
+                 if it["classifier"]["interested"] and it["classifier"]["confidence"] > INTERESTED_MIN_CONFIDENCE
+                 and it.get("lead_id")]
+    if to_enrich:
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            list(ex.map(lambda it: enrich_item(bison, it), to_enrich))
 
     items.sort(key=lambda it: (not it["classifier"]["interested"],
                                -it["classifier"]["confidence"]))

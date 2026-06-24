@@ -142,11 +142,22 @@ class BisonClient:
         if last_err:
             raise last_err
 
+    def put(self, path, body=None):
+        """Single authenticated PUT returning parsed JSON (mirrors patch)."""
+        return self._write("PUT", path, body)
+
+    def delete(self, path, body=None):
+        """Single authenticated DELETE returning parsed JSON."""
+        return self._write("DELETE", path, body)
+
     def patch(self, path, body=None):
         """Single authenticated PATCH returning parsed JSON (mirrors post)."""
+        return self._write("PATCH", path, body)
+
+    def _write(self, method, path, body=None):
         url = self.base_url + path
         data = json.dumps(body or {}).encode("utf-8")
-        req = urllib.request.Request(url, data=data, method="PATCH")
+        req = urllib.request.Request(url, data=data, method=method)
         req.add_header("Authorization", f"Bearer {self.api_key}")
         req.add_header("Accept", "application/json")
         req.add_header("Content-Type", "application/json")
@@ -198,6 +209,25 @@ class BisonClient:
         payload = self.post("/api/campaigns", {"name": name, "type": type})
         return payload.get("data", payload) if isinstance(payload, dict) else payload
 
+    def create_sequence_steps(self, campaign_id, sequence_steps, title="Sequence"):
+        """Create the sequence steps for a campaign. Each step:
+        {email_subject, email_body, wait_in_days, order, thread_reply?}."""
+        return self.post(f"/api/campaigns/{campaign_id}/sequence-steps",
+                         {"title": title, "sequence_steps": sequence_steps})
+
+    def get_sequence_steps(self, campaign_id):
+        return self.get(f"/api/campaigns/{campaign_id}/sequence-steps")
+
+    def update_sequence_steps(self, sequence_id, sequence_steps, title="Sequence"):
+        """Replace a campaign's sequence steps (PUT). sequence_id is the step/sequence id."""
+        return self.put(f"/api/campaigns/sequence-steps/{sequence_id}",
+                       {"title": title, "sequence_steps": sequence_steps})
+
+    def remove_leads_from_campaign(self, campaign_id, lead_ids):
+        """Remove leads from a campaign (DELETE /api/campaigns/{id}/leads)."""
+        return self.delete(f"/api/campaigns/{campaign_id}/leads",
+                          {"lead_ids": [int(x) for x in lead_ids]})
+
     def push_reply_to_followup_campaign(self, reply_id, campaign_id, force_add_reply=True):
         """Move a reply + its lead into a reply-followup campaign."""
         return self.post(f"/api/replies/{reply_id}/followup-campaign/push",
@@ -205,10 +235,14 @@ class BisonClient:
 
     def send_reply(self, reply_id, message, sender_email_id, to_emails,
                    content_type="html", inject_previous=True):
-        """Send a reply in the thread of an existing reply (the drafted follow-up)."""
+        """Send a reply in the thread of an existing reply (the drafted follow-up).
+
+        to_emails accepts plain address strings or {email_address, name} dicts;
+        the API requires the object shape, so strings are wrapped here."""
+        recipients = [{"email_address": t} if isinstance(t, str) else t for t in to_emails]
         return self.post(f"/api/replies/{reply_id}/reply", {
             "message": message, "sender_email_id": sender_email_id,
-            "to_emails": list(to_emails), "content_type": content_type,
+            "to_emails": recipients, "content_type": content_type,
             "inject_previous_email_body": inject_previous})
 
     def rename_campaign(self, campaign_id, name):
@@ -226,6 +260,12 @@ class BisonClient:
     def get_lead(self, lead_id):
         payload = self.get(f"/api/leads/{lead_id}")
         return payload.get("data", {})
+
+    def get_lead_sent_emails(self, lead_id):
+        """Emails we actually sent this lead: [{email_subject, email_body, sent_at,
+        sender_email, campaign_id, ...}] (the outbound sequence in the thread)."""
+        payload = self.get(f"/api/leads/{lead_id}/sent-emails")
+        return payload.get("data", payload) if isinstance(payload, dict) else (payload or [])
 
     def get_campaign(self, campaign_id):
         if campaign_id in self._campaign_cache:

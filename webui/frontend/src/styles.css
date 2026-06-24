@@ -129,6 +129,8 @@ tr.clickable { cursor: pointer; }
 .badge.status-generated { color: var(--jade); border-color: var(--jade); background: rgba(34, 130, 111, 0.08); }
 .badge.status-pending { color: var(--muted); }
 .badge.cta { color: var(--violet); border-color: var(--violet); background: rgba(109, 93, 211, 0.06); }
+.badge.channel-linkedin { color: #0a66c2; border-color: #0a66c2; background: rgba(10, 102, 194, 0.08); }
+.badge.channel-email { color: var(--muted); border-color: var(--border-strong); background: rgba(15, 28, 24, 0.03); }
 
 /* Toolbar / filter bar */
 .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 18px; }
