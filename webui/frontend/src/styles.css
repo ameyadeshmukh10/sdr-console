@@ -185,7 +185,14 @@ tr.clickable { cursor: pointer; }
   overflow: hidden;
 }
 
-/* EverWorker brand lockup (monogram tile + Gilroy wordmark) */
+/* EverWorker brand PNG (from public/) — sized by its context below */
+.ev-logo-img { display: block; width: auto; max-width: 100%; object-fit: contain; }
+.login__brand .ev-logo-img { height: 30px; }
+.login__art-caption .ev-logo-img { height: 22px; }
+.brand .ev-logo-img { height: 26px; }
+
+/* EverWorker brand lockup (monogram tile + Gilroy wordmark) — wordmark
+   fallback used when the brand PNG is missing */
 .ev-logo { display: inline-flex; align-items: center; gap: 11px; line-height: 1; }
 .ev-mark {
   width: 34px; height: 34px; flex-shrink: 0; border-radius: 10px;

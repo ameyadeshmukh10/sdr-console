@@ -1,17 +1,7 @@
 import { useState } from 'react'
 import { useAuth } from '../AuthContext.jsx'
 import { ErrorBanner } from '../components/ui.jsx'
-
-// EverWorker brand lockup: a mint monogram tile + Gilroy wordmark.
-// `light` flips the wordmark to white for use on the dark art panel.
-function Wordmark({ light = false }) {
-  return (
-    <span className={'ev-logo' + (light ? ' ev-logo--light' : '')}>
-      <span className="ev-mark" aria-hidden="true">e</span>
-      <span className="ev-word">Ever<span className="accent">Worker</span></span>
-    </span>
-  )
-}
+import { BrandLogo } from '../components/BrandLogo.jsx'
 
 // Split-screen login: a clean white form panel on the left, a brand-green
 // ocean on the right. The only entry point to the app until the user signs in.
@@ -41,7 +31,7 @@ export default function LoginPage() {
       {/* Left — wordmark, pitch, and the sign-in form on calm whitespace */}
       <section className="login__form-panel">
         <header className="login__brand">
-          <Wordmark />
+          <BrandLogo variant="black" />
         </header>
 
         <div className="login__center">
@@ -89,7 +79,7 @@ export default function LoginPage() {
         <div className="login__art-photo" />
         <div className="login__art-tint" />
         <div className="login__art-caption">
-          <Wordmark light />
+          <BrandLogo variant="white" />
           <span className="login__art-by">SDR Console</span>
         </div>
       </section>

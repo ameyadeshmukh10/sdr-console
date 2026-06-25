@@ -1,5 +1,6 @@
 import { NavLink, Route, Routes } from 'react-router-dom'
 import { useAuth } from './AuthContext.jsx'
+import { BrandLogo } from './components/BrandLogo.jsx'
 import LoginPage from './pages/LoginPage.jsx'
 import UsePage from './pages/UsePage.jsx'
 import PipelinePage from './pages/PipelinePage.jsx'
@@ -28,7 +29,7 @@ export default function App() {
     <div className="app">
       <aside className="sidebar">
         <div className="brand">
-          Ever<span className="mark">Worker</span>
+          <BrandLogo variant="white" />
           <small>SDR Console</small>
         </div>
         {NAV.map((n) => (
