@@ -21,6 +21,14 @@ DEFAULT_BASE_URL = "https://api.hubapi.com"
 EMAIL_TO_CONTACT_ASSOC = 198
 
 
+def _linkedin_slug(url):
+    """The /in/<handle> slug of a LinkedIn profile URL, lowercased, for token search.
+    Returns None when there's no recognizable handle."""
+    import re
+    m = re.search(r"/in/([^/?#]+)", (url or "").strip(), re.I)
+    return m.group(1).lower() if m else None
+
+
 def to_ms_epoch(ts):
     """Normalise a timestamp to epoch-millis (str-able int) for hs_timestamp.
 
@@ -307,6 +315,74 @@ class HubSpotClient:
         }
         payload = self._request("POST", "/crm/v3/objects/emails", body=body)
         return str(payload.get("id"))
+
+    # ---- LinkedIn (HeyReach) activity logging ---------------------------
+    def log_communication(self, contact_id, *, timestamp, body, channel_type="LINKEDIN_MESSAGE",
+                          logged_from="CRM", owner_id=None):
+        """Create one CRM v3 `communications` object (a logged LinkedIn message) and
+        associate it to a contact record — the LinkedIn counterpart of log_email.
+
+        contact_id   : HubSpot contact record id (str).
+        timestamp    : when the event occurred (epoch or ISO; normalised to ms).
+        body         : the activity text (hs_communication_body). Communications carry
+                       no inbound/outbound direction property, so any "sent vs received"
+                       intent must be conveyed in this text by the caller.
+        channel_type : hs_communication_channel_type. LINKEDIN_MESSAGE for LinkedIn.
+        owner_id     : hubspot_owner_id (optional). Omit to leave it ownerless (logged
+                       by the integration) rather than attributing it to a person.
+        Returns the new communication id (str). Raises HubSpotError on failure; if the
+        association step fails the just-created object is best-effort deleted so no
+        unassociated communication is orphaned (a retry then re-creates cleanly).
+        """
+        ms = to_ms_epoch(timestamp)
+        if ms is None:  # required by HubSpot — fail clearly rather than POST "None"
+            raise HubSpotError(f"missing/unparseable hs_timestamp: {timestamp!r}")
+        props = {
+            "hs_timestamp": str(ms),
+            "hs_communication_channel_type": channel_type,
+            "hs_communication_logged_from": logged_from,
+            "hs_communication_body": body,
+        }
+        if owner_id:
+            props["hubspot_owner_id"] = str(owner_id)
+        payload = self._request("POST", "/crm/v3/objects/communications", body={"properties": props})
+        comm_id = str(payload.get("id"))
+        try:
+            self.associate_communication_to_contact(comm_id, contact_id)
+        except HubSpotError:
+            try:
+                self._request("DELETE", f"/crm/v3/objects/communications/{comm_id}")
+            except HubSpotError:
+                pass
+            raise
+        return comm_id
+
+    def associate_communication_to_contact(self, comm_id, contact_id):
+        """Associate a communication to a contact via the v4 default association — no
+        hardcoded numeric type id needed (HubSpot fills in the standard label)."""
+        self._request(
+            "PUT",
+            f"/crm/v4/objects/communications/{comm_id}/associations/default/contacts/{contact_id}")
+
+    def find_contact_by_linkedin(self, url):
+        """Contact id whose LinkedIn-URL property matches `url`, else None. Searches the
+        configured property (HUBSPOT_LINKEDIN_PROPERTY, default hs_linkedin_url) by the
+        profile slug with CONTAINS_TOKEN so http/https/www/trailing-slash variants match."""
+        slug = _linkedin_slug(url)
+        if not slug:
+            return None
+        prop = os.environ.get("HUBSPOT_LINKEDIN_PROPERTY", "hs_linkedin_url")
+        body = {
+            "filterGroups": [{"filters": [
+                {"propertyName": prop, "operator": "CONTAINS_TOKEN", "values": [slug]}]}],
+            "properties": [prop], "limit": 1,
+        }
+        try:
+            payload = self._request("POST", "/crm/v3/objects/contacts/search", body=body)
+        except HubSpotError:
+            return None
+        results = payload.get("results") or []
+        return str(results[0]["id"]) if results else None
 
     # ---- owners ---------------------------------------------------------
     def get_owners(self):
