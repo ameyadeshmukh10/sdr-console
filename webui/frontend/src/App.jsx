@@ -1,4 +1,6 @@
 import { NavLink, Route, Routes } from 'react-router-dom'
+import { useAuth } from './AuthContext.jsx'
+import LoginPage from './pages/LoginPage.jsx'
 import UsePage from './pages/UsePage.jsx'
 import PipelinePage from './pages/PipelinePage.jsx'
 import DiagramPage from './pages/DiagramPage.jsx'
@@ -20,6 +22,8 @@ const NAV = [
 ]
 
 export default function App() {
+  const { token, email, logout } = useAuth()
+  if (!token) return <LoginPage />
   return (
     <div className="app">
       <aside className="sidebar">
@@ -34,6 +38,10 @@ export default function App() {
           </NavLink>
         ))}
         <div className="spacer" />
+        <div className="signed-in">
+          <span className="who" title={email}>{email}</span>
+          <button className="signout" onClick={logout}>Sign out</button>
+        </div>
         <div className="foot">Local MVP &middot; read-only<br />+ HubSpot ingest</div>
       </aside>
       <main className="main">
