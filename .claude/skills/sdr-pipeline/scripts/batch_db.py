@@ -89,11 +89,33 @@ def init_schema(conn):
         last_fetch_at TEXT,
         updated_at    TEXT
     );
+    -- Durable inbox for HeyReach (LinkedIn) webhook events. The webhook handler
+    -- persists the raw payload here on receipt and ACKs immediately; a separate
+    -- drain (heyreach_activity.py) processes pending rows into HubSpot LinkedIn
+    -- Communications + the hubspot_activity_log ledger. dedup_key (when present)
+    -- makes HeyReach retries no-ops; raw is the verbatim body, our source of truth.
+    CREATE TABLE IF NOT EXISTS heyreach_events (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id     TEXT,            -- HeyReach event id when the payload carries one
+        event_type   TEXT,            -- raw HeyReach discriminator (best-effort parse)
+        dedup_key    TEXT,            -- computed normalized key (NULL if unparseable)
+        status       TEXT DEFAULT 'pending',  -- pending | done | skipped | failed
+        attempts     INTEGER DEFAULT 0,
+        error        TEXT,
+        raw          TEXT NOT NULL,   -- verbatim request body
+        received_at  TEXT,
+        processed_at TEXT
+    );
     CREATE INDEX IF NOT EXISTS idx_contacts_batch  ON contacts(batch_id);
     CREATE INDEX IF NOT EXISTS idx_contacts_status ON contacts(status);
     CREATE INDEX IF NOT EXISTS idx_hsact_contact   ON hubspot_activity_log(contact_id);
     CREATE INDEX IF NOT EXISTS idx_hsact_status    ON hubspot_activity_log(status);
     CREATE INDEX IF NOT EXISTS idx_bisonmap_lead   ON bison_lead_map(lead_id);
+    CREATE INDEX IF NOT EXISTS idx_hrev_status     ON heyreach_events(status);
+    -- Partial unique index: dedups real ids, but never collapses NULL-keyed rows
+    -- (an unparseable payload is still stored losslessly rather than dropped).
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_hrev_dedup ON heyreach_events(dedup_key)
+        WHERE dedup_key IS NOT NULL;
     """)
     # migrate older DBs that predate the domain column, then backfill from email
     cols = [r["name"] for r in conn.execute("PRAGMA table_info(contacts)")]
@@ -279,3 +301,50 @@ def mark_lead_fetched(conn, email, last_sent_at):
 
 def lead_map_rows(conn):
     return [dict(r) for r in conn.execute("SELECT * FROM bison_lead_map")]
+
+
+# ---- HeyReach (LinkedIn) webhook inbox -----------------------------------
+def enqueue_heyreach_event(conn, raw, *, event_id=None, event_type=None, dedup_key=None):
+    """Persist one raw HeyReach webhook payload. Idempotent on dedup_key (a HeyReach
+    retry of an already-stored event is ignored). Returns the new row id, or None if
+    the event was a duplicate. Commits. Never raises on a dupe — INSERT OR IGNORE."""
+    cur = conn.execute("""
+        INSERT OR IGNORE INTO heyreach_events
+          (event_id, event_type, dedup_key, status, attempts, raw, received_at)
+        VALUES (?,?,?,'pending',0,?,?)
+    """, (event_id, event_type, dedup_key, raw, now()))
+    conn.commit()
+    return cur.lastrowid if cur.rowcount else None
+
+
+def pending_heyreach_events(conn, limit=200, max_attempts=25):
+    """Unprocessed inbox rows (pending or previously failed), oldest first. A poison
+    row that keeps failing is dropped from the queue once it exceeds max_attempts so
+    it can't be retried forever every tick (it stays in the table for inspection)."""
+    return [dict(r) for r in conn.execute(
+        "SELECT * FROM heyreach_events WHERE status IN ('pending','failed') "
+        "AND attempts < ? ORDER BY id LIMIT ?", (int(max_attempts), int(limit)))]
+
+
+def retry_skipped_heyreach_events(conn):
+    """Flip previously 'skipped' rows (e.g. no matching contact at the time) back to
+    'pending' so a later drain re-attempts them after contacts have been added.
+    Returns the number requeued."""
+    cur = conn.execute(
+        "UPDATE heyreach_events SET status='pending', attempts=0 WHERE status='skipped'")
+    conn.commit()
+    return cur.rowcount
+
+
+def mark_heyreach_event(conn, row_id, status, *, error=None):
+    """Set the processing outcome for one inbox row (bumps attempts, stamps time)."""
+    conn.execute(
+        "UPDATE heyreach_events SET status=?, error=?, attempts=attempts+1, processed_at=? "
+        "WHERE id=?", (status, error, now(), row_id))
+    conn.commit()
+
+
+def heyreach_event_counts(conn):
+    """Inbox summary by status, for status reporting."""
+    return {r["status"]: r["n"] for r in
+            conn.execute("SELECT status, COUNT(*) n FROM heyreach_events GROUP BY status")}

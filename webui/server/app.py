@@ -56,6 +56,8 @@ FETCH_REPLIES = SCRIPTS / "email-bison" / "scripts" / "fetch_interested_replies.
 GENERATE_BATCH = SCRIPTS / "sdr-pipeline" / "scripts" / "generate_batch.py"
 HUBSPOT_LISTS = SCRIPTS / "sdr-pipeline" / "scripts" / "hubspot_lists.py"
 HUBSPOT_ACTIVITY_SYNC = SCRIPTS / "sdr-pipeline" / "scripts" / "hubspot_activity_sync.py"
+HEYREACH_ACTIVITY = SCRIPTS / "sdr-pipeline" / "scripts" / "heyreach_activity.py"
+MAX_WEBHOOK_BODY = 1_048_576  # 1 MB cap on a webhook body (LinkedIn events are tiny) — DoS guard
 SOURCE_CONTACTS = SCRIPTS / "sdr-pipeline" / "scripts" / "source_contacts.py"
 CLAY_ENRICH = SCRIPTS / "sdr-pipeline" / "scripts" / "clay_enrich.py"
 PIPELINE_SCRIPTS = SCRIPTS / "sdr-pipeline" / "scripts"
@@ -71,6 +73,14 @@ REPLIES_LAST_RUN = DATA / "interested-replies" / "last_run.json"
 REVIEW_QUEUE = DATA / "interested-replies" / "review_queue.json"
 LI_REVIEW_QUEUE = DATA / "interested-replies" / "li_review_queue.json"
 BATCH_JOBS_DIR = DATA / "outreach" / "batch-jobs"
+
+# In-process pipeline-DB access for the HeyReach webhook path. The server's own
+# db_connect() is read-only (mode=ro); persisting webhook events needs writes, so that
+# one path uses batch_db.connect() (read-write WAL). heyreach_activity supplies the
+# normalize_event/dedup_key helpers used to index events on receipt.
+sys.path.insert(0, str(PIPELINE_SCRIPTS))
+import batch_db as pipeline_db        # noqa: E402
+import heyreach_activity              # noqa: E402
 
 PERSONA_ORDER = ["sales-leadership", "revops", "partnerships", "sdr-bdr"]
 PERSONA_ENV = {
@@ -696,6 +706,35 @@ def hubspot_activity_status_payload():
                 "last_logged_at": last["m"] if last else None}
     except sqlite3.Error:
         return {"available": False, "logged": 0, "failed": 0, "by_type": {}}
+    finally:
+        conn.close()
+
+
+def heyreach_activity_status_payload():
+    """Read-only rollup of the HeyReach webhook inbox + the LinkedIn slice of the activity
+    ledger. Safe before the first webhook (tables may not exist yet)."""
+    try:
+        conn = db_connect()
+    except sqlite3.Error:
+        return {"available": False, "inbox": {}, "logged": 0, "by_type": {}}
+    try:
+        inbox = {r["status"]: r["n"] for r in conn.execute(
+            "SELECT status, COUNT(*) n FROM heyreach_events GROUP BY status")}
+        by_type = {r["event_type"]: r["n"] for r in conn.execute(
+            "SELECT event_type, COUNT(*) n FROM hubspot_activity_log "
+            "WHERE status='logged' AND channel='linkedin' GROUP BY event_type")}
+        by_status = {r["status"]: r["n"] for r in conn.execute(
+            "SELECT status, COUNT(*) n FROM hubspot_activity_log "
+            "WHERE channel='linkedin' GROUP BY status")}
+        last = conn.execute("SELECT MAX(received_at) m FROM heyreach_events").fetchone()
+        return {"available": True, "inbox": inbox,
+                "logged": by_status.get("logged", 0),
+                "failed": by_status.get("failed", 0),
+                "skipped_no_contact": by_status.get("skipped_no_contact", 0),
+                "by_type": by_type,
+                "last_event_at": last["m"] if last else None}
+    except sqlite3.Error:
+        return {"available": False, "inbox": {}, "logged": 0, "by_type": {}}
     finally:
         conn.close()
 
@@ -1997,6 +2036,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(do_hubspot_lists(q, list_type))
             if path == "/api/hubspot/activity/status":
                 return self._json(hubspot_activity_status_payload())
+            if path == "/api/heyreach/activity/status":
+                return self._json(heyreach_activity_status_payload())
             if path == "/api/clay/status":
                 return self._json(do_clay_status())
             if path == "/api/clay/oauth/start":
@@ -2151,6 +2192,8 @@ class Handler(BaseHTTPRequestHandler):
                     replies_only=bool(body.get("replies_only", False)),
                     refresh_leads=bool(body.get("refresh_leads", False)),
                 ))
+            if path == "/api/heyreach/webhook":
+                return self._heyreach_webhook(parsed)
             if path == "/api/reindex":
                 n = INDEX.build()
                 return self._json({"indexed": n, "built_at": INDEX.built_at})
@@ -2159,6 +2202,64 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(504, "subprocess timed out")
         except Exception as e:  # noqa: BLE001
             return self._error(500, f"{type(e).__name__}: {e}")
+
+    def _heyreach_webhook(self, parsed):
+        """Receive a HeyReach (LinkedIn) webhook: validate the shared secret, persist the
+        RAW payload to the durable inbox, ACK 200 immediately, then kick a background
+        drain. We never require valid JSON to ACK (durability first) and never let an
+        error block the 200, so HeyReach won't enter its 24h retry storm over our hiccups.
+        The reconcile (resolve contact -> log a HubSpot LinkedIn Communication) happens
+        out-of-band in heyreach_activity.py, idempotently."""
+        import os
+        import hmac
+        secret = os.environ.get("HEYREACH_WEBHOOK_SECRET")
+        given = (parse_qs(parsed.query).get("secret", [None])[0]
+                 or self.headers.get("X-Webhook-Secret"))
+        if secret:
+            if not given or not hmac.compare_digest(given, secret):  # constant-time
+                return self._error(401, "bad or missing webhook secret")
+        else:
+            # Fail closed off-box: never accept an unauthenticated webhook from a remote
+            # host (we bind 0.0.0.0 on Railway). Loopback is allowed for local dev.
+            client_ip = self.client_address[0] if self.client_address else ""
+            if client_ip not in ("127.0.0.1", "::1"):
+                return self._error(503, "webhook secret not configured")
+        try:
+            length = int(self.headers.get("Content-Length", 0) or 0)
+        except (TypeError, ValueError):
+            length = 0
+        if length > MAX_WEBHOOK_BODY:
+            return self._error(413, "payload too large")
+        raw = self.rfile.read(length).decode("utf-8", "replace") if length else ""
+        event_id = event_type = dedup = None
+        try:  # best-effort indexing for idempotent ACK; the drain re-parses authoritatively
+            obj = json.loads(raw) if raw else {}
+            ev = heyreach_activity.normalize_event(obj) if isinstance(obj, dict) else None
+            if ev:
+                event_id, event_type = ev.get("event_id"), ev.get("raw_type")
+                dedup = heyreach_activity.dedup_key(ev)
+        except Exception:  # noqa: BLE001 — parsing must never block the ACK
+            pass
+        # Persist-before-process: the inbox row is the ONLY durable copy of the payload, so
+        # a failed write must NOT be ACKed as success — return 5xx and let HeyReach retry
+        # (it retries up to 5x over 24h). Only ACK 200 once the row is durably stored
+        # (a duplicate returning None is still a successful persist).
+        persisted = False
+        try:
+            conn = pipeline_db.connect()
+            try:
+                pipeline_db.enqueue_heyreach_event(conn, raw, event_id=event_id,
+                                                   event_type=event_type, dedup_key=dedup)
+                persisted = True
+            finally:
+                conn.close()
+        except Exception as e:  # noqa: BLE001
+            sys.stderr.write(f"[heyreach] enqueue failed: {type(e).__name__}: {e}\n")
+        if not persisted:
+            return self._error(503, "could not persist event; retry")
+        self._json({"ok": True}, code=200)
+        _kick_heyreach_drain()
+        return
 
     # -- static -----------------------------------------------------------
     def _serve_static(self, path):
@@ -2185,6 +2286,56 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+
+_hr_drain_lock = threading.Lock()
+
+
+def _kick_heyreach_drain():
+    """Spawn at most one background drain of the HeyReach webhook inbox (single-flight:
+    a running drain naturally picks up rows queued during its run). Best-effort and fully
+    isolated — it shells out to the reconcile script and can never raise into the request
+    path. Called right after a webhook is persisted for near-real-time logging."""
+    if not _hr_drain_lock.acquire(blocking=False):
+        return  # a drain is already running; it will sweep the newly-queued rows
+    def _pending_count():
+        try:
+            conn = pipeline_db.connect()
+            try:
+                return conn.execute(
+                    "SELECT COUNT(*) FROM heyreach_events WHERE status='pending'").fetchone()[0]
+            finally:
+                conn.close()
+        except Exception:  # noqa: BLE001
+            return 0
+    def _run():
+        rearm = False
+        try:
+            # Bounded loop: drain, then mop up rows that arrived DURING the drain (the
+            # drain's SELECT is a snapshot). We re-loop only while genuinely-new 'pending'
+            # rows remain — transient 'failed' rows are left for the hourly sweep so a
+            # flaky HubSpot can't make this tight-loop.
+            for _ in range(10):
+                res = run_script([str(HEYREACH_ACTIVITY), "--drain", "--json"], timeout=900)
+                lines = [ln for ln in (res.get("stdout") or "").splitlines() if ln.strip()]
+                print(f"[heyreach-sync] drain: "
+                      f"{lines[-1] if lines else (res.get('stderr') or '')[:200]}", flush=True)
+                if not _pending_count():
+                    break
+        except Exception as e:  # noqa: BLE001 — a drain must never crash the server
+            print(f"[heyreach-sync] drain error: {type(e).__name__}: {e}", flush=True)
+        finally:
+            _hr_drain_lock.release()
+            # Re-arm: an event enqueued after our last in-loop check (while we still held
+            # the lock) would otherwise wait for the hourly sweep. Re-kick once if so.
+            rearm = _pending_count() > 0
+        if rearm:
+            _kick_heyreach_drain()
+    try:
+        threading.Thread(target=_run, daemon=True).start()
+    except Exception as e:  # noqa: BLE001 — don't leak the lock if the thread can't start
+        _hr_drain_lock.release()
+        print(f"[heyreach-sync] could not start drain thread: {type(e).__name__}: {e}", flush=True)
 
 
 def _activity_autosync_loop():
@@ -2218,12 +2369,28 @@ def _activity_autosync_loop():
                   f"{lines[-1] if lines else (res.get('stderr') or '')[:200]}", flush=True)
         except Exception as e:  # noqa: BLE001 - auto-sync must never crash the server
             print(f"[activity-sync] error: {type(e).__name__}: {e}", flush=True)
+        # Safety net for LinkedIn: re-drain any HeyReach webhook events left pending/failed
+        # (HubSpot was down, the contact wasn't in the table yet, an inline drain raced).
+        # The webhook itself logs in near-real-time; this just guarantees eventual delivery.
+        if (os.environ.get("HEYREACH_ACTIVITY_AUTOSYNC", "1") or "1").strip().lower() not in ("0", "false", "no"):
+            try:
+                hr = run_script([str(HEYREACH_ACTIVITY), "--drain", "--json", "--retry-skipped"], timeout=1800)
+                hlines = [ln for ln in (hr.get("stdout") or "").splitlines() if ln.strip()]
+                print(f"[heyreach-sync] sweep: "
+                      f"{hlines[-1] if hlines else (hr.get('stderr') or '')[:200]}", flush=True)
+            except Exception as e:  # noqa: BLE001
+                print(f"[heyreach-sync] sweep error: {type(e).__name__}: {e}", flush=True)
         tick += 1
         time.sleep(interval)
 
 
 def main():
-    port = 8787
+    import os
+    # $PORT is injected by hosting platforms (Railway); --port overrides for local runs.
+    port = int(os.environ.get("PORT", "8787"))
+    # Bind localhost for local dev (safe), but all interfaces when a platform sets $PORT
+    # (Railway) or HOST is given — otherwise HeyReach's webhook can never reach us.
+    host = os.environ.get("HOST") or ("0.0.0.0" if os.environ.get("PORT") else "127.0.0.1")
     static_dir = PROJECT_ROOT / "webui" / "frontend" / "dist"
     args = sys.argv[1:]
     for i, a in enumerate(args):
@@ -2231,10 +2398,20 @@ def main():
             port = int(args[i + 1])
         if a == "--static" and i + 1 < len(args):
             static_dir = Path(args[i + 1]).resolve()
+        if a == "--host" and i + 1 < len(args):
+            host = args[i + 1]
 
     Handler.static_dir = static_dir if static_dir.is_dir() else None
 
     print(f"[webui] project root: {PROJECT_ROOT}")
+    # Ensure the pipeline DB schema (incl. the heyreach_events webhook inbox) exists, so a
+    # webhook arriving on a fresh deploy before any sync runs has a table to land in.
+    try:
+        _c = pipeline_db.connect()
+        pipeline_db.init_schema(_c)
+        _c.close()
+    except Exception as e:  # noqa: BLE001
+        print(f"[webui] schema init warning: {type(e).__name__}: {e}")
     print(f"[webui] building outreach index ...", flush=True)
     n = INDEX.build()
     print(f"[webui] indexed {n} generated outreach files")
@@ -2246,8 +2423,8 @@ def main():
         print(f"[webui] serving frontend from {Handler.static_dir}")
     else:
         print(f"[webui] frontend dist not found; API-only (use Vite dev server)")
-    print(f"[webui] listening on http://localhost:{port}")
-    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+    print(f"[webui] listening on http://{host}:{port}")
+    ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 
 if __name__ == "__main__":
