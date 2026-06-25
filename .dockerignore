@@ -1,0 +1,32 @@
+# Keep the build context lean and free of secrets/transient state.
+# NOTE: committed data/ is intentionally INCLUDED (it's the first-boot seed), and so is
+# .claude/ (the pipeline scripts the backend shells out to).
+
+# VCS / docs metadata
+.git
+.gitignore
+
+# Node + frontend build output (deps are installed and dist is built inside the image)
+**/node_modules
+**/dist
+
+# Python caches
+**/__pycache__
+*.pyc
+*.pyo
+
+# Secrets / local env
+.env
+.env.local
+
+# SQLite sidecar files (regenerated at runtime; never copy a stale WAL)
+*.db-wal
+*.db-shm
+
+# Transient / secret data that must not be baked into the seed
+data/outreach/clay_oauth.json
+data/outreach/source-jobs/
+data/outreach/batch-jobs/
+
+# Misc
+.DS_Store
