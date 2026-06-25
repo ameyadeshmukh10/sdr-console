@@ -134,17 +134,22 @@ def derive_cta(asset):
 # Tiny .env reader (no python-dotenv dependency).
 # ----------------------------------------------------------------------------
 def read_env():
+    """Config the web UI reads (campaign IDs, HeyReach config, …). Merges the .env file
+    (local dev) with the process environment (Railway/Docker, where there is NO .env file —
+    config is injected as real env vars). The process environment wins, so host-provided
+    config is always honored even when ENV_PATH is absent."""
+    import os
     env = {}
-    if not ENV_PATH.is_file():
-        return env
-    for line in ENV_PATH.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, val = line.partition("=")
-        # strip inline comments + surrounding quotes/whitespace
-        val = val.split("#", 1)[0].strip().strip('"').strip("'")
-        env[key.strip()] = val
+    if ENV_PATH.is_file():
+        for line in ENV_PATH.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            # strip inline comments + surrounding quotes/whitespace
+            val = val.split("#", 1)[0].strip().strip('"').strip("'")
+            env[key.strip()] = val
+    env.update(os.environ)
     return env
 
 
