@@ -10,11 +10,50 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 # HubSpot serves the public REST API from api.hubapi.com for ALL regions, including EU.
 # The `eu1` in a `pat-eu1-…` token is data residency only; there is no api.eu1.hubapi.com.
 DEFAULT_BASE_URL = "https://api.hubapi.com"
+
+# Standard HubSpot association type: email engagement -> contact (HUBSPOT_DEFINED).
+EMAIL_TO_CONTACT_ASSOC = 198
+
+
+def to_ms_epoch(ts):
+    """Normalise a timestamp to epoch-millis (str-able int) for hs_timestamp.
+
+    Accepts epoch seconds/millis (int/str) or ISO-8601 like 2026-06-17T17:54:46.000000Z
+    and 2026-06-24T17:27:46Z. Returns None if unparseable.
+    """
+    if ts is None:
+        return None
+    if isinstance(ts, (int, float)):
+        v = int(ts)
+        return v if v > 10 ** 12 else v * 1000
+    s = str(ts).strip()
+    if s.isdigit():
+        v = int(s)
+        return v if v > 10 ** 12 else v * 1000
+    s = s.replace("Z", "+00:00")
+    if "." in s:  # clamp fractional seconds to fromisoformat's 6-digit limit
+        base, frac = s.split(".", 1)
+        digits, rest = "", ""
+        for i, ch in enumerate(frac):
+            if ch.isdigit():
+                digits += ch
+            else:
+                rest = frac[i:]
+                break
+        s = base + "." + digits[:6] + rest
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp() * 1000)
 
 
 def _load_dotenv():
@@ -219,3 +258,74 @@ class HubSpotClient:
 
     def delete_contact(self, contact_id):
         self._request("DELETE", f"/crm/v3/objects/contacts/{contact_id}")
+
+    # ---- email activity logging -----------------------------------------
+    def log_email(self, contact_id, *, timestamp, direction, status, subject=None,
+                  text=None, html=None, headers=None, owner_id=None):
+        """Create one `emails` engagement and associate it to a contact record.
+
+        Logs an email activity on the contact's timeline (CRM v3 emails object).
+
+        contact_id : HubSpot contact record id (str).
+        timestamp  : when the email occurred (epoch or ISO; normalised to ms).
+        direction  : "EMAIL" (we sent it) or "INCOMING_EMAIL" (the contact sent it).
+        status     : "SENT" | "RECEIVED" | "BOUNCED" | "FAILED".
+        headers    : dict {"from":{email,firstName,lastName}, "sender":{email},
+                     "to":[{email,...}]}. HubSpot derives the read-only
+                     hs_email_from_email / hs_email_to_email props FROM this — never
+                     set those directly. For alias sends, "from" is the identity that
+                     shows on the card and "sender" is the actual sending address.
+        owner_id   : hubspot_owner_id (optional). Omit to leave the activity ownerless
+                     (logged by the integration) instead of attributing it to a person.
+        Returns the new engagement id (str). Raises HubSpotError on failure.
+        """
+        ms = to_ms_epoch(timestamp)
+        if ms is None:  # required by HubSpot — fail clearly rather than POST "None"
+            raise HubSpotError(f"missing/unparseable hs_timestamp: {timestamp!r}")
+        props = {
+            "hs_timestamp": str(ms),
+            "hs_email_direction": direction,
+            "hs_email_status": status,
+        }
+        if subject is not None:
+            props["hs_email_subject"] = subject
+        if text is not None:
+            props["hs_email_text"] = text
+        if html is not None:
+            props["hs_email_html"] = html
+        if headers is not None:
+            props["hs_email_headers"] = json.dumps(headers)
+        if owner_id:
+            props["hubspot_owner_id"] = str(owner_id)
+        body = {
+            "properties": props,
+            "associations": [{
+                "to": {"id": str(contact_id)},
+                "types": [{"associationCategory": "HUBSPOT_DEFINED",
+                           "associationTypeId": EMAIL_TO_CONTACT_ASSOC}],
+            }],
+        }
+        payload = self._request("POST", "/crm/v3/objects/emails", body=body)
+        return str(payload.get("id"))
+
+    # ---- owners ---------------------------------------------------------
+    def get_owners(self):
+        """All HubSpot owners (users/seats), across pages. Owners are read-only."""
+        out, after = [], None
+        while True:
+            params = {"limit": 100}
+            if after:
+                params["after"] = after
+            payload = self._request("GET", "/crm/v3/owners", params)
+            out.extend(payload.get("results", []))
+            after = (payload.get("paging") or {}).get("next", {}).get("after")
+            if not after:
+                return out
+
+    def find_owner_id(self, email):
+        """Owner id (str) for a user's email, or None. Use to resolve the 'AI SDR' seat."""
+        e = (email or "").strip().lower()
+        for o in self.get_owners():
+            if (o.get("email") or "").lower() == e:
+                return str(o.get("id"))
+        return None
