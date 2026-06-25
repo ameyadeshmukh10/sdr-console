@@ -179,35 +179,94 @@ tr.clickable { cursor: pointer; }
 ::-webkit-scrollbar-thumb { background: rgba(15, 28, 24, 0.18); border-radius: 999px; border: 2px solid var(--bg); }
 ::-webkit-scrollbar-thumb:hover { background: rgba(15, 28, 24, 0.30); }
 
-/* --- Login screen — deck slide-1 aesthetic: dark emerald + mint glow --- */
-.login-screen {
-  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-  background: var(--rail); padding: 24px; overflow: hidden;
+/* --- Login — split screen: white form panel + brand-green ocean --- */
+.login {
+  position: fixed; inset: 0; display: flex; background: var(--panel);
+  overflow: hidden;
 }
-.login-glow {
-  position: absolute; top: -22%; left: 50%; transform: translateX(-50%);
-  width: 760px; height: 760px; pointer-events: none;
-  background: radial-gradient(closest-side, rgba(82, 254, 191, 0.20), rgba(82, 254, 191, 0) 70%);
+
+/* EverWorker brand lockup (monogram tile + Gilroy wordmark) */
+.ev-logo { display: inline-flex; align-items: center; gap: 11px; line-height: 1; }
+.ev-mark {
+  width: 34px; height: 34px; flex-shrink: 0; border-radius: 10px;
+  display: grid; place-items: center; color: #0a1c16; font-weight: 900;
+  font-size: 21px; letter-spacing: -1px;
+  background: linear-gradient(140deg, #6dffce 0%, #22826f 100%);
+  box-shadow: 0 6px 18px rgba(34, 130, 111, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.45);
 }
-.login-content {
-  position: relative; z-index: 1; width: 100%; max-width: 404px;
-  display: flex; flex-direction: column; align-items: center; gap: 22px;
+.ev-word { font-weight: 800; font-size: 20px; letter-spacing: -.5px; color: var(--text); }
+.ev-word .accent { color: var(--jade); }
+.ev-logo--light .ev-word { color: #fff; }
+.ev-logo--light .ev-word .accent { color: var(--mint); }
+
+/* Left — form panel */
+.login__form-panel {
+  flex: 0 0 46%; max-width: 620px; min-width: 0;
+  display: flex; flex-direction: column; padding: 40px 56px;
 }
-.login-logo { color: #fff; font-weight: 800; font-size: 27px; letter-spacing: -.5px; }
-.login-logo .mark { color: var(--mint); }
-.login-card {
-  width: 100%; background: var(--panel); border-radius: 16px; padding: 30px 28px 28px;
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.38); display: flex; flex-direction: column; gap: 14px;
+.login__brand { flex-shrink: 0; }
+.login__center {
+  flex: 1; display: flex; flex-direction: column; justify-content: center;
+  gap: 30px; width: 100%; max-width: 380px; margin: 0 auto; padding: 24px 0;
 }
-.login-title { margin: 0; font-size: 23px; font-weight: 800; letter-spacing: -.4px; line-height: 1.2; color: var(--text); }
-.login-sub { margin: -7px 0 4px; color: var(--muted); font-size: 13.5px; }
-.login-card .field { font-size: 12.5px; font-weight: 600; }
-.login-card input { padding: 11px 13px; font-size: 14.5px; }
-.login-btn {
-  margin-top: 6px; width: 100%; padding: 12px; font-size: 15px;
+.login__intro { display: flex; flex-direction: column; gap: 14px; }
+.login__headline {
+  margin: 0; font-weight: 900; font-size: 44px; line-height: 1.04;
+  letter-spacing: -1.4px; color: var(--text);
+}
+.login__headline em { font-style: normal; color: var(--jade); }
+.login__tagline { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.55; max-width: 34ch; }
+
+.login__form { display: flex; flex-direction: column; gap: 15px; }
+.login__form .field { font-size: 12.5px; font-weight: 600; color: var(--muted); gap: 6px; }
+.login__form input { padding: 12px 14px; font-size: 15px; border-radius: 11px; }
+.login__btn {
+  margin-top: 5px; width: 100%; padding: 13px; font-size: 15px; border-radius: 11px;
   display: flex; align-items: center; justify-content: center;
 }
-.login-foot { margin: 0; color: rgba(255, 255, 255, 0.45); font-size: 11.5px; letter-spacing: .3px; }
+.login__hint { margin: 2px 0 0; color: var(--faint); font-size: 12.5px; }
+.login__legal { flex-shrink: 0; margin: 0; color: var(--faint); font-size: 12px; letter-spacing: .2px; }
+
+/* Right — ocean art with a green overlay (inset, rounded, framed) */
+.login__art {
+  position: relative; flex: 1; margin: 14px 14px 14px 0;
+  border-radius: 22px; overflow: hidden; background: #06140f;
+  box-shadow: 0 30px 80px rgba(6, 20, 15, 0.30);
+}
+.login__art-base, .login__art-photo, .login__art-tint {
+  position: absolute; inset: 0; pointer-events: none;
+}
+/* Committed default — a self-contained emerald ocean */
+.login__art-base {
+  background: url('./assets/login-ocean.svg') center / cover no-repeat;
+}
+/* Optional override — drop a real photo at public/ocean.jpg and it takes over.
+   Missing file simply 404s to a transparent layer, revealing the default art. */
+.login__art-photo {
+  background: url('/ocean.jpg') center / cover no-repeat;
+}
+/* The brand-green overlay laid over whichever ocean shows through.
+   Normal alpha (not multiply) so a real photo keeps its light and the
+   default art doesn't crush to black — a clean green wash either way. */
+.login__art-tint {
+  background:
+    radial-gradient(120% 80% at 74% 10%, rgba(82, 254, 191, 0.26), rgba(82, 254, 191, 0) 52%),
+    linear-gradient(155deg, rgba(34, 130, 111, 0.50) 0%, rgba(20, 70, 58, 0.34) 46%, rgba(8, 22, 16, 0.52) 100%);
+}
+.login__art-caption {
+  position: absolute; left: 30px; bottom: 28px; z-index: 1;
+  display: flex; align-items: center; gap: 12px;
+}
+.login__art-by {
+  color: rgba(255, 255, 255, 0.62); font-size: 13px; font-weight: 500;
+  padding-left: 12px; border-left: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+@media (max-width: 880px) {
+  .login__art { display: none; }
+  .login__form-panel { flex: 1; max-width: none; padding: 32px 28px; }
+  .login__headline { font-size: 38px; }
+}
 
 /* Sidebar — signed-in identity + sign out */
 .sidebar .signed-in {

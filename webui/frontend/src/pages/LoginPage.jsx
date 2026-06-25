@@ -2,8 +2,19 @@ import { useState } from 'react'
 import { useAuth } from '../AuthContext.jsx'
 import { ErrorBanner } from '../components/ui.jsx'
 
-// Deck slide-1 aesthetic: dark emerald field, EverWorker wordmark, a clean
-// white card. The only entry point to the app until the user signs in.
+// EverWorker brand lockup: a mint monogram tile + Gilroy wordmark.
+// `light` flips the wordmark to white for use on the dark art panel.
+function Wordmark({ light = false }) {
+  return (
+    <span className={'ev-logo' + (light ? ' ev-logo--light' : '')}>
+      <span className="ev-mark" aria-hidden="true">e</span>
+      <span className="ev-word">Ever<span className="accent">Worker</span></span>
+    </span>
+  )
+}
+
+// Split-screen login: a clean white form panel on the left, a brand-green
+// ocean on the right. The only entry point to the app until the user signs in.
 export default function LoginPage() {
   const { login } = useAuth()
   const [email, setEmail] = useState('')
@@ -26,36 +37,62 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="login-screen">
-      <div className="login-glow" />
-      <div className="login-content">
-        <div className="login-logo">Ever<span className="mark">Worker</span></div>
-        <form className="login-card" onSubmit={submit}>
-          <h1 className="login-title">Let’s get you more pipeline.</h1>
-          <p className="login-sub">Sign in to the SDR Console.</p>
-          <ErrorBanner error={error} />
-          <label className="field">
-            Email
-            <input
-              type="email" autoFocus autoComplete="username"
-              placeholder="you@everworker.ai" required
-              value={email} onChange={(e) => setEmail(e.target.value)}
-            />
-          </label>
-          <label className="field">
-            Password
-            <input
-              type="password" autoComplete="current-password"
-              placeholder="••••••••" required
-              value={password} onChange={(e) => setPassword(e.target.value)}
-            />
-          </label>
-          <button className="login-btn" type="submit" disabled={busy || !email || !password}>
-            {busy ? 'Signing in…' : 'Sign in'}
-          </button>
-        </form>
-        <p className="login-foot">EverWorker · SDR Console</p>
-      </div>
+    <div className="login">
+      {/* Left — wordmark, pitch, and the sign-in form on calm whitespace */}
+      <section className="login__form-panel">
+        <header className="login__brand">
+          <Wordmark />
+        </header>
+
+        <div className="login__center">
+          <div className="login__intro">
+            <h1 className="login__headline">
+              Generate more<br /><em>pipeline.</em>
+            </h1>
+            <p className="login__tagline">
+              Sign in to the SDR Console — source, write, and enroll
+              value-first outbound on autopilot.
+            </p>
+          </div>
+
+          <form className="login__form" onSubmit={submit}>
+            <ErrorBanner error={error} />
+            <label className="field">
+              Email
+              <input
+                type="email" autoFocus autoComplete="username"
+                placeholder="you@everworker.ai" required
+                value={email} onChange={(e) => setEmail(e.target.value)}
+              />
+            </label>
+            <label className="field">
+              Password
+              <input
+                type="password" autoComplete="current-password"
+                placeholder="••••••••" required
+                value={password} onChange={(e) => setPassword(e.target.value)}
+              />
+            </label>
+            <button className="login__btn" type="submit" disabled={busy || !email || !password}>
+              {busy ? 'Signing in…' : 'Log in'}
+            </button>
+            <p className="login__hint">Trouble signing in? Ping your EverWorker admin.</p>
+          </form>
+        </div>
+
+        <footer className="login__legal">© EverWorker · SDR Console</footer>
+      </section>
+
+      {/* Right — ocean imagery under a brand-green overlay */}
+      <section className="login__art" aria-hidden="true">
+        <div className="login__art-base" />
+        <div className="login__art-photo" />
+        <div className="login__art-tint" />
+        <div className="login__art-caption">
+          <Wordmark light />
+          <span className="login__art-by">SDR Console</span>
+        </div>
+      </section>
     </div>
   )
 }
