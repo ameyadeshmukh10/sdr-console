@@ -55,6 +55,7 @@ FETCH_STATS = SCRIPTS / "email-bison" / "scripts" / "fetch_campaign_stats.py"
 FETCH_REPLIES = SCRIPTS / "email-bison" / "scripts" / "fetch_interested_replies.py"
 GENERATE_BATCH = SCRIPTS / "sdr-pipeline" / "scripts" / "generate_batch.py"
 HUBSPOT_LISTS = SCRIPTS / "sdr-pipeline" / "scripts" / "hubspot_lists.py"
+HUBSPOT_ACTIVITY_SYNC = SCRIPTS / "sdr-pipeline" / "scripts" / "hubspot_activity_sync.py"
 SOURCE_CONTACTS = SCRIPTS / "sdr-pipeline" / "scripts" / "source_contacts.py"
 CLAY_ENRICH = SCRIPTS / "sdr-pipeline" / "scripts" / "clay_enrich.py"
 PIPELINE_SCRIPTS = SCRIPTS / "sdr-pipeline" / "scripts"
@@ -639,6 +640,64 @@ def do_hubspot_lists(query, list_type=None):
         return {"ok": True, "lists": json.loads(res["stdout"] or "[]")}
     except json.JSONDecodeError:
         return {"ok": False, "error": "could not parse list search output"}
+
+
+def do_hubspot_activity_sync(since_days=None, limit=None, dry_run=False, contact_id=None,
+                             event_types=None, replies_only=False, refresh_leads=False):
+    """Shell out to the HubSpot activity-sync reconcile script and return its JSON
+    summary. All logging logic lives in that script; this never touches HubSpot — and a
+    sync failure is isolated here, it cannot affect sends/enrollment/scans."""
+    args = [str(HUBSPOT_ACTIVITY_SYNC), "--json"]
+    if dry_run:
+        args.append("--dry-run")
+    if replies_only:
+        args.append("--replies-only")
+    if refresh_leads:
+        args.append("--refresh-leads")
+    if since_days is not None:
+        args += ["--since-days", str(int(since_days))]
+    if limit is not None:
+        args += ["--limit", str(int(limit))]
+    if contact_id:
+        args += ["--contact-id", str(contact_id)]
+    for et in (event_types or []):
+        if et in ("outbound", "inbound", "our_reply"):
+            args += ["--event-type", et]
+    res = run_script(args, timeout=3600)
+    if res["returncode"] != 0:
+        return {"ok": False, "error": (res["stderr"] or res["stdout"]).strip()[:500]}
+    try:  # the script prints progress lines, then the JSON summary on the last line
+        last = [ln for ln in (res["stdout"] or "").splitlines() if ln.strip()][-1]
+        return json.loads(last)
+    except (json.JSONDecodeError, IndexError):
+        return {"ok": False, "error": "could not parse activity-sync output",
+                "stdout": (res["stdout"] or "")[-500:]}
+
+
+def hubspot_activity_status_payload():
+    """Read-only rollup of the activity ledger for the UI. Safe if the sync has never
+    run (the table may not exist yet)."""
+    try:
+        conn = db_connect()
+    except sqlite3.Error:
+        return {"available": False, "logged": 0, "failed": 0, "by_type": {}}
+    try:
+        by_status = {r["status"]: r["n"] for r in conn.execute(
+            "SELECT status, COUNT(*) n FROM hubspot_activity_log GROUP BY status")}
+        by_type = {r["event_type"]: r["n"] for r in conn.execute(
+            "SELECT event_type, COUNT(*) n FROM hubspot_activity_log "
+            "WHERE status='logged' GROUP BY event_type")}
+        last = conn.execute("SELECT MAX(created_at) m FROM hubspot_activity_log").fetchone()
+        return {"available": True,
+                "logged": by_status.get("logged", 0),
+                "failed": by_status.get("failed", 0),
+                "skipped_no_contact": by_status.get("skipped_no_contact", 0),
+                "by_type": by_type,
+                "last_logged_at": last["m"] if last else None}
+    except sqlite3.Error:
+        return {"available": False, "logged": 0, "failed": 0, "by_type": {}}
+    finally:
+        conn.close()
 
 
 # ----------------------------------------------------------------------------
@@ -1936,6 +1995,8 @@ class Handler(BaseHTTPRequestHandler):
                 q = params.get("q", [""])[0]
                 list_type = params.get("type", [None])[0]
                 return self._json(do_hubspot_lists(q, list_type))
+            if path == "/api/hubspot/activity/status":
+                return self._json(hubspot_activity_status_payload())
             if path == "/api/clay/status":
                 return self._json(do_clay_status())
             if path == "/api/clay/oauth/start":
@@ -2079,6 +2140,17 @@ class Handler(BaseHTTPRequestHandler):
                     return self._error(400, "reply_id required")
                 payload, code = do_approve_followup(body.get("reply_id"), body.get("message"))
                 return self._json(payload, code=code)
+            if path == "/api/hubspot/activity/sync":
+                body = self._read_body()
+                return self._json(do_hubspot_activity_sync(
+                    since_days=body.get("since_days"),
+                    limit=body.get("limit"),
+                    dry_run=bool(body.get("dry_run", False)),
+                    contact_id=body.get("contact_id"),
+                    event_types=body.get("event_types"),
+                    replies_only=bool(body.get("replies_only", False)),
+                    refresh_leads=bool(body.get("refresh_leads", False)),
+                ))
             if path == "/api/reindex":
                 n = INDEX.build()
                 return self._json({"indexed": n, "built_at": INDEX.built_at})
@@ -2115,6 +2187,41 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
+def _activity_autosync_loop():
+    """Background auto-sync: periodically log new email activity to HubSpot. Best-effort
+    and fully isolated — it shells out to the reconcile script and can never raise into,
+    block, or slow the request path. Cheap replies-only by default; the heavier outbound
+    sweep runs only when HUBSPOT_ACTIVITY_AUTOSYNC_FULL=1 (so a big backfill is opt-in and
+    not a surprise on server start — do the first backfill via the button/CLI with eyes on).
+    Disable entirely with HUBSPOT_ACTIVITY_AUTOSYNC=0.
+    """
+    import os
+    if (os.environ.get("HUBSPOT_ACTIVITY_AUTOSYNC", "1") or "1").strip().lower() in ("0", "false", "no"):
+        print("[activity-sync] auto-sync disabled (HUBSPOT_ACTIVITY_AUTOSYNC=0)", flush=True)
+        return
+    interval = max(5, int(os.environ.get("HUBSPOT_ACTIVITY_AUTOSYNC_MINUTES", "60") or 60)) * 60
+    full_on = (os.environ.get("HUBSPOT_ACTIVITY_AUTOSYNC_FULL", "0") or "0").strip().lower() in ("1", "true", "yes")
+    full_every = max(1, int(os.environ.get("HUBSPOT_ACTIVITY_AUTOSYNC_FULL_EVERY", "12") or 12))
+    time.sleep(120)  # let the server settle before the first run
+    tick = 0
+    while True:
+        try:
+            full = full_on and (tick % full_every == 0)
+            args = [str(HUBSPOT_ACTIVITY_SYNC), "--json", "--since-days", "60"]
+            if full:
+                args += ["--sleep", "0.1"]          # throttle the heavier outbound sweep
+            else:
+                args.append("--replies-only")       # cheap: inbound + our replies only
+            res = run_script(args, timeout=5400)
+            lines = [ln for ln in (res.get("stdout") or "").splitlines() if ln.strip()]
+            print(f"[activity-sync] {'full' if full else 'replies'}: "
+                  f"{lines[-1] if lines else (res.get('stderr') or '')[:200]}", flush=True)
+        except Exception as e:  # noqa: BLE001 - auto-sync must never crash the server
+            print(f"[activity-sync] error: {type(e).__name__}: {e}", flush=True)
+        tick += 1
+        time.sleep(interval)
+
+
 def main():
     port = 8787
     static_dir = PROJECT_ROOT / "webui" / "frontend" / "dist"
@@ -2134,6 +2241,7 @@ def main():
     resumed = resume_batch_jobs()
     if resumed:
         print(f"[webui] resumed {resumed} in-flight batch job(s)")
+    threading.Thread(target=_activity_autosync_loop, daemon=True).start()
     if Handler.static_dir:
         print(f"[webui] serving frontend from {Handler.static_dir}")
     else:

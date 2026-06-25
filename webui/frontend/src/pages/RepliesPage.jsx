@@ -76,11 +76,30 @@ export default function RepliesPage() {
   const [showOthers, setShowOthers] = useState(false)
   const [pct, setPct] = useState({})              // reply_id -> send progress %
   const [sendErr, setSendErr] = useState({})      // reply_id -> inline send error
+  const [syncing, setSyncing] = useState(false)   // HubSpot activity sync in flight
+  const [hsStatus, setHsStatus] = useState(null)  // cumulative HubSpot activity ledger
   const timers = useRef({})
 
   const loadQueue = () => api.repliesQueue().then(setQueue).catch((e) => setError(e.message))
   const loadDrafts = () => api.followupDrafts().then(setDrafts).catch(() => {})
-  useEffect(() => { loadQueue(); loadDrafts() }, [])
+  const loadHsStatus = () => api.hubspotActivityStatus().then(setHsStatus).catch(() => {})
+  useEffect(() => { loadQueue(); loadDrafts(); loadHsStatus() }, [])
+
+  // Log inbound + our-reply activity to HubSpot contact records (fast, replies-only).
+  // The outbound sequence backfill runs via the background auto-sync / CLI.
+  async function syncHubspot() {
+    setSyncing(true); setMsg(null)
+    try {
+      const r = await api.syncHubspotActivity({ replies_only: true, since_days: 90 })
+      if (r.ok === false) {
+        setMsg({ err: true, text: r.error ? `HubSpot sync failed: ${r.error}` : 'HubSpot sync failed.' })
+      } else {
+        setMsg({ err: false, text: `Logged ${r.logged || 0} to HubSpot · ${r.skipped_dupe || 0} already logged${r.failed ? ` · ${r.failed} failed` : ''}.` })
+      }
+      await loadHsStatus()
+    } catch (e) { setMsg({ err: true, text: e.message }) }
+    finally { setSyncing(false) }
+  }
 
   async function scan() {
     setScanning(true); setError(null); setMsg(null)
@@ -204,8 +223,21 @@ export default function RepliesPage() {
           <button onClick={scan} disabled={scanning}>
             {scanning ? <Spinner label="Scanning + classifying…" /> : '⟲ Scan inbox'}
           </button>
+          <button onClick={syncHubspot} disabled={syncing} title="Log inbound + our replies to HubSpot contact records">
+            {syncing ? <Spinner label="Logging to HubSpot…" /> : '⤴ Log replies to HubSpot'}
+          </button>
           {queue?.scanned_at && <span className="muted" style={{ alignSelf: 'center' }}>last scan {new Date(queue.scanned_at).toLocaleString()}</span>}
         </div>
+        {hsStatus?.available && (hsStatus.logged > 0 || hsStatus.failed > 0) && (
+          <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
+            HubSpot activity logged: <b>{num(hsStatus.logged)}</b>
+            {' · '}{num(hsStatus.by_type?.outbound || 0)} sequence sends
+            {' · '}{num(hsStatus.by_type?.inbound || 0)} replies in
+            {' · '}{num(hsStatus.by_type?.our_reply || 0)} replies out
+            {hsStatus.failed ? <span style={{ color: 'var(--red)' }}>{' · '}{num(hsStatus.failed)} failed</span> : null}
+            {hsStatus.last_logged_at ? <span> · last {new Date(hsStatus.last_logged_at).toLocaleString()}</span> : null}
+          </div>
+        )}
         {liCount > 0 && (
           <div className="row" style={{ gap: 6, marginTop: 12, alignItems: 'center' }}>
             <span className="muted" style={{ fontSize: 12 }}>Channel</span>

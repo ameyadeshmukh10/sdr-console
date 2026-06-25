@@ -64,8 +64,36 @@ def init_schema(conn):
         model         TEXT,
         updated_at    TEXT
     );
+    -- Idempotency ledger for HubSpot activity logging (hubspot_activity_sync.py).
+    -- One row per logged email engagement; the dedup_key makes re-runs no-ops.
+    CREATE TABLE IF NOT EXISTS hubspot_activity_log (
+        dedup_key     TEXT PRIMARY KEY,
+        event_type    TEXT NOT NULL,   -- outbound | inbound | our_reply
+        channel       TEXT,            -- email (linkedin reserved; out of scope)
+        contact_id    TEXT,            -- resolved HubSpot contact id (NULL if unresolved)
+        engagement_id TEXT,            -- HubSpot email engagement id (NULL on failure)
+        status        TEXT NOT NULL,   -- logged | failed | skipped_no_contact
+        error         TEXT,
+        event_ts      TEXT,            -- source timestamp (sent_at / date_received)
+        created_at    TEXT
+    );
+    -- Cache of Bison email -> lead_id (the bulk enroll path discards lead_id, and the
+    -- contacts table has none). Built by a paginated /api/leads sweep, then used to
+    -- pull each lead's actually-sent emails. last_sent_at lets steady-state runs skip
+    -- leads whose sequence has finished instead of re-fetching all ~4.6k every time.
+    CREATE TABLE IF NOT EXISTS bison_lead_map (
+        email         TEXT PRIMARY KEY,
+        lead_id       INTEGER,
+        contact_id    TEXT,
+        last_sent_at  TEXT,
+        last_fetch_at TEXT,
+        updated_at    TEXT
+    );
     CREATE INDEX IF NOT EXISTS idx_contacts_batch  ON contacts(batch_id);
     CREATE INDEX IF NOT EXISTS idx_contacts_status ON contacts(status);
+    CREATE INDEX IF NOT EXISTS idx_hsact_contact   ON hubspot_activity_log(contact_id);
+    CREATE INDEX IF NOT EXISTS idx_hsact_status    ON hubspot_activity_log(status);
+    CREATE INDEX IF NOT EXISTS idx_bisonmap_lead   ON bison_lead_map(lead_id);
     """)
     # migrate older DBs that predate the domain column, then backfill from email
     cols = [r["name"] for r in conn.execute("PRAGMA table_info(contacts)")]
@@ -188,3 +216,66 @@ def upsert_signal(conn, domain, company_name, signal, has_recent, model=None):
 def all_signals(conn):
     return [dict(r) for r in conn.execute(
         "SELECT * FROM account_signals ORDER BY updated_at DESC")]
+
+
+# ---- HubSpot activity ledger ---------------------------------------------
+def activity_logged(conn, dedup_key):
+    """True if this event was already logged successfully (skip on re-run)."""
+    row = conn.execute(
+        "SELECT 1 FROM hubspot_activity_log WHERE dedup_key=? AND status='logged'",
+        (dedup_key,)).fetchone()
+    return row is not None
+
+
+def record_activity(conn, dedup_key, event_type, status, contact_id=None,
+                    engagement_id=None, channel="email", event_ts=None, error=None):
+    """Upsert a ledger row. A prior 'failed'/'skipped_no_contact' row is retried on
+    the next run and flips to 'logged' once it succeeds; successes are never re-sent."""
+    conn.execute("""
+        INSERT INTO hubspot_activity_log
+          (dedup_key, event_type, channel, contact_id, engagement_id, status, error, event_ts, created_at)
+        VALUES (?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(dedup_key) DO UPDATE SET
+          event_type=excluded.event_type, channel=excluded.channel, contact_id=excluded.contact_id,
+          engagement_id=excluded.engagement_id, status=excluded.status, error=excluded.error,
+          event_ts=excluded.event_ts, created_at=excluded.created_at
+    """, (dedup_key, event_type, channel, contact_id, engagement_id, status, error, event_ts, now()))
+    conn.commit()
+
+
+def activity_counts(conn):
+    """Summary of the ledger for status reporting."""
+    by_status = {r["status"]: r["n"] for r in
+                 conn.execute("SELECT status, COUNT(*) n FROM hubspot_activity_log GROUP BY status")}
+    by_type = {r["event_type"]: r["n"] for r in
+               conn.execute("SELECT event_type, COUNT(*) n FROM hubspot_activity_log "
+                            "WHERE status='logged' GROUP BY event_type")}
+    return {"by_status": by_status, "logged_by_type": by_type,
+            "total": conn.execute("SELECT COUNT(*) FROM hubspot_activity_log").fetchone()[0]}
+
+
+# ---- Bison email -> lead_id cache ----------------------------------------
+def upsert_lead_map(conn, email, lead_id, contact_id=None):
+    """Cache an email -> Bison lead_id mapping (from a /api/leads sweep)."""
+    email = (email or "").strip().lower()
+    if not email:
+        return
+    conn.execute("""
+        INSERT INTO bison_lead_map (email, lead_id, contact_id, updated_at)
+        VALUES (?,?,?,?)
+        ON CONFLICT(email) DO UPDATE SET
+          lead_id=excluded.lead_id,
+          contact_id=COALESCE(excluded.contact_id, bison_lead_map.contact_id),
+          updated_at=excluded.updated_at
+    """, (email, int(lead_id) if lead_id is not None else None, contact_id, now()))
+
+
+def mark_lead_fetched(conn, email, last_sent_at):
+    """Record when a lead's sent-emails were last pulled + its newest send time."""
+    conn.execute("UPDATE bison_lead_map SET last_fetch_at=?, last_sent_at=? WHERE email=?",
+                 (now(), last_sent_at, (email or "").strip().lower()))
+    conn.commit()
+
+
+def lead_map_rows(conn):
+    return [dict(r) for r in conn.execute("SELECT * FROM bison_lead_map")]
