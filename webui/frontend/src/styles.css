@@ -187,8 +187,6 @@ tr.clickable { cursor: pointer; }
 
 /* EverWorker brand PNG (from public/) — sized by its context below */
 .ev-logo-img { display: block; width: auto; max-width: 100%; object-fit: contain; }
-.login__brand .ev-logo-img { height: 30px; }
-.login__art-caption .ev-logo-img { height: 22px; }
 .brand .ev-logo-img { height: 26px; }
 
 /* EverWorker brand lockup (monogram tile + Gilroy wordmark) — wordmark
@@ -211,18 +209,15 @@ tr.clickable { cursor: pointer; }
   flex: 0 0 46%; max-width: 620px; min-width: 0;
   display: flex; flex-direction: column; padding: 40px 56px;
 }
-.login__brand { flex-shrink: 0; }
 .login__center {
   flex: 1; display: flex; flex-direction: column; justify-content: center;
-  gap: 30px; width: 100%; max-width: 380px; margin: 0 auto; padding: 24px 0;
+  gap: 34px; width: 100%; max-width: 380px; margin: 0 auto; padding: 24px 0;
 }
-.login__intro { display: flex; flex-direction: column; gap: 14px; }
 .login__headline {
-  margin: 0; font-weight: 900; font-size: 44px; line-height: 1.04;
-  letter-spacing: -1.4px; color: var(--text);
+  margin: 0; font-weight: 400; font-size: 46px; line-height: 1.06;
+  letter-spacing: -1px; color: var(--text);
 }
 .login__headline em { font-style: normal; color: var(--jade); }
-.login__tagline { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.55; max-width: 34ch; }
 
 .login__form { display: flex; flex-direction: column; gap: 15px; }
 .login__form .field { font-size: 12.5px; font-weight: 600; color: var(--muted); gap: 6px; }
@@ -231,8 +226,6 @@ tr.clickable { cursor: pointer; }
   margin-top: 5px; width: 100%; padding: 13px; font-size: 15px; border-radius: 11px;
   display: flex; align-items: center; justify-content: center;
 }
-.login__hint { margin: 2px 0 0; color: var(--faint); font-size: 12.5px; }
-.login__legal { flex-shrink: 0; margin: 0; color: var(--faint); font-size: 12px; letter-spacing: .2px; }
 
 /* Right — ocean art with a green overlay (inset, rounded, framed) */
 .login__art {
@@ -261,12 +254,18 @@ tr.clickable { cursor: pointer; }
     linear-gradient(155deg, rgba(34, 130, 111, 0.50) 0%, rgba(20, 70, 58, 0.34) 46%, rgba(8, 22, 16, 0.52) 100%);
 }
 .login__art-caption {
-  position: absolute; left: 30px; bottom: 28px; z-index: 1;
-  display: flex; align-items: center; gap: 12px;
+  position: absolute; inset: 0; z-index: 1; padding: 24px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 24px; text-align: center;
+}
+.login__art-caption .ev-logo-img {
+  width: min(58%, 460px); height: auto; max-height: 130px;
+  filter: drop-shadow(0 8px 26px rgba(4, 16, 12, 0.45));
 }
 .login__art-by {
-  color: rgba(255, 255, 255, 0.62); font-size: 13px; font-weight: 500;
-  padding-left: 12px; border-left: 1px solid rgba(255, 255, 255, 0.22);
+  color: rgba(255, 255, 255, 0.85); font-size: 17px; font-weight: 600;
+  letter-spacing: 4px; text-transform: uppercase;
+  text-shadow: 0 2px 16px rgba(4, 16, 12, 0.5);
 }
 
 @media (max-width: 880px) {

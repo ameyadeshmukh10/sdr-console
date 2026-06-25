@@ -30,20 +30,10 @@ export default function LoginPage() {
     <div className="login">
       {/* Left — wordmark, pitch, and the sign-in form on calm whitespace */}
       <section className="login__form-panel">
-        <header className="login__brand">
-          <BrandLogo variant="black" />
-        </header>
-
         <div className="login__center">
-          <div className="login__intro">
-            <h1 className="login__headline">
-              Generate more<br /><em>pipeline.</em>
-            </h1>
-            <p className="login__tagline">
-              Sign in to the SDR Console — source, write, and enroll
-              value-first outbound on autopilot.
-            </p>
-          </div>
+          <h1 className="login__headline">
+            Generate more<br /><em>pipeline.</em>
+          </h1>
 
           <form className="login__form" onSubmit={submit}>
             <ErrorBanner error={error} />
@@ -66,15 +56,12 @@ export default function LoginPage() {
             <button className="login__btn" type="submit" disabled={busy || !email || !password}>
               {busy ? 'Signing in…' : 'Log in'}
             </button>
-            <p className="login__hint">Trouble signing in? Ping your EverWorker admin.</p>
           </form>
         </div>
-
-        <footer className="login__legal">© EverWorker · SDR Console</footer>
       </section>
 
-      {/* Right — ocean imagery under a brand-green overlay */}
-      <section className="login__art" aria-hidden="true">
+      {/* Right — ocean imagery under a brand-green overlay, centered logo */}
+      <section className="login__art">
         <div className="login__art-base" />
         <div className="login__art-photo" />
         <div className="login__art-tint" />
