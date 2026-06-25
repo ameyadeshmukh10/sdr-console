@@ -178,3 +178,49 @@ tr.clickable { cursor: pointer; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: rgba(15, 28, 24, 0.18); border-radius: 999px; border: 2px solid var(--bg); }
 ::-webkit-scrollbar-thumb:hover { background: rgba(15, 28, 24, 0.30); }
+
+/* --- Login screen — deck slide-1 aesthetic: dark emerald + mint glow --- */
+.login-screen {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: var(--rail); padding: 24px; overflow: hidden;
+}
+.login-glow {
+  position: absolute; top: -22%; left: 50%; transform: translateX(-50%);
+  width: 760px; height: 760px; pointer-events: none;
+  background: radial-gradient(closest-side, rgba(82, 254, 191, 0.20), rgba(82, 254, 191, 0) 70%);
+}
+.login-content {
+  position: relative; z-index: 1; width: 100%; max-width: 404px;
+  display: flex; flex-direction: column; align-items: center; gap: 22px;
+}
+.login-logo { color: #fff; font-weight: 800; font-size: 27px; letter-spacing: -.5px; }
+.login-logo .mark { color: var(--mint); }
+.login-card {
+  width: 100%; background: var(--panel); border-radius: 16px; padding: 30px 28px 28px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.38); display: flex; flex-direction: column; gap: 14px;
+}
+.login-title { margin: 0; font-size: 23px; font-weight: 800; letter-spacing: -.4px; line-height: 1.2; color: var(--text); }
+.login-sub { margin: -7px 0 4px; color: var(--muted); font-size: 13.5px; }
+.login-card .field { font-size: 12.5px; font-weight: 600; }
+.login-card input { padding: 11px 13px; font-size: 14.5px; }
+.login-btn {
+  margin-top: 6px; width: 100%; padding: 12px; font-size: 15px;
+  display: flex; align-items: center; justify-content: center;
+}
+.login-foot { margin: 0; color: rgba(255, 255, 255, 0.45); font-size: 11.5px; letter-spacing: .3px; }
+
+/* Sidebar — signed-in identity + sign out */
+.sidebar .signed-in {
+  display: flex; flex-direction: column; gap: 7px; padding: 12px 10px 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08); margin-top: 6px;
+}
+.sidebar .signed-in .who {
+  color: rgba(255, 255, 255, 0.7); font-size: 11.5px; font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+}
+.sidebar .signout {
+  background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.14); padding: 6px 10px; border-radius: 8px;
+  font-size: 12px; font-weight: 600; width: 100%; text-align: center;
+}
+.sidebar .signout:hover { background: rgba(255, 255, 255, 0.14); filter: none; }

@@ -1,8 +1,38 @@
 // Thin fetch wrappers around the Python backend. All paths are relative, so
 // the Vite dev proxy (dev) and the Python static server (prod) both work.
 
+// --- auth ------------------------------------------------------------------
+const TOKEN_KEY = 'sdr_auth_token'
+
+export function getToken() { return localStorage.getItem(TOKEN_KEY) }
+export function setToken(token) {
+  if (token) localStorage.setItem(TOKEN_KEY, token)
+  else localStorage.removeItem(TOKEN_KEY)
+}
+
+// Called when the server rejects our token (expired/cleared) on any request
+// other than login itself — the app uses this to drop back to the login screen.
+let onUnauthorized = null
+export function setOnUnauthorized(fn) { onUnauthorized = fn }
+
+function authHeaders(extra) {
+  const h = { ...(extra || {}) }
+  const t = getToken()
+  if (t) h.Authorization = 'Bearer ' + t
+  return h
+}
+
+function handleUnauthorized(path) {
+  // The login call expects a 401 on a bad password and shows its own error;
+  // every other 401 means our session is dead, so bounce to the login screen.
+  if (path === '/api/login') return
+  setToken(null)
+  if (onUnauthorized) onUnauthorized()
+}
+
 async function get(path) {
-  const res = await fetch(path)
+  const res = await fetch(path, { headers: authHeaders() })
+  if (res.status === 401) handleUnauthorized(path)
   if (!res.ok) {
     let detail = ''
     try { detail = (await res.json()).error || '' } catch { /* ignore */ }
@@ -14,15 +44,17 @@ async function get(path) {
 async function post(path, body) {
   const res = await fetch(path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: body ? JSON.stringify(body) : undefined,
   })
+  if (res.status === 401) handleUnauthorized(path)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.error || `${res.status}`)
   return data
 }
 
 export const api = {
+  login: (email, password) => post('/api/login', { email, password }),
   status: () => get('/api/status'),
   batches: (status, limit) => {
     const q = new URLSearchParams()

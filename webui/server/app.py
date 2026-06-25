@@ -27,9 +27,13 @@ Design notes:
     pipeline scripts via subprocess; we never reimplement their logic.
 """
 
+import base64
 import concurrent.futures
+import hashlib
+import hmac
 import json
 import re
+import secrets
 import sqlite3
 import subprocess
 import sys
@@ -151,6 +155,100 @@ def read_env():
             env[key.strip()] = val
     env.update(os.environ)
     return env
+
+
+# ----------------------------------------------------------------------------
+# Authentication — a simple email+password gate over the whole /api surface.
+#
+# Stateless, HMAC-signed bearer tokens (stdlib only, no extra deps). The accepted
+# users are stored as salted PBKDF2-HMAC-SHA256 hashes (never plaintext). The
+# token-signing secret comes from AUTH_SECRET_KEY; if it is not set a random one
+# is generated at startup, which means every restart invalidates outstanding
+# tokens (everyone simply logs in again) — set AUTH_SECRET_KEY in production so
+# sessions survive redeploys.
+# ----------------------------------------------------------------------------
+_AUTH_ITERATIONS = 240000
+_AUTH_TOKEN_TTL = 7 * 24 * 3600  # 7 days
+
+# email (lowercased) -> (salt_hex, pbkdf2_sha256_hex). Hashes only — no plaintext.
+_USERS = {
+    "ameya.deshmukh@everworker.ai": ("5101ada9dcb0404b5c6dcc1429de8223", "4971b8475fa88f188700a9504b891cad6277cd98fd338897004c7bba0978d85c"),
+    "lucas.cowell@everworker.ai": ("e6d20cfb46294a3ae4d2b5246e1965c3", "4bdc195d7ad3c18ec8a7ddb29dabb77ea6a979083b2924c08b10b65018755f5b"),
+    "alex.purtell@everworker.ai": ("7c9f90584312041c8bfe5bf0c226c080", "3d3c65fadd0e5635ab6c9b02544e6fdf49fc68f7bda6d6f665acdc57d40e94fe"),
+    "demo@everworker.ai": ("67451f9a6a3505c9b880939b1c10ec19", "0bcf72b83a13b44146dc644e5d151e9024b6e137cd8e807d61d645fd01b69452"),
+    "sales@everworker.ai": ("09ec9dd545d4f62d23614cb869866130", "5d846a99028b8c1a5a31dcea0cb4713624dd722ff3fdb649360e53d42ccda611"),
+}
+
+# Per-method exact-match auth exemptions (NOT prefix — that would leak siblings
+# like /api/clay/oauth/start). External/non-browser callers that have no bearer:
+#   /api/health             — public liveness probe (Railway healthcheck)
+#   /api/clay/oauth/callback — browser redirect back from Clay's OAuth consent
+#   /api/login              — the sign-in endpoint itself
+#   /api/heyreach/webhook   — HeyReach posts here; secured by its own HMAC secret
+_EXEMPT_GET = {"/api/health", "/api/clay/oauth/callback"}
+_EXEMPT_POST = {"/api/login", "/api/heyreach/webhook"}
+
+
+def _auth_secret():
+    """The token-signing secret, read once at startup. Prefer AUTH_SECRET_KEY from
+    the environment (or .env); otherwise generate an ephemeral one and warn."""
+    secret = read_env().get("AUTH_SECRET_KEY", "").strip()
+    if not secret:
+        secret = secrets.token_hex(32)
+        sys.stderr.write(
+            "[auth] WARNING: AUTH_SECRET_KEY is not set — using an ephemeral "
+            "signing secret; all sessions reset on restart. Set AUTH_SECRET_KEY "
+            "in production so logins survive redeploys.\n")
+    return secret.encode("utf-8")
+
+
+_AUTH_SECRET = _auth_secret()
+
+
+def verify_credentials(email, password):
+    """True iff (email, password) matches an accepted user. Email is matched
+    case-insensitively; the password is not. Constant-time hash comparison."""
+    rec = _USERS.get((email or "").strip().lower())
+    if not rec:
+        return False
+    salt_hex, hash_hex = rec
+    dk = hashlib.pbkdf2_hmac(
+        "sha256", (password or "").encode("utf-8"),
+        bytes.fromhex(salt_hex), _AUTH_ITERATIONS)
+    return hmac.compare_digest(dk.hex(), hash_hex)
+
+
+def make_token(email):
+    """Mint a signed bearer token: base64url(email|expiry).hex(hmac_sha256)."""
+    payload = f"{email.strip().lower()}|{int(time.time()) + _AUTH_TOKEN_TTL}"
+    body = base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii")
+    sig = hmac.new(_AUTH_SECRET, body.encode("ascii"), hashlib.sha256).hexdigest()
+    return f"{body}.{sig}"
+
+
+def verify_token(token):
+    """Return the email for a valid, unexpired token, else None. Verifies the
+    signature (constant-time) BEFORE decoding the untrusted payload."""
+    if not token or "." not in token:
+        return None
+    body, _, sig = token.partition(".")
+    expected = hmac.new(_AUTH_SECRET, body.encode("ascii"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        return None
+    try:
+        payload = base64.urlsafe_b64decode(body.encode("ascii")).decode("utf-8")
+        email, _, exp = payload.partition("|")
+        if not exp or int(exp) < int(time.time()):
+            return None
+        return email
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+
+def bearer_from_headers(headers):
+    """Extract the bearer token from an Authorization header, or None."""
+    raw = headers.get("Authorization", "") or ""
+    return raw[7:].strip() if raw.startswith("Bearer ") else None
 
 
 def persona_campaign_map():
@@ -1943,7 +2041,7 @@ class Handler(BaseHTTPRequestHandler):
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
     def _json(self, obj, code=200):
         body = json.dumps(obj).encode("utf-8")
@@ -1996,7 +2094,15 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         params = parse_qs(parsed.query)
+        # Auth gate: every /api/* read except the exempt few needs a valid token.
+        # Non-/api/ paths (static assets + SPA fallback) are always served so the
+        # login page itself can load. Reads headers only — never the body.
+        if (path.startswith("/api/") and path not in _EXEMPT_GET
+                and not verify_token(bearer_from_headers(self.headers))):
+            return self._error(401, "authentication required")
         try:
+            if path == "/api/health":
+                return self._json({"ok": True})
             if path == "/api/status":
                 return self._json(db_status())
             if path == "/api/batches":
@@ -2082,7 +2188,19 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         path = parsed.path
+        # Auth gate (see do_GET). /api/login and the HeyReach webhook are exempt.
+        if (path.startswith("/api/") and path not in _EXEMPT_POST
+                and not verify_token(bearer_from_headers(self.headers))):
+            return self._error(401, "authentication required")
         try:
+            if path == "/api/login":
+                body = self._read_body()
+                email = str(body.get("email", "")).strip().lower()
+                password = str(body.get("password", ""))
+                if not verify_credentials(email, password):
+                    time.sleep(0.5)  # blunt online password guessing
+                    return self._error(401, "invalid credentials")
+                return self._json({"ok": True, "token": make_token(email), "email": email})
             if path == "/api/ingest":
                 body = self._read_body()
                 list_id = str(body.get("list_id", "")).strip()
