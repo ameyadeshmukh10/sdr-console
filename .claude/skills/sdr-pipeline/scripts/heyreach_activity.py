@@ -31,6 +31,7 @@ reads the durable inbox + HeyReach conversations (for --backfill) and writes to 
 """
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -273,6 +274,7 @@ class LiLogger:
         self.counts = {"logged": 0, "skipped_dupe": 0, "skipped_no_contact": 0, "failed": 0}
         self.by_type = {t: 0 for t in CANON_TYPES}
         self.errors = []
+        self.last_error = None  # the error from the most recent failed log() (per-row)
 
     def log(self, *, ev, contact_id):
         """Returns one of: 'out_of_scope' | 'dupe' | 'no_contact' | 'dry' | 'logged' | 'failed'."""
@@ -308,11 +310,12 @@ class LiLogger:
             return "logged"
         except HubSpotError as e:
             self.counts["failed"] += 1
+            self.last_error = str(e)[:300]
             db.record_activity(self.conn, key, ev["canon_type"], "failed",
                                contact_id=contact_id, channel="linkedin",
-                               event_ts=ev.get("timestamp"), error=str(e)[:300])
+                               event_ts=ev.get("timestamp"), error=self.last_error)
             if len(self.errors) < 5:
-                self.errors.append(str(e)[:300])
+                self.errors.append(self.last_error)
             return "failed"
 
     def summary(self, **extra):
@@ -350,6 +353,11 @@ def drain_pending(conn, hs, logger, *, limit, log_fn):
             if not logger.dry_run:
                 db.mark_heyreach_event(conn, row["id"], "skipped", error="unparseable/unmapped")
             continue
+        # A missing/unparseable event timestamp is a permanent defect, not a transient
+        # HubSpot error — fall back to when we received the webhook so the activity can
+        # still be logged (and dated sensibly) instead of failing-then-abandoning forever.
+        if to_ms_epoch(ev.get("timestamp")) is None:
+            ev["timestamp"] = row.get("received_at")
         cid = resolve_contact(ev, li_to_cid=li_to_cid, email_to_cid=email_to_cid,
                               hs=hs, hs_cache=hs_cache)
         outcome = logger.log(ev=ev, contact_id=cid)
@@ -360,7 +368,7 @@ def drain_pending(conn, hs, logger, *, limit, log_fn):
         elif outcome == "no_contact":
             db.mark_heyreach_event(conn, row["id"], "skipped", error="no matching contact")
         elif outcome == "failed":
-            db.mark_heyreach_event(conn, row["id"], "failed", error=(logger.errors[-1] if logger.errors else "hubspot error"))
+            db.mark_heyreach_event(conn, row["id"], "failed", error=(logger.last_error or "hubspot error"))
         # out_of_scope (contact-id filter): leave the row as-is for a full run
     return logger.summary(processed=processed)
 
@@ -399,14 +407,15 @@ def backfill_from_conversations(conn, hs, logger, *, lookback_days, max_items, l
                 "campaign_id": None, "raw_type": "backfill",
             }
             conv_id = conv.get("id")
-            for i, m in enumerate(conv.get("messages") or []):
+            for m in conv.get("messages") or []:
                 created = m.get("createdAt")
-                if created:
-                    try:
-                        if datetime.fromisoformat(str(created).replace("Z", "+00:00")) < cutoff:
-                            continue
-                    except ValueError:
-                        pass
+                if to_ms_epoch(created) is None:
+                    continue  # can't log an activity without a real timestamp
+                try:
+                    if datetime.fromisoformat(str(created).replace("Z", "+00:00")) < cutoff:
+                        continue
+                except ValueError:
+                    pass
                 is_inmail = bool(m.get("isInMail"))
                 sender = m.get("sender")
                 if sender == "ME":
@@ -415,10 +424,16 @@ def backfill_from_conversations(conn, hs, logger, *, lookback_days, max_items, l
                     canon = "li_inmail_replied" if is_inmail else "li_message_replied"
                 else:
                     continue
+                # Stable per-message id (NOT the positional index, which shifts when a
+                # message is inserted/reordered and would re-log on a later backfill).
+                mid = m.get("id") or m.get("messageId")
+                ev_id = (f"{conv_id}:{mid}" if mid else "%s:%s" % (
+                    conv_id, hashlib.sha1(
+                        ("%s|%s|%s|%s" % (conv_id, created, sender, (m.get("body") or "")[:120]))
+                        .encode("utf-8")).hexdigest()[:16]))
                 ev = {**base, "canon_type": canon, "is_inmail": is_inmail,
                       "timestamp": created, "body": m.get("body") or "",
-                      "subject": m.get("subject") or "",
-                      "event_id": f"{conv_id}:{i}:{canon}"}
+                      "subject": m.get("subject") or "", "event_id": ev_id}
                 cid = resolve_contact(ev, li_to_cid=li_to_cid, email_to_cid=email_to_cid,
                                       hs=hs, hs_cache=hs_cache)
                 logger.log(ev=ev, contact_id=cid)
@@ -453,16 +468,35 @@ def main():
     conn = db.connect()
     db.init_schema(conn)
 
+    # Cross-process mutual exclusion: only one drain/backfill writes to HubSpot at a time,
+    # machine-wide (the inline webhook drain, the hourly sweep, and any manual CLI run are
+    # all separate processes, so an in-process lock can't serialize them). This keeps the
+    # ledger check-then-write safe — without it two drainers could both pass activity_logged()
+    # for the same event and create duplicate Communications. Exit cleanly if another holds it.
+    lock_path = db.DB_PATH.parent / ".heyreach_drain.lock"
+    lock_f = open(lock_path, "w")
+    try:
+        fcntl.flock(lock_f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        log_fn("another HeyReach drain is already running; exiting")
+        if args.json:
+            print(json.dumps({"ok": True, "skipped": "locked"}))
+        return
+
     if args.retry_skipped and not args.dry_run:
         n = db.retry_skipped_heyreach_events(conn)
         log_fn(f"requeued {n} skipped events")
 
     logger = _make_logger(conn, hs, args)
-    if args.backfill:
-        summary = backfill_from_conversations(
-            conn, hs, logger, lookback_days=args.lookback, max_items=args.max, log_fn=log_fn)
-    else:
-        summary = drain_pending(conn, hs, logger, limit=args.limit, log_fn=log_fn)
+    try:
+        if args.backfill:
+            summary = backfill_from_conversations(
+                conn, hs, logger, lookback_days=args.lookback, max_items=args.max, log_fn=log_fn)
+        else:
+            summary = drain_pending(conn, hs, logger, limit=args.limit, log_fn=log_fn)
+    finally:
+        fcntl.flock(lock_f, fcntl.LOCK_UN)
+        lock_f.close()
 
     if not quiet:
         print(f"\nheyreach activity: {logger.counts} by_type="

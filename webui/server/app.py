@@ -57,6 +57,7 @@ GENERATE_BATCH = SCRIPTS / "sdr-pipeline" / "scripts" / "generate_batch.py"
 HUBSPOT_LISTS = SCRIPTS / "sdr-pipeline" / "scripts" / "hubspot_lists.py"
 HUBSPOT_ACTIVITY_SYNC = SCRIPTS / "sdr-pipeline" / "scripts" / "hubspot_activity_sync.py"
 HEYREACH_ACTIVITY = SCRIPTS / "sdr-pipeline" / "scripts" / "heyreach_activity.py"
+MAX_WEBHOOK_BODY = 1_048_576  # 1 MB cap on a webhook body (LinkedIn events are tiny) — DoS guard
 SOURCE_CONTACTS = SCRIPTS / "sdr-pipeline" / "scripts" / "source_contacts.py"
 CLAY_ENRICH = SCRIPTS / "sdr-pipeline" / "scripts" / "clay_enrich.py"
 PIPELINE_SCRIPTS = SCRIPTS / "sdr-pipeline" / "scripts"
@@ -2210,13 +2211,25 @@ class Handler(BaseHTTPRequestHandler):
         The reconcile (resolve contact -> log a HubSpot LinkedIn Communication) happens
         out-of-band in heyreach_activity.py, idempotently."""
         import os
+        import hmac
         secret = os.environ.get("HEYREACH_WEBHOOK_SECRET")
+        given = (parse_qs(parsed.query).get("secret", [None])[0]
+                 or self.headers.get("X-Webhook-Secret"))
         if secret:
-            given = (parse_qs(parsed.query).get("secret", [None])[0]
-                     or self.headers.get("X-Webhook-Secret"))
-            if given != secret:
+            if not given or not hmac.compare_digest(given, secret):  # constant-time
                 return self._error(401, "bad or missing webhook secret")
-        length = int(self.headers.get("Content-Length", 0) or 0)
+        else:
+            # Fail closed off-box: never accept an unauthenticated webhook from a remote
+            # host (we bind 0.0.0.0 on Railway). Loopback is allowed for local dev.
+            client_ip = self.client_address[0] if self.client_address else ""
+            if client_ip not in ("127.0.0.1", "::1"):
+                return self._error(503, "webhook secret not configured")
+        try:
+            length = int(self.headers.get("Content-Length", 0) or 0)
+        except (TypeError, ValueError):
+            length = 0
+        if length > MAX_WEBHOOK_BODY:
+            return self._error(413, "payload too large")
         raw = self.rfile.read(length).decode("utf-8", "replace") if length else ""
         event_id = event_type = dedup = None
         try:  # best-effort indexing for idempotent ACK; the drain re-parses authoritatively
@@ -2227,15 +2240,23 @@ class Handler(BaseHTTPRequestHandler):
                 dedup = heyreach_activity.dedup_key(ev)
         except Exception:  # noqa: BLE001 — parsing must never block the ACK
             pass
+        # Persist-before-process: the inbox row is the ONLY durable copy of the payload, so
+        # a failed write must NOT be ACKed as success — return 5xx and let HeyReach retry
+        # (it retries up to 5x over 24h). Only ACK 200 once the row is durably stored
+        # (a duplicate returning None is still a successful persist).
+        persisted = False
         try:
             conn = pipeline_db.connect()
             try:
                 pipeline_db.enqueue_heyreach_event(conn, raw, event_id=event_id,
                                                    event_type=event_type, dedup_key=dedup)
+                persisted = True
             finally:
                 conn.close()
-        except Exception as e:  # noqa: BLE001 — still ACK so HeyReach doesn't hammer retries
+        except Exception as e:  # noqa: BLE001
             sys.stderr.write(f"[heyreach] enqueue failed: {type(e).__name__}: {e}\n")
+        if not persisted:
+            return self._error(503, "could not persist event; retry")
         self._json({"ok": True}, code=200)
         _kick_heyreach_drain()
         return
@@ -2277,7 +2298,18 @@ def _kick_heyreach_drain():
     path. Called right after a webhook is persisted for near-real-time logging."""
     if not _hr_drain_lock.acquire(blocking=False):
         return  # a drain is already running; it will sweep the newly-queued rows
+    def _pending_count():
+        try:
+            conn = pipeline_db.connect()
+            try:
+                return conn.execute(
+                    "SELECT COUNT(*) FROM heyreach_events WHERE status='pending'").fetchone()[0]
+            finally:
+                conn.close()
+        except Exception:  # noqa: BLE001
+            return 0
     def _run():
+        rearm = False
         try:
             # Bounded loop: drain, then mop up rows that arrived DURING the drain (the
             # drain's SELECT is a snapshot). We re-loop only while genuinely-new 'pending'
@@ -2288,22 +2320,22 @@ def _kick_heyreach_drain():
                 lines = [ln for ln in (res.get("stdout") or "").splitlines() if ln.strip()]
                 print(f"[heyreach-sync] drain: "
                       f"{lines[-1] if lines else (res.get('stderr') or '')[:200]}", flush=True)
-                try:
-                    conn = pipeline_db.connect()
-                    try:
-                        pending = conn.execute(
-                            "SELECT COUNT(*) FROM heyreach_events WHERE status='pending'").fetchone()[0]
-                    finally:
-                        conn.close()
-                except Exception:  # noqa: BLE001
-                    pending = 0
-                if not pending:
+                if not _pending_count():
                     break
         except Exception as e:  # noqa: BLE001 — a drain must never crash the server
             print(f"[heyreach-sync] drain error: {type(e).__name__}: {e}", flush=True)
         finally:
             _hr_drain_lock.release()
-    threading.Thread(target=_run, daemon=True).start()
+            # Re-arm: an event enqueued after our last in-loop check (while we still held
+            # the lock) would otherwise wait for the hourly sweep. Re-kick once if so.
+            rearm = _pending_count() > 0
+        if rearm:
+            _kick_heyreach_drain()
+    try:
+        threading.Thread(target=_run, daemon=True).start()
+    except Exception as e:  # noqa: BLE001 — don't leak the lock if the thread can't start
+        _hr_drain_lock.release()
+        print(f"[heyreach-sync] could not start drain thread: {type(e).__name__}: {e}", flush=True)
 
 
 def _activity_autosync_loop():
