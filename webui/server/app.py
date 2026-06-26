@@ -93,6 +93,15 @@ PERSONA_ENV = {
     "partnerships": "BISON_CAMPAIGN_PARTNERSHIPS",
     "sdr-bdr": "BISON_CAMPAIGN_SDR_BDR",
 }
+# Per-instruction-variant Bison campaigns. Enrollment routes by variant FIRST and
+# only falls back to the persona campaign (then the default BISON_CAMPAIGN_ID), so
+# both sets of campaigns can be live at once — see enroll.py / sdr_batches.cmd_enroll.
+VARIANT_ORDER = ["value-give", "earn", "show"]
+VARIANT_ENV = {
+    "value-give": "BISON_CAMPAIGN_VALUE_GIVE",
+    "earn": "BISON_CAMPAIGN_EARN",
+    "show": "BISON_CAMPAIGN_SHOW",
+}
 
 # ----------------------------------------------------------------------------
 # CTA derivation. No explicit CTA field exists in the generated JSON, and the
@@ -251,13 +260,34 @@ def bearer_from_headers(headers):
     return raw[7:].strip() if raw.startswith("Bearer ") else None
 
 
+def _campaign_int(raw):
+    raw = (raw or "").strip()
+    return int(raw) if raw.isdigit() else None
+
+
 def persona_campaign_map():
     env = read_env()
-    out = {}
-    for persona, var in PERSONA_ENV.items():
-        raw = env.get(var, "").strip()
-        out[persona] = int(raw) if raw.isdigit() else None
-    return out
+    return {persona: _campaign_int(env.get(var, "")) for persona, var in PERSONA_ENV.items()}
+
+
+def variant_campaign_map():
+    env = read_env()
+    return {variant: _campaign_int(env.get(var, "")) for variant, var in VARIANT_ENV.items()}
+
+
+def default_campaign_id():
+    """The catch-all BISON_CAMPAIGN_ID — last fallback in enroll.py's routing."""
+    return _campaign_int(read_env().get("BISON_CAMPAIGN_ID", ""))
+
+
+def route_campaign(persona, variant, pmap=None, vmap=None, default=None):
+    """The Bison campaign a contact actually enrolls into, mirroring enroll.py:
+    variant campaign first, then persona campaign, then the default. Returns an
+    int campaign id or None (unrouted)."""
+    pmap = persona_campaign_map() if pmap is None else pmap
+    vmap = variant_campaign_map() if vmap is None else vmap
+    default = default_campaign_id() if default is None else default
+    return vmap.get(variant) or pmap.get(persona) or default
 
 
 # ----------------------------------------------------------------------------
@@ -655,37 +685,114 @@ def linkedin_analytics_payload():
     }
 
 
+def _campaign_stats(c):
+    """The Bison campaign-wide totals slice (all leads ever added to the campaign,
+    from any source — NOT just this pipeline's contacts), or None if uncached."""
+    if not c:
+        return None
+    return {
+        "total_leads": c.get("total_leads"),
+        "total_leads_contacted": c.get("total_leads_contacted"),
+        "unique_replies": c.get("unique_replies"),
+        "interested": c.get("interested"),
+        "reply_rate_pct": c.get("reply_rate_pct"),
+        "interested_rate_pct": c.get("interested_rate_pct"),
+    }
+
+
+def _contacts_grouped():
+    """[(persona, variant, status, n)] over all contacts. Falls back to a
+    variant-less grouping on DBs that predate the variant column (the server opens
+    read-only and can't run the batch_db migration)."""
+    with db_connect() as conn:
+        try:
+            return [(r["persona"], r["variant"], r["status"], r["n"]) for r in conn.execute(
+                "SELECT persona, variant, status, COUNT(*) n FROM contacts "
+                "GROUP BY persona, variant, status")]
+        except sqlite3.OperationalError:
+            return [(r["persona"], None, r["status"], r["n"]) for r in conn.execute(
+                "SELECT persona, status, COUNT(*) n FROM contacts GROUP BY persona, status")]
+
+
 def rollup_payload():
     st = db_status()
-    cmap = persona_campaign_map()
+    pmap = persona_campaign_map()
+    vmap = variant_campaign_map()
+    default_cid = default_campaign_id()
     analytics = analytics_payload()
     by_campaign = {c.get("campaign_id"): c for c in analytics["campaigns"]}
+
+    # Left column — persona/agent nodes (contact counts straight from the DB).
     personas = []
     for p in PERSONA_ORDER:
-        cid = cmap.get(p)
-        stats = None
-        campaign_name = None
-        if cid is not None and cid in by_campaign:
-            c = by_campaign[cid]
-            campaign_name = c.get("campaign_name")
-            stats = {
-                "total_leads": c.get("total_leads"),
-                "total_leads_contacted": c.get("total_leads_contacted"),
-                "unique_replies": c.get("unique_replies"),
-                "interested": c.get("interested"),
-                "reply_rate_pct": c.get("reply_rate_pct"),
-                "interested_rate_pct": c.get("interested_rate_pct"),
-            }
+        cid = pmap.get(p)
+        c = by_campaign.get(cid) if cid is not None else None
         personas.append({
             "persona": p,
             "campaign_id": cid,
-            "campaign_name": campaign_name,
+            "campaign_name": (c or {}).get("campaign_name"),
             "contacts": st["by_persona"].get(p, 0),
             "by_status": st["persona_status"].get(p, {}),
-            "campaign_stats": stats,
+            "campaign_stats": _campaign_stats(c),
         })
-    return {"personas": personas, "personas_order": PERSONA_ORDER,
-            "linkedin": linkedin_channel()}
+
+    # Right column — EVERY Bison campaign contacts actually route into. Each
+    # contact's destination is derived exactly as enrollment does it (variant
+    # campaign first, persona campaign, then the default), so both the per-variant
+    # (14/15/16) and the legacy per-persona (10-13) campaigns surface when in use.
+    agg = {}    # cid(int|None) -> rollup of this pipeline's contacts
+    edges = {}  # (persona, cid) -> count, for drawing the routing
+    for persona, variant, status, n in _contacts_grouped():
+        cid = route_campaign(persona, variant, pmap, vmap, default_cid)
+        a = agg.setdefault(cid, {"contacts": 0, "enrolled": 0, "by_status": {},
+                                 "personas": set(), "variants": set()})
+        a["contacts"] += n
+        if status == "enrolled":
+            a["enrolled"] += n
+        a["by_status"][status] = a["by_status"].get(status, 0) + n
+        if persona:
+            a["personas"].add(persona)
+        if variant:
+            a["variants"].add(variant)
+        if persona is not None:
+            edges[(persona, cid)] = edges.get((persona, cid), 0) + n
+
+    variant_by_cid = {cid: v for v, cid in vmap.items() if cid is not None}
+    persona_by_cid = {cid: p for p, cid in pmap.items() if cid is not None}
+    campaigns = []
+    for cid, a in agg.items():
+        c = by_campaign.get(cid) or {}
+        if cid is None:
+            kind, label = "unrouted", "unrouted (no campaign configured)"
+        elif cid in variant_by_cid:
+            kind, label = "variant", variant_by_cid[cid]
+        elif cid in persona_by_cid:
+            kind, label = "persona", persona_by_cid[cid]
+        else:
+            kind, label = "campaign", (c.get("campaign_name") or f"#{cid}")
+        campaigns.append({
+            "campaign_id": cid,
+            "campaign_name": c.get("campaign_name"),
+            "kind": kind,
+            "label": label,
+            "pipeline_contacts": a["contacts"],
+            "pipeline_enrolled": a["enrolled"],
+            "by_status": a["by_status"],
+            "personas": sorted(a["personas"]),
+            "variants": sorted(a["variants"]),
+            "stats": _campaign_stats(c),
+        })
+    # busiest first; unrouted bucket always last
+    campaigns.sort(key=lambda x: (x["campaign_id"] is None, -x["pipeline_contacts"]))
+
+    return {
+        "personas": personas,
+        "personas_order": PERSONA_ORDER,
+        "campaigns": campaigns,
+        "edges": [{"persona": p, "campaign_id": cid, "count": n}
+                  for (p, cid), n in edges.items()],
+        "linkedin": linkedin_channel(),
+    }
 
 
 # ----------------------------------------------------------------------------
