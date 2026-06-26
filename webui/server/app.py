@@ -581,33 +581,52 @@ def analytics_payload():
     }
 
 
-_HEYREACH_NAME_CACHE = {}
+# cid -> {"name": str|None, "leads": int|None}. The name is cached after the first
+# success (it rarely changes); the lead count is refreshed live each call but the
+# last-good value is retained so a transient HeyReach hiccup doesn't drop the diagram
+# to 0.
+_HEYREACH_CAMPAIGN_CACHE = {}
 
 
 def linkedin_channel():
     """The HeyReach (LinkedIn) channel all personas feed into: campaign id/name +
-    how many leads we've pushed. Name is fetched once and cached so the diagram
-    still loads instantly on later requests / if HeyReach is unreachable."""
+    how many leads are in the campaign.
+
+    The lead count comes from the LIVE HeyReach campaign (progressStats.totalUsers —
+    the same figure the Analytics page shows as "Leads in campaign"), NOT from
+    data/outreach/heyreach_state.json. That file is only written by the legacy
+    `sdr_batches.py heyreach-backfill` path; the main `enroll` path adds leads to
+    HeyReach without ever touching it, so in normal operation it is missing/stale and
+    would make this node read 0 even when the campaign holds thousands of leads. The
+    local file is kept only as a last-resort fallback when HeyReach is unreachable and
+    we've never seen a live value."""
     env = read_env()
     raw = (env.get("HEYREACH_CAMPAIGN_ID") or "").strip()
     cid = int(raw) if raw.isdigit() else None
     if cid is None:
         return None
-    leads = 0
-    sp = DATA / "outreach" / "heyreach_state.json"
-    if sp.is_file():
-        try:
-            leads = len(json.loads(sp.read_text()).get("added", []))
-        except (ValueError, OSError):
-            pass
-    if cid not in _HEYREACH_NAME_CACHE:
-        try:
-            sys.path.insert(0, str(SCRIPTS / "sdr-pipeline" / "scripts"))
-            from heyreach_client import HeyReachClient
-            _HEYREACH_NAME_CACHE[cid] = (HeyReachClient().get_campaign(cid) or {}).get("name") or ""
-        except Exception:  # noqa: BLE001 — never block the diagram on a HeyReach hiccup
-            _HEYREACH_NAME_CACHE[cid] = ""
-    return {"campaign_id": cid, "campaign_name": _HEYREACH_NAME_CACHE[cid] or None, "leads": leads}
+    cache = _HEYREACH_CAMPAIGN_CACHE.setdefault(cid, {"name": None, "leads": None})
+    try:
+        sys.path.insert(0, str(SCRIPTS / "sdr-pipeline" / "scripts"))
+        from heyreach_client import HeyReachClient
+        camp = HeyReachClient().get_campaign(cid) or {}
+        if camp.get("name"):
+            cache["name"] = camp["name"]
+        total_users = (camp.get("progressStats") or {}).get("totalUsers")
+        if isinstance(total_users, (int, float)):
+            cache["leads"] = int(total_users)
+    except Exception:  # noqa: BLE001 — never block the diagram on a HeyReach hiccup
+        pass
+    leads = cache["leads"]
+    if leads is None:  # live unavailable and never seen — fall back to the local file
+        leads = 0
+        sp = DATA / "outreach" / "heyreach_state.json"
+        if sp.is_file():
+            try:
+                leads = len(json.loads(sp.read_text()).get("added", []))
+            except (ValueError, OSError):
+                pass
+    return {"campaign_id": cid, "campaign_name": cache["name"], "leads": leads}
 
 
 def linkedin_analytics_payload():
