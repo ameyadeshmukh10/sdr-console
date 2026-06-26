@@ -75,7 +75,7 @@ export default function PipelinePage() {
             <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} style={{ width: 'auto' }} />
             Auto-refresh
           </label>
-          <button className="ghost" onClick={poll}>↻ Now</button>
+          <button className="ghost sm" onClick={poll}>↻ Now</button>
         </div>
       </div>
 
@@ -83,7 +83,7 @@ export default function PipelinePage() {
 
       {!prog ? <Spinner label="Loading…" /> : (
         <>
-          <div className="panel" style={{ marginBottom: 20 }}>
+          <div className="panel feature" style={{ marginBottom: 20 }}>
             <div className="row between" style={{ marginBottom: 10 }}>
               <span className="section-h" style={{ margin: 0 }}>Batch progress</span>
               <span className="muted" style={{ fontSize: 12 }}>
@@ -91,8 +91,8 @@ export default function PipelinePage() {
                 {lastTick && ` · updated ${lastTick.toLocaleTimeString()}`}
               </span>
             </div>
-            <div style={{ background: 'var(--panel-2)', borderRadius: 8, height: 22, overflow: 'hidden', border: '1px solid var(--border)' }}>
-              <div style={{ width: `${pctDone}%`, height: '100%', background: 'var(--green)', transition: 'width .4s' }} />
+            <div className="progress">
+              <div className="progress-bar" style={{ width: `${pctDone}%` }} />
             </div>
             <div className="row" style={{ gap: 18, marginTop: 12 }}>
               <span><b>{num(done)}</b> / {num(total)} batches done ({pctDone}%)</span>
@@ -104,7 +104,7 @@ export default function PipelinePage() {
             <Stat label="Pending" value={num(cstat.pending || 0)} sub="awaiting generation" />
             <Stat label="Generated" value={num(cstat.generated || 0)} sub="ready to enroll" />
             <Stat label="Enrolled" value={num(cstat.enrolled || 0)} />
-            <Stat label="Skipped / failed" value={num((cstat.skipped || 0) + (cstat.failed || 0))} />
+            <Stat label="Skipped / failed" value={num((cstat.skipped || 0) + (cstat.failed || 0))} tone="warn" />
           </div>
 
           <div className="panel" style={{ marginBottom: 22 }}>
@@ -167,7 +167,7 @@ export default function PipelinePage() {
                         <td>{b.counts.pending || 0}</td>
                         <td>
                           {b.status === 'pending' && (
-                            <button onClick={() => startGenerate(b.batch_id)} disabled={!!jobId}>
+                            <button className="sm" onClick={() => startGenerate(b.batch_id)} disabled={!!jobId}>
                               Generate copy
                             </button>
                           )}
