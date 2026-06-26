@@ -13,9 +13,11 @@ export function Spinner({ label }) {
   )
 }
 
-export function Stat({ label, value, sub }) {
+// `accent` adds a brand-gradient left rule; `tone` ("good" | "warn" | "bad")
+// colors the value. Both are optional and default to the existing plain look.
+export function Stat({ label, value, sub, accent = false, tone }) {
   return (
-    <div className="stat">
+    <div className={'stat' + (accent ? ' accent' : '')} {...(tone ? { 'data-tone': tone } : {})}>
       <div className="label">{label}</div>
       <div className="value">{value}</div>
       {sub != null && <div className="sub">{sub}</div>}

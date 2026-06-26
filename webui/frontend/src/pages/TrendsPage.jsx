@@ -114,7 +114,7 @@ export default function TrendsPage() {
           <div className="grid stat-grid" style={{ marginBottom: 22 }}>
             <Stat label="Interested replies" value={num(s.total_replies)} sub={`${num(s.genuine_count)} genuine`} />
             <Stat label="Overall interested rate" value={pct(conv?.overall?.interested_rate_pct)}
-              sub={`${num(conv?.overall?.interested)} of ${num(conv?.overall?.contacted)}`} />
+              sub={`${num(conv?.overall?.interested)} of ${num(conv?.overall?.contacted)}`} accent />
             <Stat label="Avg winning email" value={`${s.winning_email_word_count?.avg ?? '—'}w`}
               sub={`${s.winning_email_word_count?.min}–${s.winning_email_word_count?.max} words`} />
             <Stat label="Meeting/demo accepts" value={num(s.by_reply_intent?.['Meeting/demo accept']?.count || 0)}

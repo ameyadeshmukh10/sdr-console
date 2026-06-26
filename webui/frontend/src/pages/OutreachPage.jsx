@@ -112,9 +112,9 @@ export default function OutreachPage() {
       </div>
 
       <div className="pager">
-        <button className="ghost" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>← Prev</button>
+        <button className="ghost sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>← Prev</button>
         <span className="muted">Page {page} / {totalPages}</span>
-        <button className="ghost" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>Next →</button>
+        <button className="ghost sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>Next →</button>
       </div>
 
       {openId && <OutreachDetail id={openId} onClose={() => setOpenId(null)} />}

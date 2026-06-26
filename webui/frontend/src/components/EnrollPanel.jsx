@@ -138,7 +138,7 @@ export default function EnrollPanel({ generatedReady, onChanged }) {
           <div className="drawer-backdrop" onClick={() => !busy && setConfirming(false)} />
           <div className="panel" style={{
             position: 'fixed', top: '30%', left: '50%', transform: 'translateX(-50%)',
-            zIndex: 50, width: 460, maxWidth: '92vw',
+            zIndex: 50, width: 460, maxWidth: '92vw', boxShadow: 'var(--shadow-md)',
           }}>
             <h2 style={{ marginTop: 0 }}>Confirm live enrollment</h2>
             <p className="muted">

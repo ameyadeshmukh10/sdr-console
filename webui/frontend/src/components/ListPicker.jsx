@@ -58,7 +58,7 @@ export default function ListPicker({ onSelect }) {
                     <td>{l.name}</td>
                     <td className="muted">{l.size ?? '—'}</td>
                     <td className="mono muted">{l.list_id}</td>
-                    <td><button className="ghost" onClick={() => onSelect(l)}>Select</button></td>
+                    <td><button className="ghost sm" onClick={() => onSelect(l)}>Select</button></td>
                   </tr>
                 ))}
               </tbody>

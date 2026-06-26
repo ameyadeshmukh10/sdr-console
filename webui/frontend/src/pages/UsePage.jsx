@@ -89,7 +89,7 @@ export default function UsePage() {
         )}
         {log && (
           <>
-            <button className="ghost" style={{ marginTop: 12 }} onClick={() => setShowLog((v) => !v)}>
+            <button className="ghost sm" style={{ marginTop: 12 }} onClick={() => setShowLog((v) => !v)}>
               {showLog ? 'Hide' : 'Show'} run log
             </button>
             {showLog && <div className="log">{log}</div>}
@@ -100,7 +100,7 @@ export default function UsePage() {
       {status && (
         <div className="grid stat-grid" style={{ marginBottom: 22 }}>
           <Stat label="Total contacts" value={num(status.total_contacts)} />
-          <Stat label="Enrolled" value={num(status.contacts_by_status.enrolled || 0)} />
+          <Stat label="Enrolled" value={num(status.contacts_by_status.enrolled || 0)} tone="good" />
           <Stat label="Pending" value={num(status.contacts_by_status.pending || 0)} />
           <Stat label="Batches done" value={num(status.batches_by_status.done || 0)}
             sub={`${status.batches_by_status.pending || 0} pending`} />

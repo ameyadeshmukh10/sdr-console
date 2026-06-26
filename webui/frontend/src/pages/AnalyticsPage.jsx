@@ -63,7 +63,7 @@ export default function AnalyticsPage() {
             <Stat label="Total leads" value={num(t.total_leads)} />
             <Stat label="Contacted" value={num(t.total_contacted)} />
             <Stat label="Replies" value={num(t.total_replies)} sub={`${pct(t.overall_reply_rate_pct)} reply rate`} />
-            <Stat label="Interested" value={num(t.total_interested)} sub={`${pct(t.overall_interested_rate_pct)} interested rate`} />
+            <Stat label="Interested" value={num(t.total_interested)} sub={`${pct(t.overall_interested_rate_pct)} interested rate`} accent />
           </div>
 
           {chartData.length > 0 && (
@@ -138,7 +138,7 @@ export default function AnalyticsPage() {
                 <Stat label="Leads in campaign" value={num(f.totalUsers)} sub={`${num(f.totalUsersFinished)} finished · ${num(active)} active`} />
                 <Stat label="Connections sent" value={num(s.connectionsSent)} sub={`${num(s.connectionsAccepted)} accepted · ${pct(rate(s.connectionsAccepted, s.connectionsSent))}`} />
                 <Stat label="Messages sent" value={num(s.messagesSent)} sub={`${num(s.totalMessageReplies)} replies · ${pct(rate(s.totalMessageReplies, s.messagesSent))}`} />
-                <Stat label="Interested (auto-tagged)" value={num(s.autoTaggedInterested)} sub={`${pct(rate(s.autoTaggedInterested, s.uniqueLeadsContacted))} of contacted`} />
+                <Stat label="Interested (auto-tagged)" value={num(s.autoTaggedInterested)} sub={`${pct(rate(s.autoTaggedInterested, s.uniqueLeadsContacted))} of contacted`} accent />
               </div>
               {(s.connectionsSent || 0) === 0 && (
                 <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
