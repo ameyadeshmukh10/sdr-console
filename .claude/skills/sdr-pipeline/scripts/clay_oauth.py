@@ -54,9 +54,16 @@ def mcp_url():
     return os.environ.get("CLAY_MCP_URL") or DEFAULT_MCP_URL
 
 
-def redirect_uri():
+def redirect_uri(override=None):
+    """The OAuth callback URL Clay redirects the browser back to.
+
+    Precedence: an explicit CLAY_OAUTH_REDIRECT env var (operator override, used
+    for local dev) wins; else the per-request `override` derived from the host the
+    console is actually served from (so a deployed app redirects back to itself,
+    not to localhost); else the localhost default as a last resort.
+    """
     _load_dotenv()
-    return os.environ.get("CLAY_OAUTH_REDIRECT") or DEFAULT_REDIRECT
+    return os.environ.get("CLAY_OAUTH_REDIRECT") or override or DEFAULT_REDIRECT
 
 
 class ClayAuthError(RuntimeError):
@@ -183,16 +190,27 @@ def _discover():
     raise ClayAuthError(f"could not discover OAuth metadata for {base}")
 
 
-def _register_client(meta, store):
-    """Dynamic client registration (RFC 7591) if we don't have a client_id yet."""
-    if store.get("client_id"):
+def _register_client(meta, store, want_redirect):
+    """Dynamic client registration (RFC 7591).
+
+    A registered client is bound to a fixed set of redirect_uris, so we must
+    (re)register whenever the redirect we're about to use isn't one the stored
+    client was registered for — otherwise the authorization server rejects the
+    authorize request with a redirect_uri mismatch. We register both the desired
+    redirect and the localhost default so one client covers prod + local dev.
+    """
+    registered = store.get("redirect_uris") or []
+    if store.get("client_id") and want_redirect in registered:
         return store["client_id"], store.get("client_secret")
     reg = meta.get("registration_endpoint")
     if not reg:
+        if store.get("client_id"):  # can't re-register; hope the existing client fits
+            return store["client_id"], store.get("client_secret")
         raise ClayAuthError("no registration_endpoint and no pre-set CLAY client_id")
+    redirect_uris = sorted({want_redirect, DEFAULT_REDIRECT})
     body = {
         "client_name": "SDR Console",
-        "redirect_uris": [redirect_uri()],
+        "redirect_uris": redirect_uris,
         "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"],
         "token_endpoint_auth_method": "none",  # public client + PKCE
@@ -205,6 +223,7 @@ def _register_client(meta, store):
         store["client_secret"] = res["client_secret"]
     if not store["client_id"]:
         raise ClayAuthError(f"client registration returned no client_id: {res}")
+    store["redirect_uris"] = redirect_uris
     return store["client_id"], store.get("client_secret")
 
 
@@ -224,24 +243,28 @@ def _new_pkce():
 # ---------------------------------------------------------------------------
 # public API
 # ---------------------------------------------------------------------------
-def start_authorization():
+def start_authorization(redirect_override=None):
     """Begin the auth-code+PKCE flow. Returns the authorize URL to open in a browser.
-    Persists the pending PKCE verifier + state + discovered endpoints."""
+    Persists the pending PKCE verifier + state + the exact redirect_uri used, so the
+    token exchange in handle_callback() can reuse it byte-for-byte (OAuth requires the
+    authorize and token redirect_uri to match)."""
     store = _load_store()
+    redirect = redirect_uri(redirect_override)
     meta = _discover()
-    client_id, _ = _register_client(meta, store)
+    client_id, _ = _register_client(meta, store, redirect)
     verifier, challenge = _new_pkce()
     state = secrets.token_urlsafe(24)
 
     store["meta"] = {"authorization_endpoint": meta["authorization_endpoint"],
                      "token_endpoint": meta["token_endpoint"]}
-    store["pending"] = {"state": state, "verifier": verifier, "created_at": time.time()}
+    store["pending"] = {"state": state, "verifier": verifier,
+                        "redirect_uri": redirect, "created_at": time.time()}
     _save_store(store)
 
     params = {
         "response_type": "code",
         "client_id": client_id,
-        "redirect_uri": redirect_uri(),
+        "redirect_uri": redirect,
         "code_challenge": challenge,
         "code_challenge_method": "S256",
         "state": state,
@@ -263,7 +286,7 @@ def handle_callback(code, state):
     form = {
         "grant_type": "authorization_code",
         "code": code,
-        "redirect_uri": redirect_uri(),
+        "redirect_uri": pending.get("redirect_uri") or redirect_uri(),
         "client_id": store["client_id"],
         "code_verifier": pending["verifier"],
     }

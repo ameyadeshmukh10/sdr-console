@@ -859,9 +859,10 @@ def do_clay_status():
         return {"ok": False, "status": "disconnected", "error": f"{type(e).__name__}: {e}"}
 
 
-def do_clay_oauth_start():
+def do_clay_oauth_start(redirect_uri=None):
     try:
-        return {"ok": True, "authorize_url": _clay_oauth().start_authorization()}
+        return {"ok": True,
+                "authorize_url": _clay_oauth().start_authorization(redirect_uri)}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
@@ -2055,6 +2056,18 @@ class Handler(BaseHTTPRequestHandler):
     def _error(self, code, msg):
         self._json({"ok": False, "error": msg}, code=code)
 
+    def _public_base(self):
+        """The scheme+host the browser used to reach us, honoring the reverse
+        proxy's X-Forwarded-* headers (Railway terminates TLS upstream, so the
+        socket is plain HTTP but the public URL is HTTPS). Returns e.g.
+        'https://sdr-console.up.railway.app' or 'http://localhost:8787', or None
+        if no host can be determined. Used to build the Clay OAuth redirect so it
+        always points back to wherever the console is actually served."""
+        h = self.headers
+        proto = (h.get("X-Forwarded-Proto") or "").split(",")[0].strip() or "http"
+        host = (h.get("X-Forwarded-Host") or h.get("Host") or "").split(",")[0].strip()
+        return f"{proto}://{host}" if host else None
+
     def _read_body(self):
         length = int(self.headers.get("Content-Length", 0) or 0)
         if not length:
@@ -2152,7 +2165,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/clay/status":
                 return self._json(do_clay_status())
             if path == "/api/clay/oauth/start":
-                return self._json(do_clay_oauth_start())
+                base = self._public_base()
+                redirect = f"{base}/api/clay/oauth/callback" if base else None
+                return self._json(do_clay_oauth_start(redirect))
             if path == "/api/clay/oauth/callback":
                 code = params.get("code", [None])[0]
                 state = params.get("state", [None])[0]

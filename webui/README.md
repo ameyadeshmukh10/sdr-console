@@ -135,11 +135,16 @@ ANTHROPIC_API_KEY=sk-ant-...           # required for generation + reply classif
 CLAUDE_MODEL=claude-opus-4-8           # model for generation + classification
 CLAUDE_SOURCING_MODEL=claude-haiku-4-5 # cheap model that drives Clay MCP enrichment
 CLAY_MCP_URL=https://api.clay.com/v3/mcp                 # Clay MCP endpoint (OAuth 2.1)
-CLAY_OAUTH_REDIRECT=http://localhost:8787/api/clay/oauth/callback
+# CLAY_OAUTH_REDIRECT=...                # optional; auto-derived from the request host when unset
 BISON_INTERESTED_TAG_ID=11             # the "Interested" tag applied on approval
 ```
 Clay tokens are **not** in `.env` — they live in the gitignored `data/outreach/clay_oauth.json`,
 populated by the one-time **Connect Clay** OAuth flow.
+
+The **Clay OAuth callback URL** is derived per-request from the host the console is
+served on (using the proxy's `X-Forwarded-Proto`/`X-Forwarded-Host`), so when the app
+is deployed Clay redirects back to the deployed URL — not `localhost`. Set
+`CLAY_OAUTH_REDIRECT` only to pin a fixed URL for local dev or non-standard setups.
 
 ### Network egress (running in a hosted/web environment)
 The backend makes **direct** HTTPS calls to these hosts — they must be reachable (allowlisted in
