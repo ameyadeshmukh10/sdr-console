@@ -60,7 +60,6 @@ export default function App() {
           <span className="who" title={email}>{email}</span>
           <button className="signout" onClick={logout}>Sign out</button>
         </div>
-        <div className="foot">Local MVP &middot; read-only<br />+ HubSpot ingest</div>
       </aside>
       <main className="main">
         <Routes>
