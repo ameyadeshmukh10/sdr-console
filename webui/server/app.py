@@ -880,11 +880,15 @@ def do_refresh():
 # into a structured preview / result. Live enrollment writes to Bison, so it is
 # gated behind an explicit confirm in the UI and a `confirm` flag here.
 # ----------------------------------------------------------------------------
-# matches: "  [dry] email [persona] -> campaign 10 (8 vars)"
-#          "  [skip] email [persona] -> campaign 10: <reason>"
+# matches: "  [dry] email [persona] -> bison campaign 14 (8 vars)"
+#          "  [dry] email [persona] -> bison campaign 14 (8 vars) +LinkedIn"
+#          "  [skip] email [persona] -> campaign 14: <reason>"
+# The optional "bison " word and the trailing " +LinkedIn" tag were added to the
+# dry-run output when HeyReach was wired into cmd_enroll; both are tolerated here
+# so the preview keeps parsing (older "-> campaign N" output still matches too).
 ENROLL_LINE = re.compile(
-    r"^\s*\[(dry|skip)\]\s+(\S+)\s+\[([^\]]+)\]\s+->\s+campaign\s+(\S+)"
-    r"(?:\s+\((\d+)\s+vars\))?(?::\s*(.*))?$")
+    r"^\s*\[(dry|skip)\]\s+(\S+)\s+\[([^\]]+)\]\s+->\s+(?:bison\s+)?campaign\s+(\S+)"
+    r"(?:\s+\((\d+)\s+vars\))?(?:\s*\+LinkedIn)?(?::\s*(.*))?$")
 # matches: "enroll (dry-run): {'enrolled': 0, ...}" / "enroll: {...}"
 ENROLL_COUNTS = re.compile(r"enroll(?:\s*\(dry-run\))?:\s*(\{.*\})")
 
