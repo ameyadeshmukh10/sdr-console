@@ -102,8 +102,8 @@ export default function PipelinePage() {
 
           <div className="grid stat-grid" style={{ marginBottom: 22 }}>
             <Stat label="Pending" value={num(cstat.pending || 0)} sub="awaiting generation" />
-            <Stat label="Generated" value={num(cstat.generated || 0)} sub="ready to enroll" />
-            <Stat label="Enrolled" value={num(cstat.enrolled || 0)} />
+            <Stat label="Generated" value={num(cstat.generated || 0)} sub="ready to enroll" accent />
+            <Stat label="Enrolled" value={num(cstat.enrolled || 0)} tone="good" />
             <Stat label="Skipped / failed" value={num((cstat.skipped || 0) + (cstat.failed || 0))} tone="warn" />
           </div>
 

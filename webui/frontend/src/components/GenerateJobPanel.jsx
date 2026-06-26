@@ -53,7 +53,7 @@ export default function GenerateJobPanel({ jobId, onDone }) {
           {running
             ? <span className="row" style={{ gap: 6 }}><span className="spinner" />running</span>
             : <span className="badge" style={{ color: job.status === 'done' ? 'var(--green)' : 'var(--amber)' }}>{job.status}</span>}
-          {running && <button className="ghost" onClick={() => api.generateCancel(jobId)}>Cancel</button>}
+          {running && <button className="ghost sm" onClick={() => api.generateCancel(jobId)}>Cancel</button>}
         </span>
       </div>
 

@@ -262,7 +262,7 @@ export default function RepliesPage() {
           <Stat label="Scanned" value={num(counts.scanned || 0)}
             sub={liCount > 0 ? `${num(counts.email_scanned || 0)} email · ${num(counts.linkedin_scanned || 0)} LinkedIn` : `last ${queue.lookback_days || 14}d`} />
           <Stat label="Possible interested" value={num(possible.length)} sub={`> ${Math.round(MIN_CONF * 100)}% conf · to review`} />
-          <Stat label="Interested" value={num(tagged.length)} sub="draft + send" />
+          <Stat label="Interested" value={num(tagged.length)} sub="draft + send" accent />
           <Stat label="Unsubscribed" value={num(counts.unsubscribed || 0)} sub="opt-outs, suppressed in Bison" />
         </div>
       )}

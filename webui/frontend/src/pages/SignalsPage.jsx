@@ -38,8 +38,8 @@ export default function SignalsPage() {
       <div className="grid stat-grid" style={{ marginBottom: 20 }}>
         <Stat label="Cached accounts" value={num(data?.count || 0)} />
         <Stat label="Fresh (<90d)" value={num(fresh)} sub="reused, no re-search" />
-        <Stat label="Real signal" value={num(recent)} />
-        <Stat label="Fallback (no signal)" value={num(signals.length - recent)} sub="product/GTM anchor" />
+        <Stat label="Real signal" value={num(recent)} tone="good" />
+        <Stat label="Fallback (no signal)" value={num(signals.length - recent)} sub="product/GTM anchor" tone="warn" />
       </div>
 
       {!data ? <Spinner label="Loading…" /> : signals.length === 0 ? (
@@ -65,7 +65,7 @@ export default function SignalsPage() {
                     </span>
                   </td>
                   <td>
-                    <button className="ghost" disabled={refreshing === s.domain} onClick={() => refresh(s.domain)}>
+                    <button className="ghost sm" disabled={refreshing === s.domain} onClick={() => refresh(s.domain)}>
                       {refreshing === s.domain ? <Spinner /> : '↻ Refresh'}
                     </button>
                   </td>

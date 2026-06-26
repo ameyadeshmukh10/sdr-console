@@ -98,7 +98,7 @@ export default function BatchJobPanel({ pendingBatches, variant, split, splitVal
                     </td>
                     <td>
                       {j.status === 'processing' &&
-                        <button className="ghost" onClick={() => cancel(j.job_id)}>Cancel</button>}
+                        <button className="ghost sm" onClick={() => cancel(j.job_id)}>Cancel</button>}
                     </td>
                   </tr>
                 )
