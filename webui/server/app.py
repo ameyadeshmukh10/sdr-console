@@ -2609,17 +2609,18 @@ def _kick_heyreach_drain():
 def _activity_autosync_loop():
     """Background auto-sync: periodically log new email activity to HubSpot. Best-effort
     and fully isolated — it shells out to the reconcile script and can never raise into,
-    block, or slow the request path. Cheap replies-only by default; the heavier outbound
-    sweep runs only when HUBSPOT_ACTIVITY_AUTOSYNC_FULL=1 (so a big backfill is opt-in and
-    not a surprise on server start — do the first backfill via the button/CLI with eyes on).
-    Disable entirely with HUBSPOT_ACTIVITY_AUTOSYNC=0.
+    block, or slow the request path. Every cycle logs replies (cheap); the heavier outbound
+    sweep (sent sequence emails) is included on every HUBSPOT_ACTIVITY_AUTOSYNC_FULL_EVERY-th
+    cycle. The outbound sweep is ON by default (HUBSPOT_ACTIVITY_AUTOSYNC_FULL=1) so sent
+    emails log without any extra configuration; set it to 0 to opt out (replies only).
+    Disable the whole loop with HUBSPOT_ACTIVITY_AUTOSYNC=0.
     """
     import os
     if (os.environ.get("HUBSPOT_ACTIVITY_AUTOSYNC", "1") or "1").strip().lower() in ("0", "false", "no"):
         print("[activity-sync] auto-sync disabled (HUBSPOT_ACTIVITY_AUTOSYNC=0)", flush=True)
         return
     interval = max(5, int(os.environ.get("HUBSPOT_ACTIVITY_AUTOSYNC_MINUTES", "60") or 60)) * 60
-    full_on = (os.environ.get("HUBSPOT_ACTIVITY_AUTOSYNC_FULL", "0") or "0").strip().lower() in ("1", "true", "yes")
+    full_on = (os.environ.get("HUBSPOT_ACTIVITY_AUTOSYNC_FULL", "1") or "1").strip().lower() in ("1", "true", "yes")
     full_every = max(1, int(os.environ.get("HUBSPOT_ACTIVITY_AUTOSYNC_FULL_EVERY", "12") or 12))
     time.sleep(120)  # let the server settle before the first run
     tick = 0
