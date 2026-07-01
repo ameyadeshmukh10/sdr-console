@@ -232,7 +232,7 @@ FULL_SWEEP_MARKER = "__full_sweep__"  # sentinel row; freshness tracks the last 
 # not incidental per-reply upserts (those would make a partial map look fresh and skip leads).
 
 
-def refresh_lead_map(conn, bison, email_to_cid, *, force, max_age_hours, log_fn):
+def refresh_lead_map(conn, bison, email_to_cid, *, hs, force, max_age_hours, log_fn):
     """(Re)build the Bison email->lead_id cache by paginating /api/leads. Refreshes only
     when forced or the last full sweep is stale, since it's ~300 paginated GETs."""
     row = conn.execute("SELECT updated_at FROM bison_lead_map WHERE email=?",
@@ -260,7 +260,46 @@ def refresh_lead_map(conn, bison, email_to_cid, *, force, max_age_hours, log_fn)
                  (FULL_SWEEP_MARKER, db.now()))
     conn.commit()
     log_fn(f"lead map: {cnt} Bison leads mapped")
+    resolve_unmatched_against_hubspot(conn, hs, log_fn=log_fn)
     return cnt
+
+
+def resolve_unmatched_against_hubspot(conn, hs, *, log_fn):
+    """Fill contact_id for lead-map rows the local contacts table couldn't resolve.
+
+    The pagination above only resolves contact_id for leads whose email is in our LOCAL
+    contacts table — but that table is a snapshot of the latest list pull (contacts.jsonl is
+    overwritten each pull), so leads from earlier batches drop out of it. Those rows keep a
+    NULL contact_id and run_outbound (WHERE contact_id IS NOT NULL) silently skips them, so
+    their sent emails never log. Resolve them directly against HubSpot by email — the same
+    live lookup the inbound/our_reply paths already use — so every emailed lead that is a real
+    HubSpot contact gets covered. COALESCE in upsert_lead_map means an already-resolved id is
+    never clobbered; once resolved a row is skipped here on future runs, so this shrinks to
+    nothing in steady state. ~1 search call per 100 unmatched, only on full sweeps."""
+    if hs is None:
+        return 0
+    unresolved = [dict(r) for r in conn.execute(
+        "SELECT email, lead_id FROM bison_lead_map "
+        "WHERE contact_id IS NULL AND email != ? AND coalesce(email,'') != ''",
+        (FULL_SWEEP_MARKER,))]
+    if not unresolved:
+        return 0
+    log_fn(f"lead map: resolving {len(unresolved)} unmatched leads against HubSpot…")
+    try:
+        found = hs.find_existing_email_ids([r["email"] for r in unresolved])
+    except HubSpotError as e:
+        log_fn(f"lead map: HubSpot resolve failed: {str(e)[:160]}")
+        return 0
+    resolved = 0
+    for r in unresolved:
+        cid = found.get((r["email"] or "").strip().lower())
+        if cid:
+            # pass the existing lead_id back so upsert_lead_map doesn't null it out
+            db.upsert_lead_map(conn, r["email"], r["lead_id"], cid)
+            resolved += 1
+    conn.commit()
+    log_fn(f"lead map: resolved {resolved}/{len(unresolved)} unmatched via HubSpot")
+    return resolved
 
 
 def run_outbound(conn, bison, logger, *, since_ms, settle_days, limit, lead_alias, log_fn):
@@ -464,7 +503,7 @@ def main():
     lead_cid = lead_to_cid_map(conn)  # whatever email->lead->contact mappings are cached
 
     if "outbound" in types:
-        refresh_lead_map(conn, bison, email_to_cid, force=args.refresh_leads,
+        refresh_lead_map(conn, bison, email_to_cid, hs=hs, force=args.refresh_leads,
                          max_age_hours=args.leads_max_age_hours, log_fn=log_fn)
         run_outbound(conn, bison, logger, since_ms=since_ms, settle_days=args.settle_days,
                      limit=args.limit, lead_alias=lead_alias, log_fn=log_fn)
