@@ -61,6 +61,7 @@ GENERATE_BATCH = SCRIPTS / "sdr-pipeline" / "scripts" / "generate_batch.py"
 HUBSPOT_LISTS = SCRIPTS / "sdr-pipeline" / "scripts" / "hubspot_lists.py"
 HUBSPOT_ACTIVITY_SYNC = SCRIPTS / "sdr-pipeline" / "scripts" / "hubspot_activity_sync.py"
 HEYREACH_ACTIVITY = SCRIPTS / "sdr-pipeline" / "scripts" / "heyreach_activity.py"
+LIFECYCLE_GUARD = SCRIPTS / "sdr-pipeline" / "scripts" / "lifecycle_guard.py"
 MAX_WEBHOOK_BODY = 1_048_576  # 1 MB cap on a webhook body (LinkedIn events are tiny) — DoS guard
 SOURCE_CONTACTS = SCRIPTS / "sdr-pipeline" / "scripts" / "source_contacts.py"
 CLAY_ENRICH = SCRIPTS / "sdr-pipeline" / "scripts" / "clay_enrich.py"
@@ -2653,6 +2654,48 @@ def _activity_autosync_loop():
         time.sleep(interval)
 
 
+def _lifecycle_guard_loop():
+    """Daily pre-send-window guard: stop outreach to any enrolled contact who has moved
+    to a gated HubSpot lifecycle stage (opportunity/customer). Best-effort and fully
+    isolated — it shells out to lifecycle_guard.py and can never raise into, block, or
+    slow the request path. Wakes once per day at LIFECYCLE_GUARD_HOUR:MINUTE in
+    LIFECYCLE_GUARD_TZ (set this a bit BEFORE Bison's send window). Disable the whole
+    loop with LIFECYCLE_GUARD=0.
+    """
+    import os
+    from datetime import datetime, timedelta
+    if (os.environ.get("LIFECYCLE_GUARD", "1") or "1").strip().lower() in ("0", "false", "no"):
+        print("[lifecycle-guard] disabled (LIFECYCLE_GUARD=0)", flush=True)
+        return
+    hour = int(os.environ.get("LIFECYCLE_GUARD_HOUR", "6") or 6)
+    minute = int(os.environ.get("LIFECYCLE_GUARD_MINUTE", "30") or 30)
+    tzname = os.environ.get("LIFECYCLE_GUARD_TZ", "America/New_York")
+    mode = os.environ.get("LIFECYCLE_GUARD_MODE", "unsubscribe")
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(tzname)
+    except Exception:  # noqa: BLE001 — tzdata missing → fall back to server-local time
+        tz = None
+        print(f"[lifecycle-guard] tz {tzname!r} unavailable; using server local time", flush=True)
+
+    def _seconds_until_next():
+        now = datetime.now(tz)
+        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if target <= now:
+            target += timedelta(days=1)
+        return max(60, (target - now).total_seconds())
+
+    print(f"[lifecycle-guard] armed for {hour:02d}:{minute:02d} {tzname} (mode={mode})", flush=True)
+    while True:
+        time.sleep(_seconds_until_next())
+        try:
+            res = run_script([str(LIFECYCLE_GUARD), "--once", "--json", "--mode", mode], timeout=3600)
+            lines = [ln for ln in (res.get("stdout") or "").splitlines() if ln.strip()]
+            print(f"[lifecycle-guard] {lines[-1] if lines else (res.get('stderr') or '')[:200]}", flush=True)
+        except Exception as e:  # noqa: BLE001 — the guard must never crash the server
+            print(f"[lifecycle-guard] error: {type(e).__name__}: {e}", flush=True)
+
+
 def main():
     import os
     # $PORT is injected by hosting platforms (Railway); --port overrides for local runs.
@@ -2688,6 +2731,7 @@ def main():
     if resumed:
         print(f"[webui] resumed {resumed} in-flight batch job(s)")
     threading.Thread(target=_activity_autosync_loop, daemon=True).start()
+    threading.Thread(target=_lifecycle_guard_loop, daemon=True).start()
     if Handler.static_dir:
         print(f"[webui] serving frontend from {Handler.static_dir}")
     else:

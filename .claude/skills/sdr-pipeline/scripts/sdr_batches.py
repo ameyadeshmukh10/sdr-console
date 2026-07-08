@@ -162,12 +162,60 @@ def cmd_setup_variant_campaigns(args):
     return 0
 
 
+def _gated_stages():
+    import os
+    raw = os.environ.get("GATED_LIFECYCLE_STAGES", "opportunity,customer")
+    return {s.strip().lower() for s in raw.split(",") if s.strip()}
+
+
+def filter_gated_lifecycle(conn, rows):
+    """Re-check HubSpot lifecycle stage for `rows` right before enrolling and drop any
+    contact now in a gated stage (opportunity/customer), marking them 'gated' so no
+    path re-enrolls them. This is the last-moment guard: a contact generated while a
+    'lead' but promoted before enroll never gets messaged.
+
+    Fails OPEN on a HubSpot error (returns rows unchanged with a loud warning) so a
+    transient CRM hiccup can't block all enrollment — the daily lifecycle_guard is the
+    backstop that catches anything that slips through.
+    """
+    gated = _gated_stages()
+    try:
+        from hubspot_client import HubSpotClient  # noqa: E402
+        hub = HubSpotClient()
+        recs = hub.batch_read_contacts([r["contact_id"] for r in rows], ["lifecyclestage"])
+        stage_by_id = {str(rec.get("id")): ((rec.get("properties") or {}).get("lifecyclestage") or "").strip().lower()
+                       for rec in recs}
+    except Exception as e:  # noqa: BLE001 — never block enrollment on a CRM read failure
+        print(f"  ! WARNING: lifecycle gate skipped (HubSpot read failed: {str(e)[:120]}). "
+              f"Relying on the daily lifecycle_guard as backstop.")
+        return rows
+    kept, gated_rows = [], []
+    for r in rows:
+        if stage_by_id.get(str(r["contact_id"]), "") in gated:
+            gated_rows.append(r)
+        else:
+            kept.append(r)
+    for r in gated_rows:
+        db.set_contact_status(conn, r["contact_id"], "gated",
+                              error=f"lifecycle={stage_by_id.get(str(r['contact_id']))}")
+    if gated_rows:
+        print(f"  lifecycle gate: skipped {len(gated_rows)} contact(s) now in {sorted(gated)} "
+              f"(marked 'gated'): {', '.join(r['email'] for r in gated_rows[:10])}"
+              + (" …" if len(gated_rows) > 10 else ""))
+    return kept
+
+
 def cmd_enroll(args):
     import os
     conn = db.connect()
     rows = db.contacts_by_status(conn, "generated")
     if not rows:
         print("nothing to enroll (no 'generated' contacts).")
+        return 0
+    # Last-moment lifecycle gate (opportunity/customer never get enrolled).
+    rows = filter_gated_lifecycle(conn, rows)
+    if not rows:
+        print("nothing to enroll (all 'generated' contacts were gated by lifecycle stage).")
         return 0
     # HeyReach (LinkedIn) is a single campaign for everyone; enabled when both env
     # vars are set. Bison is the email channel (per-variant campaigns).
