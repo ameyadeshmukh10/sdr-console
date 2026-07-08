@@ -60,6 +60,23 @@ Bison instance: **`send.everworker.ai`** (token in `.env`).
   pricing in cold steps) — `enroll.py` blocks failures.
 - All product claims trace to `ai-sdr/knowledge/offer.md`; no fabricated signals/stats.
 
+## Lifecycle gating & the daily guard (never message active deals / customers)
+Contacts in a **gated HubSpot lifecycle stage** (`GATED_LIFECYCLE_STAGES`, default
+`opportunity,customer`) must never be messaged. Three layers enforce this:
+- **Ingestion gate** — `hubspot_pull.py` reads `lifecyclestage` and drops gated
+  contacts (counted as `skipped["gated_lifecycle"]`). `source_contacts.py` gates the
+  already-in-HubSpot set on the Clay path.
+- **Enroll-time gate** — `sdr_batches.py cmd_enroll` re-checks lifecycle for every
+  `generated` contact right before enrolling and marks gated ones `gated` (fails open
+  on a HubSpot error, backstopped by the guard).
+- **Daily guard** — `scripts/lifecycle_guard.py` reconciles the enrolled set against
+  HubSpot and STOPS anyone who has advanced: per-lead Bison `unsubscribe` (default;
+  `--mode blacklist|remove`) + HeyReach stop if configured, marking them `gated`.
+  - Immediate/one-off: `lifecycle_guard.py --once [--dry-run] [--only-emails a@b,…]`.
+  - Scheduled: the webui runs `_lifecycle_guard_loop()` daily at
+    `LIFECYCLE_GUARD_HOUR:MINUTE` (`LIFECYCLE_GUARD_TZ`), before the send window;
+    disable with `LIFECYCLE_GUARD=0`. (Or run the same `--once` command from cron.)
+
 ## Batch mode (scale, parallel, low-token) — `/sdr-batches`
 For the full list, use the SQLite-backed batch system instead of hand-dispatching:
 - **Slash command:** `/sdr-batches [N|all] [enroll]` — batches contacts (25/batch), dispatches
