@@ -97,6 +97,28 @@ def main():
     #    the rest are net-new. BOTH end up in the list + pipeline, so the batch
     #    fully lands and re-running the same candidates is idempotent.
     existing_ids = hub.find_existing_email_ids([c["email"] for c in icp]) if hub else {}
+
+    # 3b. Lifecycle gate: drop contacts already in HubSpot who are in a gated stage
+    #     (opportunity/customer) — never (re)source an active deal. Net-new contacts
+    #     have no lifecycle yet, so this only affects the already-present set. Fails
+    #     open on a HubSpot read error.
+    if hub and existing_ids:
+        gated = {s.strip().lower() for s in
+                 os.environ.get("GATED_LIFECYCLE_STAGES", "opportunity,customer").split(",") if s.strip()}
+        try:
+            recs = hub.batch_read_contacts(list(existing_ids.values()), ["lifecyclestage"])
+            gated_ids = {str(r.get("id")) for r in recs
+                         if ((r.get("properties") or {}).get("lifecyclestage") or "").strip().lower() in gated}
+        except HubSpotError as e:
+            gated_ids = set()
+            print(f"  ! lifecycle gate skipped (HubSpot read failed: {str(e)[:120]})", file=sys.stderr)
+        if gated_ids:
+            before = len(icp)
+            icp = [c for c in icp if existing_ids.get(c["email"]) not in gated_ids]
+            stats["gated_lifecycle"] = before - len(icp)
+            print(f"  lifecycle gate: dropped {stats['gated_lifecycle']} already-in-HubSpot "
+                  f"contact(s) in {sorted(gated)}")
+
     net_new = [c for c in icp if c["email"] not in existing_ids]
     existing = [c for c in icp if c["email"] in existing_ids]
     stats["already_in_hubspot"] = len(existing)

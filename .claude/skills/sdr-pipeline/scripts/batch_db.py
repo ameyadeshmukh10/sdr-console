@@ -4,7 +4,9 @@ Durable, resumable queue so sub-agents can work batches of contacts in parallel.
 DB lives at data/outreach/pipeline.db. Generated copy stays in
 data/outreach/generated/<contact_id>.json (the DB tracks status + batching).
 
-Statuses: contacts = pending|generated|enrolled|failed ; batches = pending|in_progress|done
+Statuses: contacts = pending|generated|enrolled|failed|gated ; batches = pending|in_progress|done
+  ('gated' = skipped/stopped because the contact is in a gated HubSpot lifecycle
+   stage — opportunity/customer; set by the enroll-time gate and the daily guard.)
 """
 
 import sqlite3
