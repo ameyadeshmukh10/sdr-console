@@ -100,6 +100,25 @@ class HeyReachClient:
         return self._request("POST", "/campaign/AddLeadsToCampaignV2",
                              {"campaignId": int(campaign_id), "accountLeadPairs": account_lead_pairs})
 
+    def stop_lead_in_campaign(self, campaign_id, profile_url=None, lead_member_id=None):
+        """Stop one LinkedIn lead's remaining steps in a campaign — the per-lead
+        equivalent of Bison's unsubscribe (does NOT pause the whole campaign).
+
+        POST /campaign/StopLeadInCampaign with the campaign id plus a lead selector:
+        `profile_url` (the LinkedIn profileUrl we enrolled with) or `lead_member_id`.
+        NOTE: verify the exact field names against the current HeyReach public API
+        before relying on this in production — the endpoint/param names have changed
+        across HeyReach API revisions. Kept best-effort; callers catch HeyReachError.
+        """
+        body = {"campaignId": int(campaign_id)}
+        if lead_member_id is not None:
+            body["leadMemberId"] = lead_member_id
+        elif profile_url:
+            body["leadProfileUrl"] = profile_url
+        else:
+            raise HeyReachError("stop_lead_in_campaign needs profile_url or lead_member_id")
+        return self._request("POST", "/campaign/StopLeadInCampaign", body)
+
     # ---- LinkedIn sender accounts ---------------------------------------
     def list_accounts(self, offset=0, limit=100):
         """POST /li_account/GetAll — the LinkedIn sender accounts on the workspace.

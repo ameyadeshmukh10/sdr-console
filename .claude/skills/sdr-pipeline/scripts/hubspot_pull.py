@@ -26,6 +26,13 @@ TECH_HINTS = ("software", "saas", "technology", "tech", "information technology"
               "computer", "it services", "platform", "cloud", "ai", "data", "cyber", "dev")
 
 
+def gated_stages():
+    """HubSpot lifecycle stages we must never enroll (deal in progress / closed won).
+    Configurable via GATED_LIFECYCLE_STAGES; defaults to opportunity + customer."""
+    raw = os.environ.get("GATED_LIFECYCLE_STAGES", "opportunity,customer")
+    return {s.strip().lower() for s in raw.split(",") if s.strip()}
+
+
 def country_is_us(props):
     """Tri-state: True = US, False = explicitly non-US, None = unknown (no data)."""
     code = (props.get("hs_country_region_code") or "").strip().upper()
@@ -61,7 +68,8 @@ def main():
 
     linkedin_prop = os.environ.get("HUBSPOT_LINKEDIN_PROPERTY", "hs_linkedin_url")
     props = ["firstname", "lastname", "email", "jobtitle", "company",
-             "country", "hs_country_region_code", "industry", "website", "domain", linkedin_prop]
+             "country", "hs_country_region_code", "industry", "website", "domain",
+             "lifecyclestage", linkedin_prop]
 
     try:
         client = HubSpotClient()
@@ -73,9 +81,10 @@ def main():
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     rows = []
-    skipped = {"non_icp": 0, "non_us": 0, "non_tech": 0, "no_email": 0}
+    skipped = {"non_icp": 0, "non_us": 0, "non_tech": 0, "no_email": 0, "gated_lifecycle": 0}
     kept_unknown_country = 0
     has_industry = any((c.get("properties", {}).get("industry")) for c in contacts)
+    gated = gated_stages()
 
     for c in contacts:
         p = c.get("properties", {})
@@ -86,6 +95,10 @@ def main():
             continue
         if not p.get("email"):
             skipped["no_email"] += 1
+            continue
+        # Lifecycle gate: never enroll a contact already in an active deal / closed won.
+        if (p.get("lifecyclestage") or "").strip().lower() in gated:
+            skipped["gated_lifecycle"] += 1
             continue
         # Geo: drop ONLY explicitly non-US; keep US and unknown-country (trust the list).
         us = country_is_us(p)
