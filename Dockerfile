@@ -1,10 +1,11 @@
 # syntax=docker/dockerfile:1
 #
 # SDR Console — single-image deploy (Railway).
-# The stack is a Vite/React frontend + a Python-stdlib backend that serves BOTH the
-# JSON API and the built SPA from one process. No pip dependencies (stdlib only), so
-# the runtime stage just needs python3. The committed data/ ships as a first-boot seed
-# for the Railway Volume mounted at /app/data (see docker-entrypoint.sh).
+# The stack is a Vite/React frontend + a Python backend that serves BOTH the
+# JSON API and the built SPA from one process. The backend is stdlib except for
+# requirements.txt (pymongo, for the AI SDR attribution store). The committed data/
+# ships as a first-boot seed for the Railway Volume mounted at /app/data (see
+# docker-entrypoint.sh).
 
 # ---- Stage 1: build the Vite/React frontend -> webui/frontend/dist ----
 FROM node:20-slim AS frontend
@@ -19,6 +20,9 @@ RUN npm run build
 FROM python:3.12-slim AS runtime
 ENV PYTHONUNBUFFERED=1
 WORKDIR /app
+# Python deps first so the pip layer caches unless requirements.txt changes.
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 # Backend + .claude pipeline scripts + committed data + docs (see .dockerignore for exclusions).
 COPY . .
 # Bring in the built frontend from stage 1 (dist is gitignored, so it isn't in the context).

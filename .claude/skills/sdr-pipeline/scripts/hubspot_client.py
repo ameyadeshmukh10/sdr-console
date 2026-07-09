@@ -405,3 +405,72 @@ class HubSpotClient:
             if (o.get("email") or "").lower() == e:
                 return str(o.get("id"))
         return None
+
+    # ---- generic search / associations / batch ops -----------------------
+    def search_page(self, object_type, *, filters, properties, after=None,
+                    sorts=None, limit=100):
+        """One page of POST /crm/v3/objects/{type}/search.
+
+        filters    : list of filter dicts (single AND filterGroup).
+        properties : property names returned on each hit (no per-object re-fetch).
+        Returns (results, next_after, total). Search caps at 10,000 results per
+        query — callers needing more must re-window the filters (e.g. by
+        hs_timestamp GT <last seen>) and paginate again.
+        """
+        body = {"filterGroups": [{"filters": list(filters)}],
+                "properties": list(properties), "limit": int(limit)}
+        if sorts:
+            body["sorts"] = sorts
+        if after:
+            body["after"] = after
+        payload = self._request("POST", f"/crm/v3/objects/{object_type}/search", body=body)
+        next_after = (payload.get("paging") or {}).get("next", {}).get("after")
+        return payload.get("results", []), next_after, payload.get("total")
+
+    def batch_read_associations(self, from_type, to_type, ids):
+        """Map {from_id: [to_ids]} via POST /crm/v4/associations/{from}/{to}/batch/read
+        (chunks of 100). Ids with no associations are absent from the map."""
+        ids = [str(i) for i in ids]
+        out = {}
+        for i in range(0, len(ids), 100):
+            payload = self._request(
+                "POST", f"/crm/v4/associations/{from_type}/{to_type}/batch/read",
+                body={"inputs": [{"id": x} for x in ids[i:i + 100]]},
+            )
+            for r in payload.get("results", []):
+                frm = str((r.get("from") or {}).get("id"))
+                bucket = out.setdefault(frm, [])
+                for t in r.get("to", []):
+                    tid = t.get("toObjectId") if isinstance(t, dict) else t
+                    if tid is not None:
+                        bucket.append(str(tid))
+        return out
+
+    def batch_read_objects(self, object_type, ids, properties):
+        """Read properties for ids of any CRM object type (chunks of 100)."""
+        ids = [str(i) for i in ids]
+        out = []
+        for i in range(0, len(ids), 100):
+            payload = self._request(
+                "POST", f"/crm/v3/objects/{object_type}/batch/read",
+                body={"inputs": [{"id": x} for x in ids[i:i + 100]],
+                      "properties": list(properties)},
+            )
+            out.extend(payload.get("results", []))
+        return out
+
+    def batch_update(self, object_type, updates):
+        """Batch property updates (chunks of 100). `updates` items are
+        {"id": <record id>, "properties": {...}}. Returns the count submitted."""
+        n = 0
+        for i in range(0, len(updates), 100):
+            chunk = updates[i:i + 100]
+            self._request("POST", f"/crm/v3/objects/{object_type}/batch/update",
+                          body={"inputs": chunk})
+            n += len(chunk)
+        return n
+
+    def get_property(self, object_type, name):
+        """Property definition (GET /crm/v3/properties/{type}/{name}) — used for
+        enumeration option -> label maps (deal stage, owner, created-by)."""
+        return self._request("GET", f"/crm/v3/properties/{object_type}/{name}")
