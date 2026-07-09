@@ -61,6 +61,7 @@ GENERATE_BATCH = SCRIPTS / "sdr-pipeline" / "scripts" / "generate_batch.py"
 HUBSPOT_LISTS = SCRIPTS / "sdr-pipeline" / "scripts" / "hubspot_lists.py"
 HUBSPOT_ACTIVITY_SYNC = SCRIPTS / "sdr-pipeline" / "scripts" / "hubspot_activity_sync.py"
 HEYREACH_ACTIVITY = SCRIPTS / "sdr-pipeline" / "scripts" / "heyreach_activity.py"
+AISDR_SYNC = SCRIPTS / "sdr-pipeline" / "scripts" / "aisdr_attribution_sync.py"
 MAX_WEBHOOK_BODY = 1_048_576  # 1 MB cap on a webhook body (LinkedIn events are tiny) — DoS guard
 SOURCE_CONTACTS = SCRIPTS / "sdr-pipeline" / "scripts" / "source_contacts.py"
 CLAY_ENRICH = SCRIPTS / "sdr-pipeline" / "scripts" / "clay_enrich.py"
@@ -85,6 +86,7 @@ BATCH_JOBS_DIR = DATA / "outreach" / "batch-jobs"
 sys.path.insert(0, str(PIPELINE_SCRIPTS))
 import batch_db as pipeline_db        # noqa: E402
 import heyreach_activity              # noqa: E402
+import mongo_store                    # noqa: E402  (lazy pymongo — safe without it)
 
 PERSONA_ORDER = ["sales-leadership", "revops", "partnerships", "sdr-bdr"]
 PERSONA_ENV = {
@@ -937,6 +939,80 @@ def hubspot_activity_status_payload():
         return {"available": False, "logged": 0, "failed": 0, "by_type": {}}
     finally:
         conn.close()
+
+
+# ----------------------------------------------------------------------------
+# AI SDR deal attribution (nightly HubSpot -> MongoDB sync). Reads are in-process
+# via mongo_store; the sync itself shells out to aisdr_attribution_sync.py in a
+# background thread. Everything degrades cleanly when MONGO_URL isn't wired yet.
+# ----------------------------------------------------------------------------
+_AISDR_SYNC_LOCK = threading.Lock()
+_AISDR_SYNC_STATE = {"started_at": None, "last_result": None}
+
+
+def aisdr_analytics_payload():
+    """Aggregates for the Analytics tiles. Never raises: unconfigured -> a
+    {"configured": false} hint, unreachable -> {"configured": true, "error": ...}
+    (same degradation contract as linkedin_analytics_payload)."""
+    if not mongo_store.mongo_configured():
+        return {"configured": False}
+    try:
+        return mongo_store.aisdr_analytics(mongo_store.get_db())
+    except Exception as e:  # noqa: BLE001 — tiles show the error, page keeps working
+        return {"configured": True, "error": f"{type(e).__name__}: {e}"[:200]}
+
+
+def aisdr_sync_status_payload():
+    """Sync-run state for the UI: is one running now + the last run's summary."""
+    out = {"configured": mongo_store.mongo_configured(),
+           "running": _AISDR_SYNC_LOCK.locked(),
+           "started_at": _AISDR_SYNC_STATE["started_at"],
+           "last_result": _AISDR_SYNC_STATE["last_result"]}
+    if out["configured"]:
+        try:
+            out.update(mongo_store.get_sync_state(mongo_store.get_db()) or {})
+        except Exception as e:  # noqa: BLE001
+            out["error"] = f"{type(e).__name__}: {e}"[:200]
+    return out
+
+
+def do_aisdr_sync(full=False, dry_run=False):
+    """Kick the attribution sync in a background thread (the seed run takes a couple
+    of minutes — too long for a request). 409 when one is already running. Returns
+    (payload, http_code)."""
+    if not mongo_store.mongo_configured():
+        return ({"ok": False, "error": "MONGO_URL is not set — connect the Railway "
+                                       "MongoDB service to sdr-console first"}, 400)
+    if not _AISDR_SYNC_LOCK.acquire(blocking=False):
+        return ({"ok": False, "error": "a sync is already running",
+                 "started_at": _AISDR_SYNC_STATE["started_at"]}, 409)
+
+    args = [str(AISDR_SYNC), "--json"]
+    if full:
+        args.append("--full")
+    if dry_run:
+        args.append("--dry-run")
+
+    def _run():
+        try:
+            res = run_script(args, timeout=1800)
+            lines = [ln for ln in (res.get("stdout") or "").splitlines() if ln.strip()]
+            summary = lines[-1] if lines else (res.get("stderr") or "")[:300]
+            _AISDR_SYNC_STATE["last_result"] = summary[:500]
+            print(f"[aisdr-sync] done: {summary}", flush=True)
+        except Exception as e:  # noqa: BLE001 — never leak into the server
+            _AISDR_SYNC_STATE["last_result"] = f"{type(e).__name__}: {e}"[:500]
+            print(f"[aisdr-sync] error: {type(e).__name__}: {e}", flush=True)
+        finally:
+            _AISDR_SYNC_LOCK.release()
+
+    _AISDR_SYNC_STATE["started_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    try:
+        threading.Thread(target=_run, daemon=True).start()
+    except Exception as e:  # noqa: BLE001 — don't leak the lock if the thread can't start
+        _AISDR_SYNC_LOCK.release()
+        return ({"ok": False, "error": f"could not start sync thread: {e}"}, 500)
+    return ({"ok": True, "started": True, "full": full, "dry_run": dry_run}, 202)
 
 
 def heyreach_activity_status_payload():
@@ -2258,6 +2334,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(analytics_payload())
             if path == "/api/analytics/linkedin":
                 return self._json(linkedin_analytics_payload())
+            if path == "/api/analytics/aisdr":
+                return self._json(aisdr_analytics_payload())
+            if path == "/api/hubspot/aisdr/status":
+                return self._json(aisdr_sync_status_payload())
             if path == "/api/progress":
                 return self._json(progress_payload())
             if path == "/api/trends":
@@ -2460,6 +2540,11 @@ class Handler(BaseHTTPRequestHandler):
                     replies_only=bool(body.get("replies_only", False)),
                     refresh_leads=bool(body.get("refresh_leads", False)),
                 ))
+            if path == "/api/hubspot/aisdr/sync":
+                body = self._read_body()
+                payload, code = do_aisdr_sync(full=bool(body.get("full")),
+                                              dry_run=bool(body.get("dry_run")))
+                return self._json(payload, code=code)
             if path == "/api/heyreach/webhook":
                 return self._heyreach_webhook(parsed)
             if path == "/api/reindex":
@@ -2653,6 +2738,35 @@ def _activity_autosync_loop():
         time.sleep(interval)
 
 
+def _aisdr_sync_loop():
+    """Nightly AI SDR deal-attribution sync at AISDR_SYNC_HOUR (default 0 = midnight)
+    US Eastern time. DST-safe: each iteration recomputes the next wall-clock target
+    with zoneinfo instead of adding a fixed 24h. The first run against an empty
+    MongoDB is the seed; later runs are incremental (the script keeps a watermark).
+    Disable with AISDR_SYNC_ENABLED=0; requires MONGO_URL (Railway MongoDB service)."""
+    import os
+    from datetime import datetime, time as dtime, timedelta
+    from zoneinfo import ZoneInfo
+    if (os.environ.get("AISDR_SYNC_ENABLED", "1") or "1").strip().lower() in ("0", "false", "no"):
+        print("[aisdr-sync] nightly sync disabled (AISDR_SYNC_ENABLED=0)", flush=True)
+        return
+    if not mongo_store.mongo_configured():
+        print("[aisdr-sync] MONGO_URL not set — nightly sync disabled "
+              "(connect the Railway MongoDB service to enable)", flush=True)
+        return
+    hour = min(23, max(0, int(os.environ.get("AISDR_SYNC_HOUR", "0") or 0)))
+    tz = ZoneInfo("America/New_York")
+    print(f"[aisdr-sync] nightly sync enabled at {hour:02d}:00 America/New_York", flush=True)
+    while True:
+        now = datetime.now(tz)
+        target_date = now.date() if now.time() < dtime(hour) else now.date() + timedelta(days=1)
+        target = datetime.combine(target_date, dtime(hour), tzinfo=tz)
+        time.sleep(max(60, (target - now).total_seconds()))
+        payload, code = do_aisdr_sync()
+        print(f"[aisdr-sync] nightly trigger -> {code} {payload}", flush=True)
+        time.sleep(120)  # step past the target minute before recomputing tomorrow's
+
+
 def main():
     import os
     # $PORT is injected by hosting platforms (Railway); --port overrides for local runs.
@@ -2688,6 +2802,7 @@ def main():
     if resumed:
         print(f"[webui] resumed {resumed} in-flight batch job(s)")
     threading.Thread(target=_activity_autosync_loop, daemon=True).start()
+    threading.Thread(target=_aisdr_sync_loop, daemon=True).start()
     if Handler.static_dir:
         print(f"[webui] serving frontend from {Handler.static_dir}")
     else:

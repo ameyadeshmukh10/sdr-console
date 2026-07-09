@@ -1,0 +1,3 @@
+# Backend Python dependencies (the server is otherwise stdlib-only).
+# pymongo: AI SDR deal-attribution store (Railway MongoDB service, MONGO_URL).
+pymongo==4.13.2

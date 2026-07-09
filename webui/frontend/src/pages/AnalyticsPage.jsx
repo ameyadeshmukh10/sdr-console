@@ -9,17 +9,53 @@ import { BRAND, TOOLTIP_STYLE } from '../theme.js'
 // Pillar 3 — Analytics: campaign performance from cached stats, refreshable live.
 const LINKEDIN_BLUE = '#0a66c2'
 
+// Deal amounts are portal-currency; the console formats them as USD.
+const usd = (v) => (v == null ? '—' : Number(v).toLocaleString('en-US', {
+  style: 'currency', currency: 'USD', maximumFractionDigits: 0,
+}))
+
 export default function AnalyticsPage() {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
   const [li, setLi] = useState(null)   // HeyReach LinkedIn analytics
+  const [aisdr, setAisdr] = useState(null)  // AI SDR deal attribution (MongoDB)
+  const [syncMsg, setSyncMsg] = useState(null)
 
   function load() {
     api.analytics().then((d) => { setData(d); setError(null) }).catch((e) => setError(e.message))
   }
+  function loadAisdr() {
+    api.aisdrAnalytics().then(setAisdr).catch(() => setAisdr({ configured: true, error: 'unreachable' }))
+  }
   useEffect(() => { load() }, [])
   useEffect(() => { api.linkedinAnalytics().then(setLi).catch(() => setLi({ error: 'unreachable' })) }, [])
+  useEffect(() => { loadAisdr() }, [])
+
+  // Kick the HubSpot -> MongoDB attribution sync, then poll until it finishes
+  // (the seed run takes a couple of minutes) and refresh the tiles.
+  async function syncAisdr() {
+    setSyncMsg('Starting sync…')
+    try {
+      await api.aisdrSync()
+    } catch (e) {
+      setSyncMsg(e.message === '409' ? 'A sync is already running — hang tight.' : `Sync failed to start: ${e.message}`)
+      return
+    }
+    setSyncMsg('Sync running — pulling emails, deals and contacts from HubSpot…')
+    for (let i = 0; i < 90; i++) {           // up to ~7.5 min
+      await new Promise((r) => setTimeout(r, 5000))
+      try {
+        const s = await api.aisdrSyncStatus()
+        if (!s.running) {
+          setSyncMsg(s.last_run_ok === false ? `Sync finished with an error: ${s.last_error || 'unknown'}` : 'Sync complete.')
+          loadAisdr()
+          return
+        }
+      } catch { /* transient — keep polling */ }
+    }
+    setSyncMsg('Sync is still running — refresh the page later.')
+  }
 
   async function refresh() {
     setRefreshing(true); setError(null)
@@ -56,6 +92,42 @@ export default function AnalyticsPage() {
 
       <div className="banner info">Snapshot fetched: <b>{fetchedWhen}</b></div>
       <ErrorBanner error={error} />
+
+      {/* AI SDR deal attribution — nightly HubSpot -> MongoDB sync. Rendered above
+          the Bison block so it works regardless of email-stats state. */}
+      <div className="row between" style={{ marginBottom: 8 }}>
+        <div className="section-h" style={{ margin: 0 }}>AI SDR pipeline</div>
+        {aisdr?.configured !== false && (
+          <button onClick={syncAisdr} disabled={syncMsg?.includes('running')}>
+            ⇄ Sync attribution
+          </button>
+        )}
+      </div>
+      {syncMsg && <div className="banner info">{syncMsg}</div>}
+      <div className="grid stat-grid" style={{ marginBottom: 24 }}>
+        <Stat
+          accent
+          label="Deals created by AI SDR"
+          value={aisdr?.configured === false || aisdr?.error ? '—' : num(aisdr?.deals_created)}
+          sub={aisdr?.configured === false
+            ? 'Set MONGO_URL to enable deal attribution'
+            : aisdr?.error
+              ? `Attribution store unreachable: ${aisdr.error}`
+              : `${num(aisdr?.contacts_emailed)} contacts emailed · ${num(aisdr?.emails_logged)} emails logged`}
+        />
+        <Stat
+          accent
+          label="Total pipeline"
+          value={aisdr?.configured === false || aisdr?.error ? '—' : usd(aisdr?.total_pipeline)}
+          sub={aisdr?.configured === false
+            ? 'HubSpot deal attribution not configured'
+            : aisdr?.last_error
+              ? `Last sync error: ${aisdr.last_error}`
+              : aisdr?.last_sync_at
+                ? `Includes closed lost · synced ${new Date(aisdr.last_sync_at).toLocaleString()}`
+                : 'No sync has run yet — click Sync attribution'}
+        />
+      </div>
 
       {!data ? <Spinner label="Loading…" /> : (
         <>
