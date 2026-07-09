@@ -16,6 +16,7 @@ Repo: <https://github.com/ameyadeshmukh10/sdr-console> (private)
 | `webui/` | Local web console (React + Vite frontend, zero-dependency Python stdlib backend). See [`webui/README.md`](webui/README.md). |
 | `data/` | A real pipeline snapshot: ICP contacts, 2,000+ generated outreach sequences, interested-reply threads + analysis, campaign stats, and the SQLite pipeline DB. |
 | `USAGE.md` | How to run the pipeline scripts from the CLI. |
+| `CLAUDE.md` | Project context for Claude sessions: architecture, Railway deployment topology, MongoDB attribution store, operational gotchas. |
 | `openapi.json` | Email Bison API reference. |
 
 ## Quick start
@@ -35,8 +36,16 @@ first run — no pipeline run required to explore it.
 
 **Use** (ingest a HubSpot list) · **Pipeline** (live batch progress + enroll with a dry-run
 gate) · **Orchestration** (the agent→campaign diagram) · **Analytics** (campaign reply /
-interested rates) · **Trends** (what's working across interested replies) · **Outreach**
-(browse every generated sequence by persona / CTA / signal / status).
+interested rates + AI SDR deal attribution: deals created + total pipeline, synced nightly
+from HubSpot into MongoDB) · **Trends** (what's working across interested replies) ·
+**Outreach** (browse every generated sequence by persona / CTA / signal / status).
+
+## Deployment
+
+Deployed on **Railway** as a single service (Docker; deploys on push to `main`), with a
+Railway Volume at `/app/data` (live pipeline data — the committed `data/` is only a
+first-boot seed) and a MongoDB service (`MONGO_URL`) backing the AI SDR deal-attribution
+analytics. See `CLAUDE.md` for the full topology.
 
 ## Running the pipeline yourself
 
