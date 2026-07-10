@@ -1,0 +1,18 @@
+/* Deck-export-only font declarations.
+ *
+ * The live app loads Gilroy from /public/fonts via absolute URLs in index.css,
+ * which only resolve behind a web server. For the standalone single-file deck
+ * (opened via file://), those absolute URLs can't load. This file re-declares
+ * the same Gilroy faces from a Vite-processed path so vite-plugin-singlefile
+ * inlines them as base64 data URIs — making the exported .html fully offline.
+ *
+ * Imported ONLY by src/deck-main.tsx (the export entry), AFTER index.css, so
+ * these rules override the absolute-path ones for the export build. The live
+ * site never imports this file and is completely unaffected. */
+@font-face { font-family: 'Gilroy'; src: url('./assets/fonts/Gilroy-Light.ttf') format('truetype'); font-weight: 300; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Gilroy'; src: url('./assets/fonts/Gilroy-Regular.ttf') format('truetype'); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Gilroy'; src: url('./assets/fonts/Gilroy-Medium.ttf') format('truetype'); font-weight: 500; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Gilroy'; src: url('./assets/fonts/Gilroy-SemiBold.ttf') format('truetype'); font-weight: 600; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Gilroy'; src: url('./assets/fonts/Gilroy-Bold.ttf') format('truetype'); font-weight: 700; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Gilroy'; src: url('./assets/fonts/Gilroy-Black.ttf') format('truetype'); font-weight: 800; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Gilroy'; src: url('./assets/fonts/Gilroy-Heavy.ttf') format('truetype'); font-weight: 900; font-style: normal; font-display: swap; }

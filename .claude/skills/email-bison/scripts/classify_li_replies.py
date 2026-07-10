@@ -78,9 +78,9 @@ def sent_messages(conv):
     for m in conv.get("messages") or []:
         if m.get("sender") == "ME":
             out.append({"subject": m.get("subject"), "date": m.get("createdAt"),
-                        "text": (m.get("body") or "")[:1500]})
+                        "text": (m.get("body") or "")[:10000]})
     out.sort(key=lambda x: x.get("date") or "", reverse=True)
-    return out[:5]
+    return out[:10]
 
 
 def build_item(conv, cls):
@@ -105,7 +105,7 @@ def build_item(conv, cls):
         "company": cp.get("companyName"),
         "subject": None,                                   # LinkedIn DMs have no subject
         "date_received": conv.get("lastMessageAt"),
-        "text_body": inbound_text(conv)[:1500],
+        "text_body": inbound_text(conv)[:10000],
         "sending_email": sender_display(conv),             # the LinkedIn sender account
         "sent_emails": sent_messages(conv),                # outbound LI messages we sent
         "enriched": True,

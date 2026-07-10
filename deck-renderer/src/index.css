@@ -1,0 +1,240 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Prevent layout shift when Radix Dialog locks body scroll.
+   Radix removes the scrollbar and adds padding-right on <body>
+   equal to the scrollbar width to keep page content from shifting.
+   We mirror that compensation on the fixed navbar so it doesn't
+   widen, and leave body content alone so it also stays put. */
+nav.fixed {
+  padding-right: var(--removed-body-scroll-bar-size, 0px);
+}
+
+@font-face { font-family: 'Gilroy'; src: url('/fonts/Gilroy-Light.ttf') format('truetype'); font-weight: 300; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Gilroy'; src: url('/fonts/Gilroy-Regular.ttf') format('truetype'); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Gilroy'; src: url('/fonts/Gilroy-Medium.ttf') format('truetype'); font-weight: 500; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Gilroy'; src: url('/fonts/Gilroy-SemiBold.ttf') format('truetype'); font-weight: 600; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Gilroy'; src: url('/fonts/Gilroy-Bold.ttf') format('truetype'); font-weight: 700; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Gilroy'; src: url('/fonts/Gilroy-Black.ttf') format('truetype'); font-weight: 800; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Gilroy'; src: url('/fonts/Gilroy-Heavy.ttf') format('truetype'); font-weight: 900; font-style: normal; font-display: swap; }
+
+@layer base {
+  :root {
+    --background: 60 10% 98%;
+    --foreground: 240 10% 6%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 6%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 6%;
+
+    --primary: 240 10% 6%;
+    --primary-foreground: 60 10% 98%;
+
+    --secondary: 60 6% 94%;
+    --secondary-foreground: 240 10% 6%;
+
+    --muted: 60 6% 94%;
+    --muted-foreground: 240 5% 46%;
+
+    --accent: 164 60% 32%;
+    --accent-foreground: 0 0% 100%;
+    --accent-light: 160 99% 66%;
+
+    --destructive: 349 100% 53%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 60 6% 90%;
+    --input: 60 6% 90%;
+    --ring: 164 60% 32%;
+
+    --radius: 0.75rem;
+
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+
+    /* Glass tokens */
+    --glass-bg: 0 0% 100% / 0.6;
+    --glass-border: 0 0% 100% / 0.3;
+    --glass-blur: 20px;
+
+    /* Section color blocks */
+    --section-dark: 240 10% 6%;
+    --section-dark-foreground: 60 10% 96%;
+    --section-warm: 45 20% 96%;
+    --section-cool: 210 20% 97%;
+  }
+
+  .dark {
+    --background: 240 10% 4%;
+    --foreground: 60 10% 96%;
+
+    --card: 240 10% 7%;
+    --card-foreground: 60 10% 96%;
+
+    --popover: 240 10% 7%;
+    --popover-foreground: 60 10% 96%;
+
+    --primary: 60 10% 96%;
+    --primary-foreground: 240 10% 6%;
+
+    --secondary: 240 6% 12%;
+    --secondary-foreground: 60 10% 96%;
+
+    --muted: 240 6% 12%;
+    --muted-foreground: 240 5% 58%;
+
+    --accent: 164 60% 32%;
+    --accent-foreground: 0 0% 100%;
+    --accent-light: 160 99% 66%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 240 6% 14%;
+    --input: 240 6% 14%;
+    --ring: 164 60% 32%;
+
+    --glass-bg: 240 10% 8% / 0.5;
+    --glass-border: 240 10% 20% / 0.3;
+
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Gilroy', system-ui, -apple-system, sans-serif;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Gilroy', system-ui, -apple-system, sans-serif;
+  }
+}
+
+@layer components {
+  .glass {
+    background: hsla(var(--glass-bg));
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid hsla(var(--glass-border));
+  }
+
+  .glass-strong {
+    background: hsla(0 0% 100% / 0.75);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    border: 1px solid hsla(0 0% 100% / 0.4);
+  }
+
+  .glass-subtle {
+    background: hsla(0 0% 100% / 0.4);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid hsla(0 0% 100% / 0.2);
+  }
+
+  .section-dark {
+    background: hsl(var(--section-dark));
+    color: hsl(var(--section-dark-foreground));
+  }
+
+  .gradient-orb {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: 0.4;
+    pointer-events: none;
+  }
+
+  .hero-gradient-text {
+    background: linear-gradient(90deg, #1C826E, #33B690);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .gradient-mesh {
+    background:
+      radial-gradient(ellipse 60% 50% at 20% 30%, hsla(164 60% 32% / 0.08) 0%, transparent 70%),
+      radial-gradient(ellipse 50% 60% at 80% 70%, hsla(210 60% 50% / 0.06) 0%, transparent 70%),
+      radial-gradient(ellipse 70% 40% at 50% 10%, hsla(45 60% 60% / 0.05) 0%, transparent 70%);
+  }
+}
+
+/* ===== Deck (presentation) motion ===== */
+/* Continuous energy flowing through a pipeline connector, left -> right. */
+@keyframes deck-flow {
+  0% { background-position: 200% 0; }
+  100% { background-position: 0% 0; }
+}
+/* A discrete data "packet" running along a connector, left -> right. */
+@keyframes deck-packet {
+  0% { transform: translateX(-120%); opacity: 0; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { transform: translateX(820%); opacity: 0; }
+}
+/* Soft breathing halo on the worker hero node. */
+@keyframes deck-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.55; }
+  50% { transform: scale(1.12); opacity: 0.9; }
+}
+/* Continuous rotation for the autonomous-loop sweep. */
+@keyframes deck-orbit {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+/* Marching dash travelling clockwise around a loop path (pathLength=100). */
+@keyframes deck-dash {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -100; }
+}
+/* Respect reduced-motion: hold the looping deck animations still. */
+@media (prefers-reduced-motion: reduce) {
+  [style*="deck-flow"],
+  [style*="deck-breathe"],
+  [style*="deck-orbit"],
+  [style*="deck-dash"] {
+    animation: none !important;
+  }
+}
+
+@keyframes shimmer-sweep {
+  0% { transform: translateX(-150%) skewX(-20deg); opacity: 0; }
+  20% { opacity: 1; }
+  100% { transform: translateX(250%) skewX(-20deg); opacity: 0; }
+}
+
+.shimmer-sweep {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255,255,255,0.05) 35%,
+    rgba(255,255,255,0.55) 50%,
+    rgba(255,255,255,0.05) 65%,
+    transparent 100%
+  );
+  animation: shimmer-sweep 1.6s ease-out 0.2s 1 both;
+  mix-blend-mode: overlay;
+}

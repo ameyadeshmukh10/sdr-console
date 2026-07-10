@@ -4,7 +4,7 @@ followup_drafts.json; the UI shows each draft for edit/approve, and only on
 approval does the lead get pushed into the Interested Follow-up campaign and the
 reply sent. Nothing here sends anything.
 
-  python3 draft_followups.py [--max 50] [--refresh]
+  python3 draft_followups.py [--max 50] [--refresh] [--reply-id ID]
 
 Reads data/interested-replies/review_queue.json (the interested items) and writes
 data/interested-replies/followup_drafts.json.
@@ -96,6 +96,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--max", type=int, default=50)
     ap.add_argument("--refresh", action="store_true", help="re-draft even already-drafted replies")
+    ap.add_argument("--reply-id", default=None,
+                    help="draft ONLY this reply: forces a re-draft and bypasses the "
+                         "interested filter (used for regenerate + manual reclassify)")
     args = ap.parse_args()
 
     def load_items(path, default_channel):
@@ -114,20 +117,31 @@ def main():
     email_items, queue = load_items(REVIEW_QUEUE, "email")
     li_items, _ = load_items(LI_REVIEW_QUEUE, "linkedin")
     all_items = email_items + li_items
-    interested = [it for it in all_items if (it.get("classifier") or {}).get("interested")]
-    if not interested:
-        DRAFTS.write_text(json.dumps({"generated_at": now_iso(), "items": []}, indent=2))
-        print("no interested replies to draft for.")
-        return 0
 
-    prior = {}
-    if DRAFTS.is_file() and not args.refresh:
-        try:
-            prior = {it["reply_id"]: it for it in json.loads(DRAFTS.read_text()).get("items", [])}
-        except (ValueError, OSError):
-            prior = {}
+    def read_prior():
+        if DRAFTS.is_file():
+            try:
+                return {it["reply_id"]: it for it in json.loads(DRAFTS.read_text()).get("items", [])}
+            except (ValueError, OSError):
+                pass
+        return {}
 
-    todo = [it for it in interested if it.get("reply_id") not in prior][: args.max]
+    if args.reply_id:
+        target = [it for it in all_items if str(it.get("reply_id")) == str(args.reply_id)]
+        if not target:
+            print(f"no queue item {args.reply_id}")
+            return 1
+        prior = read_prior()
+        prior.pop(target[0].get("reply_id"), None)     # force a fresh draft
+        todo = target
+    else:
+        interested = [it for it in all_items if (it.get("classifier") or {}).get("interested")]
+        if not interested:
+            DRAFTS.write_text(json.dumps({"generated_at": now_iso(), "items": []}, indent=2))
+            print("no interested replies to draft for.")
+            return 0
+        prior = {} if args.refresh else read_prior()
+        todo = [it for it in interested if it.get("reply_id") not in prior][: args.max]
     client = AnthropicClient()
     system = build_system()
 
@@ -146,9 +160,10 @@ def main():
                     "conversation_id": it.get("conversation_id"),
                     "from_name": it.get("from_name"), "from_email": it.get("from_email"),
                     "subject": it.get("subject"), "campaign_id": it.get("campaign_id"),
-                    "original_reply": (it.get("text_body") or "")[:1500],
+                    "original_reply": (it.get("text_body") or "")[:4000],
                     "intent": d["intent"], "draft": d["draft"], "rationale": d["rationale"],
                     "error": d["error"], "status": "drafted", "drafted_at": now_iso(),
+                    "agent": "standard",
                 })
 
     items = list(prior.values()) + drafted

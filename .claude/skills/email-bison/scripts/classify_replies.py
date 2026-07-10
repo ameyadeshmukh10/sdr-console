@@ -65,13 +65,13 @@ def enrich_item(bison, item):
         rows = bison.get_lead_sent_emails(item["lead_id"]) or []
     except BisonError:
         rows = []
-    rows = sorted(rows, key=lambda m: m.get("sent_at") or "", reverse=True)[:5]
+    rows = sorted(rows, key=lambda m: m.get("sent_at") or "", reverse=True)[:10]
     for m in rows:
         se = m.get("sender_email")
         addr = (se.get("email") if isinstance(se, dict) else se) or None
         sending = sending or addr
         sent.append({"subject": m.get("email_subject"), "date": m.get("sent_at"),
-                     "from_email": addr, "text": html_to_text(m.get("email_body"))[:1500]})
+                     "from_email": addr, "text": html_to_text(m.get("email_body"))[:10000]})
     item["sending_email"] = sending
     item["sent_emails"] = sent  # newest first, the outbound sequence we sent
     item["enriched"] = True
@@ -261,7 +261,7 @@ def main():
             "subject": reply.get("subject"),
             "campaign_id": reply.get("campaign_id"),
             "date_received": reply.get("date_received"),
-            "text_body": text[:1500],
+            "text_body": text[:10000],
             "already_interested": bool(reply.get("interested")),
             "classifier": cls,
         }

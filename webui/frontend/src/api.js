@@ -104,6 +104,21 @@ export const api = {
   draftFollowups: () => post('/api/replies/followup/draft'),
   followupDrafts: () => get('/api/replies/followup/drafts'),
   approveFollowup: (replyId, message) => post('/api/replies/followup/approve', { reply_id: replyId, message, confirm: true }),
+  dismissReply: (replyId, reason) => post('/api/replies/dismiss', { reply_id: replyId, reason }),
+  undismissReply: (replyId) => post('/api/replies/undismiss', { reply_id: replyId }),
+  reclassifyReply: (replyId) => post('/api/replies/reclassify', { reply_id: replyId }),
+  repliesAgents: () => get('/api/replies/agents'),
+  setReplyAgent: (replyId, agent) => post('/api/replies/agent', { reply_id: replyId, agent }),
+  regenerateDraft: (replyId, agent) => post('/api/replies/followup/regenerate', { reply_id: replyId, agent }),
+  playbookStatus: (jobId) => get('/api/replies/playbook/status/' + jobId),
+  systemStatus: () => get('/api/system/status'),
+  // The play HTML is auth-gated, so fetch it with the bearer header and hand
+  // back a blob URL the caller can window.open.
+  playHtmlBlobUrl: async (slug) => {
+    const res = await fetch(`/api/plays/${encodeURIComponent(slug)}/html`, { headers: authHeaders() })
+    if (!res.ok) throw new Error(`${res.status} could not load the play preview`)
+    return URL.createObjectURL(await res.blob())
+  },
   hubspotActivityStatus: () => get('/api/hubspot/activity/status'),
   syncHubspotActivity: (opts) => post('/api/hubspot/activity/sync', opts || {}),
   signals: () => get('/api/signals'),

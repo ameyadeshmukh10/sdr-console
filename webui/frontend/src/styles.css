@@ -322,3 +322,72 @@ tr.clickable:hover { background: var(--surface-hover); }
   font-size: 12px; font-weight: 600; width: 100%; text-align: center;
 }
 .sidebar .signout:hover { background: rgba(255, 255, 255, 0.14); filter: none; }
+
+/* --- Replies — two-pane email-inbox layout ------------------------------- */
+.inbox {
+  display: grid; grid-template-columns: 372px minmax(0, 1fr); gap: 0;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel);
+  box-shadow: var(--shadow); overflow: hidden;
+  height: calc(100vh - 250px); min-height: 480px;
+}
+.inbox-list { border-right: 1px solid var(--border); overflow-y: auto; background: var(--panel); }
+.inbox-section {
+  position: sticky; top: 0; z-index: 2; background: var(--surface-head);
+  backdrop-filter: blur(2px);
+  padding: 9px 16px 7px; font-size: 10.5px; font-weight: 700; letter-spacing: .8px;
+  text-transform: uppercase; color: var(--faint); border-bottom: 1px solid var(--hairline);
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.inbox-row {
+  display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 4px 12px;
+  padding: 12px 16px; border-bottom: 1px solid var(--hairline); cursor: pointer;
+  transition: background .1s;
+}
+.inbox-row:hover { background: var(--surface-hover); }
+.inbox-row.active { background: var(--accent-dim); box-shadow: inset 2.5px 0 0 var(--jade); }
+.inbox-row .avatar {
+  grid-row: 1 / span 2; width: 34px; height: 34px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 12.5px; font-weight: 700; color: #0f1c18;
+  background: linear-gradient(140deg, rgba(82, 254, 191, .75), rgba(34, 130, 111, .55));
+  align-self: center;
+}
+.inbox-row.dim .avatar { background: var(--panel-2); color: var(--muted); }
+.inbox-row .who { font-weight: 600; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.inbox-row .when { color: var(--faint); font-size: 11px; white-space: nowrap; justify-self: end; }
+.inbox-row .snippet {
+  grid-column: 2 / span 2; color: var(--muted); font-size: 12px; line-height: 1.45;
+  overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.inbox-row .meta { grid-column: 2 / span 2; display: flex; gap: 8px; align-items: center; font-size: 11px; color: var(--faint); }
+.intent-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+
+.inbox-detail { overflow-y: auto; padding: 24px 28px; background: var(--panel); }
+.inbox-detail .detail-head { border-bottom: 1px solid var(--hairline); padding-bottom: 14px; margin-bottom: 16px; }
+.reason-callout {
+  font-size: 12.5px; color: var(--muted); background: var(--panel-2);
+  border: 1px solid var(--hairline); border-radius: var(--radius-sm); padding: 9px 12px; margin-top: 10px;
+}
+
+/* Thread — chat-style bubbles: inbound left, our messages right */
+.thread { display: flex; flex-direction: column; gap: 12px; margin: 4px 0 18px; }
+.thread-msg { max-width: 82%; border-radius: 12px; padding: 11px 14px; font-size: 13px; line-height: 1.55; }
+.thread-msg .msg-meta { font-size: 11px; color: var(--faint); margin-bottom: 5px; display: flex; gap: 8px; flex-wrap: wrap; }
+.thread-msg .msg-body { white-space: pre-wrap; word-break: break-word; }
+.thread-msg.out { align-self: flex-end; background: var(--accent-dim); border: 1px solid rgba(34, 130, 111, 0.18); }
+.thread-msg.in { align-self: flex-start; background: var(--panel-2); border: 1px solid var(--hairline); }
+.thread-msg.followup { border-color: rgba(82, 254, 191, 0.55); box-shadow: inset 0 0 0 1px rgba(82, 254, 191, 0.35); }
+
+/* Signal playbook build progress */
+.stage-list { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0 6px; }
+.stage-chip {
+  font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--border-strong); color: var(--faint); background: var(--panel);
+}
+.stage-chip.done { color: var(--green); border-color: var(--green); background: rgba(28, 130, 110, 0.08); }
+.stage-chip.now { color: var(--jade); border-color: var(--jade); background: var(--accent-dim); animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .55; } }
+
+@media (max-width: 960px) {
+  .inbox { grid-template-columns: 1fr; height: auto; }
+  .inbox-list { max-height: 44vh; border-right: none; border-bottom: 1px solid var(--border); }
+}

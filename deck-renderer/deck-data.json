@@ -1,0 +1,117 @@
+{
+  "_about": "Single source of truth for the tailored EverWorker AI SDR deck. Agent 3 overwrites this file, then runs `npm run build:deck-bites && npm run export:pdf-bites`. PROSPECT/cover/research describe the company the deck is FOR (EverWorker's buyer). target/outreach describe a discovered account that fits the prospect's ICP. Highlight punchy phrases by wrapping them in ==double-equals==. This file ships with the Bites/CAVA reference example so a fresh clone builds a complete demo deck.",
+
+  "prospect": {
+    "name": "Bites",
+    "logoText": "Bites",
+    "logoDataUri": ""
+  },
+
+  "cover": {
+    "tagline": "AI SDR Customized to your GTM"
+  },
+
+  "research": {
+    "offering": {
+      "headline": "Branded micro-video training for frontline teams.",
+      "bullets": [
+        "Built in ==under 14 minutes==",
+        "==90%+== engagement, watched on the floor",
+        "WhatsApp, Teams or SMS (no app, no login)"
+      ],
+      "core": {
+        "name": "AI Studio",
+        "desc": "Transforms existing documents into fully branded, interactive training in minutes.",
+        "tags": ["140 languages", "Built for L&D teams"],
+        "trustedBy": "Unilever, HP, Decathlon"
+      }
+    },
+    "icp": {
+      "summary": "Large, multi-site, deskless teams who learn on the devices they already carry.",
+      "size": "1,000+ employees · multi-site / multi-region",
+      "industries": ["Hospitality", "Restaurant", "Retail", "FMCG"],
+      "whyNow": [
+        "Rapid expansion & product releases",
+        "Constant onboarding of hourly hires",
+        "Compliance, safety & sales-training pressure"
+      ]
+    },
+    "buyingGroup": [
+      { "tier": "Champion", "owns": "owns the outcome", "who": "Director of L&D · Field Training · Retail L&D" },
+      { "tier": "Decision Maker", "owns": "owns the org", "who": "VP Operations · COO · VP Retail / Commercial · Country GM" },
+      { "tier": "Economic Buyer", "owns": "owns the budget", "who": "VP HR · Regional HR Director" }
+    ]
+  },
+
+  "target": {
+    "name": "CAVA Group",
+    "ticker": "NYSE: CAVA",
+    "blurb": "Mediterranean fast-casual · Restaurants · HQ Washington, DC",
+    "stats": [
+      { "value": "459", "label": "restaurants open" },
+      { "value": "75–77", "label": "new in FY2026" },
+      { "value": "~2,500", "label": "hiring in 2026" }
+    ],
+    "gate": "Multi-location restaurant chain, deskless hourly workforce, aggressive new-market expansion (Cincinnati, St. Louis, Columbus), and an L&D function being staffed right now.",
+    "signals": [
+      { "kind": "expansion", "label": "News · Expansion", "detail": "FY2026 target raised to 75–77 new restaurants; 20 opened in Q1." },
+      { "kind": "program", "label": "News · Program", "detail": "Launched the “Flavor Your Future” talent platform." },
+      { "kind": "hiring", "label": "Hiring · L&D org", "detail": "Open roles: Restaurant Openings Manager, Special Ops Trainer, L&D Coordinator." },
+      { "kind": "hiring", "label": "Hiring · frontline", "detail": "Hiring 2,500+ in 2026, plus opening trainers for every new market." },
+      { "kind": "tech", "label": "Technographic · Harri", "detail": "Runs Harri for workforce ops; frontline training is the gap." }
+    ],
+    "contacts": [
+      {
+        "initials": "CB",
+        "name": "Christina Briggs",
+        "title": "Director of Learning & Development",
+        "meta": "In seat since Mar 2025 · Dallas–Fort Worth",
+        "tag": "Champion · owns L&D strategy + budget",
+        "email": "christina.briggs@cava.com",
+        "linkedin": "linkedin.com/in/christina-b-1b2b9376",
+        "linkedinUrl": "https://www.linkedin.com/in/christina-b-1b2b9376/"
+      },
+      {
+        "initials": "AC",
+        "name": "Adrianna Carrasco",
+        "title": "Sr. Manager of Field Training",
+        "meta": "In seat since Oct 2025 · Greater Chicago",
+        "tag": "User buyer · owns rollout at every opening",
+        "email": "adrianna.carrasco@cava.com",
+        "linkedin": "linkedin.com/in/adrianna-carrasco-402b8663",
+        "linkedinUrl": "https://www.linkedin.com/in/adrianna-carrasco-402b8663/"
+      }
+    ]
+  },
+
+  "outreach": {
+    "linkedin": [
+      {
+        "to": "Christina Briggs",
+        "title": "Director of Learning & Development at CAVA",
+        "initials": "CB",
+        "body": "Hi Christina, with ==20 net-new restaurants last quarter==, your L&D team is carrying a lot. Send me one opening SOP and I'll turn it into a ==90-second mobile training video== your crews would actually watch, so you can see Bites running on your own content. Worth a try?"
+      },
+      {
+        "to": "Adrianna Carrasco",
+        "title": "Sr. Manager of Field Training at CAVA",
+        "initials": "AC",
+        "body": "Hi Adrianna, ramping trainers across new openings in ==Cincinnati, St. Louis and Columbus== is no small thing. Bites trained ==1,400 Unilever frontline staff in under 2 days== without disrupting a shift, and the ==sales lift== followed. Worth 15 minutes on getting your opening crews launch-ready so day-one sales land?"
+      }
+    ],
+    "email": [
+      {
+        "to": "Christina Briggs",
+        "address": "christina.briggs@cava.com",
+        "subject": "one onboarding bar across 77 openings",
+        "body": "Hi Christina, CAVA's opening ==75–77 restaurants== this year and hiring ==~2,500 people==. Holding one onboarding standard across that many openings is where most field programs slip. Bites builds ==branded training video in under 14 minutes== and sends it on WhatsApp, Teams or SMS (no app, no login), so new hires actually watch (==90%+ engagement==). Worth 15 minutes to see a CAVA opening running on it?"
+      },
+      {
+        "to": "Adrianna Carrasco",
+        "address": "adrianna.carrasco@cava.com",
+        "subject": "every NRO opens the same way",
+        "body": "Hi Adrianna, your opening trainers carry the standard into rooms they've never run. Bites gives them a ==repeatable opening playbook in video==, made in ==under 14 min==, watched at ==90%+==. 15 minutes this week?"
+      }
+    ]
+  }
+}
