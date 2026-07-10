@@ -14,10 +14,14 @@ follow-up email around it.
    SDR-Playbook-Multi-Agent-System company-researcher agent) → `data/signal-plays/<slug>/research.md`
    following `templates/research.template.md`.
 2. **deck-data** — research.md → `deck-data.json` per `schemas/deck-data.schema.json`,
-   validated with `node deck-renderer/scripts/validate-deck-data.mjs`. Length/count
-   overruns (the model can't count characters) are clamped mechanically at word
-   boundaries — `==highlight==` markers kept balanced, each clamp surfaced in the job
-   log; one LLM repair round-trip handles structural issues only.
+   validated with `node deck-renderer/scripts/validate-deck-data.mjs`. All generated
+   text is Unicode-sanitized (web-scraped thin/no-break spaces and soft hyphens render
+   as gaps inside words on the slides). Length/count overruns (the model can't count
+   characters) are clamped mechanically — at the last complete sentence when possible,
+   else at a word boundary with dangling connectors stripped — `==highlight==` markers
+   kept balanced, each fix surfaced in the job log; one LLM repair round-trip handles
+   structural issues only. Outreach copy is prompted SHORT (email 200-280 chars,
+   LinkedIn 150-250, always ending on a question or offer) — budgets are ceilings.
 3. **render** — `npm --prefix deck-renderer run deck` (Vite single-file HTML + Playwright
    PDF), serialized via `deck-renderer/.deck.lock` → `data/signal-plays/<slug>/<Company>-AI-SDR-Playbook.{html,pdf}`.
 4. **upload** — `HubSpotClient.upload_file` (files/v3, PUBLIC_INDEXABLE, folder
