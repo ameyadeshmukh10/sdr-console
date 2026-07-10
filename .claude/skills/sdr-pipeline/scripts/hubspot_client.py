@@ -674,13 +674,23 @@ class HubSpotClient:
         """Publish a (draft) site page IMMEDIATELY. v3 has no separate publish-now
         endpoint — the schedule call with a now publishDate is the publish action
         (and in practice it publishes immediately). Falls back to the legacy v2
-        publish-action if the v3 call is rejected."""
+        publish-action if the v3 call is rejected; if BOTH fail, the raised error
+        carries BOTH messages so the real validation problem is never masked."""
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         try:
             return self._request("POST", "/cms/v3/pages/site-pages/schedule",
                                  body={"id": str(page_id), "publishDate": now})
-        except HubSpotError as e:
-            if not any(f"HTTP {c}" in str(e) for c in (400, 403, 404, 405, 409, 422)):
+        except HubSpotError as v3_err:
+            if not any(f"HTTP {c}" in str(v3_err) for c in (400, 403, 404, 405, 409, 422)):
                 raise
-            return self._request("POST", f"/content/api/v2/pages/{page_id}/publish-action",
-                                 body={"action": "schedule-publish"})
+            try:
+                payload = self._request(
+                    "POST", f"/content/api/v2/pages/{page_id}/publish-action",
+                    body={"action": "schedule-publish"})
+            except HubSpotError as v2_err:
+                raise HubSpotError(
+                    f"publish failed on both APIs. v3 schedule: {str(v3_err)[:300]} | "
+                    f"v2 publish-action: {str(v2_err)[:300]}") from v2_err
+            if isinstance(payload, dict):
+                payload["_v3_error"] = str(v3_err)[:200]
+            return payload
