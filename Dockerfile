@@ -23,20 +23,15 @@ WORKDIR /app
 # Python deps first so the pip layer caches unless requirements.txt changes.
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
-# Node 20 + headless Chromium power the Signal Playbook deck renderer (Vite
-# single-file build + Playwright PDF export). Browsers install to a fixed path
-# OUTSIDE /app so the later COPY can't shadow them.
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+# Node 20 powers the Signal Playbook deck renderer (Vite single-file HTML build).
+# No browser needed: the play publishes as a live HubSpot page, not a PDF.
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
-# Renderer deps first (cached unless its lockfile changes), then the Chromium
-# matching the pinned @playwright/test, with its system libraries.
+# Renderer deps (cached unless its lockfile changes).
 COPY deck-renderer/package.json deck-renderer/package-lock.json ./deck-renderer/
-RUN npm ci --prefix deck-renderer --no-audit --no-fund \
-    && cd deck-renderer && npx playwright install --with-deps chromium \
-    && rm -rf /var/lib/apt/lists/*
+RUN npm ci --prefix deck-renderer --no-audit --no-fund
 # Backend + .claude pipeline scripts + committed data + docs (see .dockerignore for exclusions).
 COPY . .
 # Bring in the built frontend from stage 1 (dist is gitignored, so it isn't in the context).

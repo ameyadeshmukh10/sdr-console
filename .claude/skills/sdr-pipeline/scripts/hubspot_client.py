@@ -588,3 +588,84 @@ class HubSpotClient:
             ["hs_timestamp", "hs_email_subject", "hs_email_direction"], limit=10)
         results = payload.get("results", [])
         return results[0] if results else None
+
+    # ---- CMS: source files + site pages (signal-play publishing) ---------
+    # All of these need the `content` scope on the private-app token.
+    def upsert_source_file(self, path, content):
+        """Create/overwrite a design-manager file in the PUBLISHED environment
+        (multipart PUT /cms/v3/source-code/published/content/{path}). Publishing
+        a template file re-renders the pages that use it."""
+        import uuid
+        boundary = f"----hs-{uuid.uuid4().hex}"
+        name = path.rsplit("/", 1)[-1]
+        payload = content.encode("utf-8") if isinstance(content, str) else content
+        body = (f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="file"; filename="{name}"\r\n'
+                f"Content-Type: text/html\r\n\r\n").encode() + payload + \
+               f"\r\n--{boundary}--\r\n".encode()
+        url = f"{self.base_url}/cms/v3/source-code/published/content/{urllib.parse.quote(path)}"
+        req = urllib.request.Request(url, data=body, method="PUT")
+        req.add_header("Authorization", f"Bearer {self.token}")
+        req.add_header("Accept", "application/json")
+        req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+        last = None
+        for attempt in range(4):
+            try:
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    raw = resp.read().decode("utf-8")
+                return json.loads(raw) if raw else {}
+            except urllib.error.HTTPError as e:
+                detail = e.read().decode("utf-8", "replace")[:300]
+                if (e.code == 429 or 500 <= e.code < 600) and attempt < 3:
+                    time.sleep(2 ** attempt)
+                    last = HubSpotError(f"HTTP {e.code} for {url}: {detail}")
+                    continue
+                raise HubSpotError(f"HTTP {e.code} for {url}: {detail}") from e
+            except urllib.error.URLError as e:
+                if attempt < 3:
+                    time.sleep(2 ** attempt)
+                    last = HubSpotError(f"Network error for {url}: {e.reason}")
+                    continue
+                raise HubSpotError(f"Network error for {url}: {e.reason}") from e
+        raise last
+
+    def get_site_page_by_slug(self, slug):
+        """The site page whose slug matches, or None. Tries the server-side slug
+        filter first, then falls back to scanning the listing."""
+        try:
+            payload = self._request("GET", "/cms/v3/pages/site-pages",
+                                    params={"slug": slug, "limit": 100})
+            for r in payload.get("results", []):
+                if (r.get("slug") or "").strip("/") == slug.strip("/"):
+                    return r
+            if payload.get("results") is not None and "paging" not in payload:
+                return None
+        except HubSpotError:
+            pass
+        after = None
+        for _ in range(50):  # fallback scan (5k pages max)
+            params = {"limit": 100}
+            if after:
+                params["after"] = after
+            payload = self._request("GET", "/cms/v3/pages/site-pages", params=params)
+            for r in payload.get("results", []):
+                if (r.get("slug") or "").strip("/") == slug.strip("/"):
+                    return r
+            after = ((payload.get("paging") or {}).get("next") or {}).get("after")
+            if not after:
+                return None
+        return None
+
+    def create_site_page(self, body):
+        return self._request("POST", "/cms/v3/pages/site-pages", body=body)
+
+    def update_site_page_draft(self, page_id, body):
+        return self._request("PATCH", f"/cms/v3/pages/site-pages/{page_id}/draft", body=body)
+
+    def push_site_page_live(self, page_id):
+        """Instant publish: promote the page's draft to live (the 2-step flow's
+        second call). Returns the response payload (may be empty)."""
+        return self._request("POST", f"/cms/v3/pages/site-pages/{page_id}/draft/push-live")
+
+    def get_site_page(self, page_id):
+        return self._request("GET", f"/cms/v3/pages/site-pages/{page_id}")

@@ -203,10 +203,12 @@ chronologically) plus the actions for that reply.
 - **Reply agents** — each interested reply has an agent dropdown + Regenerate:
   - **Standard**: the playbook-grounded drafter (`draft_followups.py`).
   - **Signal Playbook**: builds a personalized signal play for the lead's company
-    (research → deck-data → HTML+PDF via `deck-renderer/`), uploads the PDF to HubSpot File
-    Manager (public URL; `files` scope required), and drafts a reply embedding the link.
-    Runs as a background job with stage progress; artifacts land in
-    `data/signal-plays/<slug>/`. Falls back to a standard draft if the build fails.
+    (research → deck-data → single-file HTML via `deck-renderer/`), publishes it as a
+    LIVE HubSpot website page at `everworker.ai/signal-plays/<company>-ai-sdr-playbook`
+    (`content` scope required; instant publish via draft → push-live, same URL on
+    rebuilds), and drafts a reply embedding the page link. Runs as a background job with
+    stage progress; artifacts land in `data/signal-plays/<slug>/`. Falls back to a
+    standard draft if the build fails.
 - **HubSpot logging is automatic** — an hourly background loop logs replies in/out (and the
   outbound sequence every 12th cycle). There is no manual button. The toolbar shows
   `Last scanned` plus a red dot if the last auto-log failed.
