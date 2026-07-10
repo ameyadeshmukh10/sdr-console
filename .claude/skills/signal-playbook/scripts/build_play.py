@@ -31,6 +31,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -498,13 +499,31 @@ def stage_publish(html_path, company, slug):
         page_id = existing.get("id")
         hs.update_site_page_draft(page_id, body)
         log(f"page draft updated: id {page_id}")
+        try:  # meaningful only on an already-live page: fold draft edits into it
+            hs.push_site_page_live(page_id)
+        except HubSpotError as e:
+            log(f"push-live skipped ({str(e)[:120]})")
     else:
         created = hs.create_site_page(body)
         page_id = created.get("id")
         log(f"page created: id {page_id}")
-    hs.push_site_page_live(page_id)          # step 2: live within seconds
+    # The actual instant publish: v3's schedule-with-now (there is no separate
+    # publish-now endpoint; /draft/push-live does NOT publish a draft page).
+    hs.publish_site_page_now(page_id)
 
-    page = hs.get_site_page(page_id) or {}
+    # Verify it actually went live — a silent Draft must never happen again.
+    page, state = {}, ""
+    for attempt in range(5):
+        page = hs.get_site_page(page_id) or {}
+        state = str(page.get("currentState") or page.get("state") or "").upper()
+        log(f"page state: {state or 'unknown'}")
+        if "PUBLISHED" in state or "SCHEDULED" in state:
+            break
+        time.sleep(3)
+    if "PUBLISHED" not in state and "SCHEDULED" not in state:
+        raise RuntimeError(f"page {page_id} did not publish (state {state or 'unknown'}) — "
+                           f"check the token's `content` scope and the portal's page limits")
+
     page_url = page.get("url") or ""
     if not page_url:
         dom = page.get("domain") or domain
@@ -514,7 +533,7 @@ def stage_publish(html_path, company, slug):
     if not domain_ok:
         log(f"warning: page host {host!r} is not on {REQUIRED_URL_SUFFIX} — set "
             f"SIGNAL_PLAY_DOMAIN or check the portal's primary website domain")
-    log(f"live: {page_url}")
+    log(f"live: {page_url} ({state})")
     return {"page_id": page_id, "page_url": page_url, "url_domain_ok": domain_ok}
 
 
