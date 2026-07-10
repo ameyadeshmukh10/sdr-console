@@ -126,6 +126,29 @@ Outputs land in `data/interested-replies/analysis/` (reports: `trends-report.md`
 
 ---
 
+## 5. AI SDR deal attribution (nightly HubSpot -> MongoDB sync)
+
+Runs automatically at midnight US Eastern inside the deployed web server (needs
+`MONGO_URL` — the Railway MongoDB service). Manual runs, from the console's Analytics
+page ("Sync attribution") or the CLI:
+
+```bash
+P=.claude/skills/sdr-pipeline/scripts
+
+python3 $P/aisdr_attribution_sync.py --json              # incremental (watermark) sync
+python3 $P/aisdr_attribution_sync.py --json --dry-run    # compute, but no HubSpot writes
+python3 $P/aisdr_attribution_sync.py --json --full       # re-scan all emails from scratch
+```
+
+Pulls every email engagement sent by `HUBSPOT_AISDR_FROM_EMAIL`, joins email -> contact ->
+deals, snapshots into MongoDB (db `aisdr`: `emails` / `contacts` / `deals` / `sync_state`),
+and sets `ai_sdr_deal_created=true` on deals created after the contact's first AI SDR email
+(and on those contacts). Requires the `sales-email-read` scope on the HubSpot token.
+Results feed the "Deals created by AI SDR" / "Total pipeline" tiles on the Analytics page
+(`GET /api/analytics/aisdr`). See `CLAUDE.md` for the full design and gotchas.
+
+---
+
 ## Where things live
 
 ```
