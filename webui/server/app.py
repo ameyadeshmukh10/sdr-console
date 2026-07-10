@@ -2512,7 +2512,7 @@ def do_regenerate_followup(reply_id, agent=None):
 PLAY_JOBS = {}
 PLAY_LOCK = threading.Lock()   # guards the one-build-per-lead check-then-insert
 _PLAY_SEQ = [0]
-PLAY_STAGES = ["research", "deck-data", "render", "upload", "draft"]
+PLAY_STAGES = ["research", "deck-data", "render", "publish", "draft"]
 
 
 def _new_play_job_id():

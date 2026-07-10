@@ -2,7 +2,7 @@ import { Spinner } from '../ui.jsx'
 import ThreadView from './ThreadView.jsx'
 import { INTENT_COLOR } from './InboxList.jsx'
 
-const PLAY_STAGES = ['research', 'deck-data', 'render', 'upload', 'draft']
+const PLAY_STAGES = ['research', 'deck-data', 'render', 'publish', 'draft']
 
 function ProgressBar({ pct }) {
   return (
@@ -18,7 +18,7 @@ function PlayProgress({ job }) {
   return (
     <div style={{ marginTop: 12 }}>
       <div className="muted" style={{ fontSize: 12, fontWeight: 600 }}>
-        Building the signal play — research, deck, hosted PDF, then the draft. This takes a few minutes.
+        Building the signal play — research, deck, live page publish, then the draft. This takes a few minutes.
       </div>
       <div className="stage-list">
         {stages.map((s, i) => (
@@ -37,28 +37,30 @@ function PlayProgress({ job }) {
   )
 }
 
-// The play chip shown once a signal-playbook draft exists: hosted PDF link,
-// HTML preview, and a loud warning when the URL isn't on everworker.ai yet.
+// The play chip shown once a signal-playbook draft exists: the LIVE published
+// page, the local HTML preview, and a warning when the page URL isn't on
+// everworker.ai (wrong portal domain / missing content scope).
 function PlayChip({ play, onPreview }) {
   if (!play) return null
   return (
     <div style={{ marginTop: 8 }}>
       <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
         <span className="badge status-generated">signal play</span>
+        {play.page_url && (
+          <a href={play.page_url} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>
+            View live play ↗
+          </a>
+        )}
         {play.slug && (
           <button className="linklike" style={{ fontSize: 12 }} onClick={() => onPreview(play.slug)}>
-            Preview deck (HTML) ↗
+            Local preview ↗
           </button>
         )}
-        {play.pdf_url && (
-          <a href={play.pdf_url} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>Hosted PDF ↗</a>
-        )}
       </div>
-      {play.pdf_url && play.url_domain_ok === false && (
+      {play.page_url && play.url_domain_ok === false && (
         <div className="banner warn" style={{ marginTop: 8, marginBottom: 0, fontSize: 12.5 }}>
-          The hosted PDF URL is not on <b>everworker.ai</b> — connect a file-hosting subdomain
-          (e.g. files.everworker.ai) in HubSpot: Settings → Content → Domains &amp; URLs. New uploads
-          then get the branded URL automatically.
+          The live page is not on <b>everworker.ai</b> — check the portal's primary website
+          domain (or set SIGNAL_PLAY_DOMAIN) and that the HubSpot token has the <b>content</b> scope.
         </div>
       )}
     </div>

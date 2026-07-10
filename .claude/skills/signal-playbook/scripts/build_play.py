@@ -8,14 +8,16 @@ progress; the final JSON result is stdout's last line):
              (the company-researcher agent spec, run as one Messages API call)
   deck-data  research.md -> schema-valid deck-data.json (+ one repair round-trip
              against the node validator)
-  render     deck-data.json -> single-file HTML + 4-page PDF via the vendored
+  render     deck-data.json -> single-file interactive HTML via the vendored
              deck-renderer (serialized: the renderer has one shared fill file)
-  upload     PDF -> HubSpot File Manager (public URL; flags url_domain_ok=false
-             when the portal serves it from a non-everworker.ai host)
-  draft      A contextualized reply email embedding the URL, merged into
+  publish    HTML -> LIVE HubSpot website page at
+             everworker.ai/signal-plays/<company>-ai-sdr-playbook (per-play coded
+             template via the source-code API, then create/update page draft +
+             POST /draft/push-live = live within seconds; same URL on rebuilds)
+  draft      A contextualized reply email embedding the page URL, merged into
              followup_drafts.json for the normal edit-before-send approval flow
 
-Any render/upload failure still produces a draft (fallback="standard", no link),
+Any render/publish failure still produces a draft (fallback="standard", no link),
 so the SDR always gets something to edit and send.
 
   python3 build_play.py --reply-id <id> --contact-json '{"firstName":...}'
@@ -24,6 +26,7 @@ so the SDR always gets something to edit and send.
 import argparse
 import fcntl
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -399,7 +402,9 @@ def _sanitized(data):
 
 
 # ---------------------------------------------------------------------------
-# Stage 3 — render (serialized: the renderer has ONE shared fill file)
+# Stage 3 — render the single-file HTML (serialized: ONE shared fill file).
+# No PDF: the interactive HTML *is* the deliverable — it renders in the
+# viewer's own browser, so container font quirks can't touch it.
 # ---------------------------------------------------------------------------
 def stage_render(data_path, company, out_dir):
     log("stage: render")
@@ -414,28 +419,103 @@ def stage_render(data_path, company, out_dir):
             raise RuntimeError("deck build failed: "
                                + (proc.stderr or proc.stdout).strip()[-600:])
         html_out = out_dir / f"{safe}-AI-SDR-Playbook.html"
-        pdf_out = out_dir / f"{safe}-AI-SDR-Playbook.pdf"
         shutil.copyfile(EXPORT_DIR / "Bites-AI-SDR-Playbook.html", html_out)
-        shutil.copyfile(EXPORT_DIR / "Bites-AI-SDR-Playbook.pdf", pdf_out)
-    log(f"rendered {pdf_out.name}")
-    return html_out, pdf_out
+    log(f"rendered {html_out.name}")
+    return html_out
 
 
 # ---------------------------------------------------------------------------
-# Stage 4 — upload to HubSpot File Manager
+# Stage 4 — publish as a LIVE HubSpot website page.
+# The single-file deck is baked into a per-play coded template (no page-widget
+# API gymnastics), then the 2-step instant-publish flow runs: create/update the
+# page draft -> POST /draft/push-live. Live within seconds, same URL on rebuild.
 # ---------------------------------------------------------------------------
-def stage_upload(pdf_path):
-    log("stage: upload")
-    from hubspot_client import HubSpotClient  # noqa: E402 — needs HUBSPOT_ACCESS_TOKEN
+_HEAD_ASSET = re.compile(
+    r"<style\b.*?</style>|<script\b.*?</script>|<link\b[^>]*>", re.S | re.I)
+
+
+def to_cms_template(html, title):
+    """Single-file deck HTML -> HubSpot coded page template. Extracts the built
+    <head> assets + <body> content, wraps them in {% raw %} (the React bundle is
+    full of braces HubL would parse), and adds HubSpot's required include tags."""
+    head_m = re.search(r"<head\b[^>]*>(.*?)</head>", html, re.S | re.I)
+    body_m = re.search(r"<body\b[^>]*>(.*?)</body>", html, re.S | re.I)
+    if not body_m:
+        raise RuntimeError("built deck HTML has no <body> — cannot publish")
+    head_assets = "\n".join(m.group(0) for m in _HEAD_ASSET.finditer(head_m.group(1))) if head_m else ""
+    for guard in ("{% raw %}", "{% endraw %}"):
+        if guard in head_assets or guard in body_m.group(1):
+            raise RuntimeError("deck HTML contains a raw-guard token — refusing to publish")
+    noindex = (os.environ.get("SIGNAL_PLAY_NOINDEX", "1") or "1").strip().lower() \
+        not in ("0", "false", "no")
+    robots = '<meta name="robots" content="noindex">\n    ' if noindex else ""
+    return f"""<!--
+    templateType: page
+    isAvailableForNewContent: false
+    label: Signal play — {title}
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{title}</title>
+    {robots}{{{{ standard_header_includes }}}}
+    {{% raw %}}{head_assets}{{% endraw %}}
+  </head>
+  <body>
+    {{% raw %}}{body_m.group(1)}{{% endraw %}}
+    {{{{ standard_footer_includes }}}}
+  </body>
+</html>
+"""
+
+
+def stage_publish(html_path, company, slug):
+    log("stage: publish")
+    from hubspot_client import HubSpotClient, HubSpotError  # noqa: E402
     hs = HubSpotClient()
-    up = hs.upload_file(pdf_path, folder_path="signal-plays", access="PUBLIC_INDEXABLE")
-    url = up.get("url") or ""
-    host = re.sub(r"^https?://", "", url).split("/")[0].lower()
+    title = f"{company} — AI SDR Playbook"
+    template_path = f"templates/signal-plays/{slug}.html"
+    page_slug = f"signal-plays/{slug}-ai-sdr-playbook"
+
+    try:
+        hs.upsert_source_file(template_path, to_cms_template(html_path.read_text(), title))
+    except HubSpotError as e:
+        if "403" in str(e) or "MISSING_SCOPES" in str(e).upper():
+            raise RuntimeError("HubSpot token lacks the `content` scope (CMS pages) — add it "
+                               "to the private app, then regenerate") from e
+        raise
+    log(f"template published: {template_path}")
+
+    body = {"name": title, "slug": page_slug, "templatePath": template_path,
+            "state": "DRAFT"}
+    domain = (os.environ.get("SIGNAL_PLAY_DOMAIN") or "").strip()
+    if domain:
+        body["domain"] = domain
+    existing = hs.get_site_page_by_slug(page_slug)
+    if existing:
+        page_id = existing.get("id")
+        hs.update_site_page_draft(page_id, body)
+        log(f"page draft updated: id {page_id}")
+    else:
+        created = hs.create_site_page(body)
+        page_id = created.get("id")
+        log(f"page created: id {page_id}")
+    hs.push_site_page_live(page_id)          # step 2: live within seconds
+
+    page = hs.get_site_page(page_id) or {}
+    page_url = page.get("url") or ""
+    if not page_url:
+        dom = page.get("domain") or domain
+        page_url = f"https://{dom}/{page_slug}" if dom else ""
+    host = re.sub(r"^https?://", "", page_url).split("/")[0].lower()
     domain_ok = host == REQUIRED_URL_SUFFIX or host.endswith("." + REQUIRED_URL_SUFFIX)
     if not domain_ok:
-        log(f"warning: file URL host {host!r} is not on {REQUIRED_URL_SUFFIX} — connect a "
-            f"file-hosting domain in HubSpot (Settings -> Content -> Domains & URLs)")
-    return {"file_id": up.get("id"), "pdf_url": url, "url_domain_ok": domain_ok}
+        log(f"warning: page host {host!r} is not on {REQUIRED_URL_SUFFIX} — set "
+            f"SIGNAL_PLAY_DOMAIN or check the portal's primary website domain")
+    log(f"live: {page_url}")
+    return {"page_id": page_id, "page_url": page_url, "url_domain_ok": domain_ok}
 
 
 # ---------------------------------------------------------------------------
@@ -480,13 +560,13 @@ def play_summary(deck_data):
             f"Signals: {signals}\nResolved buyers: {contacts}")
 
 
-def stage_draft(client, item, contact, deck_data, upload, fallback):
+def stage_draft(client, item, contact, deck_data, publish, fallback):
     log("stage: draft")
     system = DRAFT_SYSTEM + "\n\n# Product knowledge + playbook\n\n" + load_knowledge()
     name = (item or {}).get("from_name") or contact.get("firstName") or "there"
     url_line = ""
-    if upload and upload.get("pdf_url"):
-        url_line = f"\nThe hosted play (include this exact URL): {upload['pdf_url']}"
+    if publish and publish.get("page_url"):
+        url_line = f"\nThe live play page (include this exact URL): {publish['page_url']}"
     note = f"\n\n{FALLBACK_NOTE}" if fallback else ""
     user = (f"Prospect: {name}, {contact.get('jobTitle','')} at {contact.get('companyName','')}\n\n"
             f"Conversation so far:\n\"\"\"\n{thread_context(item)}\n\"\"\"\n\n"
@@ -543,8 +623,8 @@ def main():
     ap.add_argument("--contact-json", required=True,
                     help='{"firstName","lastName","jobTitle","businessEmail",'
                          '"companyName","companyDomain"}')
-    ap.add_argument("--skip-upload", action="store_true",
-                    help="build + draft without the HubSpot upload (testing)")
+    ap.add_argument("--skip-publish", action="store_true",
+                    help="build + draft without publishing the HubSpot page (testing)")
     args = ap.parse_args()
 
     contact = json.loads(args.contact_json)
@@ -558,20 +638,20 @@ def main():
     except AnthropicError as e:  # missing/invalid key — emit a clean result, not a stack
         print(json.dumps({"ok": False, "error": str(e)[:400]}))
         return 1
-    deck_data, upload, fallback, error = None, None, None, None
-    html_out = pdf_out = None
+    deck_data, publish, fallback, error = None, None, None, None
+    html_out = None
 
     try:
         research_md = stage_research(client, contact)
         (out_dir / "research.md").write_text(research_md)
         deck_data = stage_deck_data(client, research_md, out_dir)
-        html_out, pdf_out = stage_render(out_dir / "deck-data.json",
-                                         contact.get("companyName"), out_dir)
-        if args.skip_upload:
-            upload = {"file_id": None, "pdf_url": "", "url_domain_ok": False,
-                      "skipped": True}
+        html_out = stage_render(out_dir / "deck-data.json",
+                                contact.get("companyName"), out_dir)
+        if args.skip_publish:
+            publish = {"page_id": None, "page_url": "", "url_domain_ok": False,
+                       "skipped": True}
         else:
-            upload = stage_upload(pdf_out)
+            publish = stage_publish(html_out, contact.get("companyName") or slug, slug)
     except (AnthropicError, AnthropicJSONError, RuntimeError, ValueError,
             subprocess.TimeoutExpired, OSError) as e:
         fallback = "standard"
@@ -584,16 +664,15 @@ def main():
 
     play_meta = {
         "slug": slug,
-        "pdf_url": (upload or {}).get("pdf_url"),
-        "file_id": (upload or {}).get("file_id"),
-        "url_domain_ok": (upload or {}).get("url_domain_ok"),
+        "page_url": (publish or {}).get("page_url"),
+        "page_id": (publish or {}).get("page_id"),
+        "url_domain_ok": (publish or {}).get("url_domain_ok"),
         "html_path": str(html_out) if html_out else None,
-        "pdf_path": str(pdf_out) if pdf_out else None,
-    } if (upload or html_out) else None
+    } if (publish or html_out) else None
 
     try:
         draft = stage_draft(client, item, contact, deck_data,
-                            None if fallback else upload, bool(fallback))
+                            None if fallback else publish, bool(fallback))
     except (AnthropicError, AnthropicJSONError, ValueError) as e:
         print(json.dumps({"ok": False, "error": f"draft failed: {e}"[:400],
                           "fallback": fallback, "play": play_meta}))

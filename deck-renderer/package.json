@@ -8,7 +8,7 @@
     "validate": "node scripts/validate-deck-data.mjs",
     "build:deck-bites": "vite build --config vite.config.deck-bites.ts && node scripts/finalize-deck-bites.mjs",
     "export:pdf-bites": "node scripts/export-deck-bites-pdf.mjs",
-    "deck": "npm run validate && npm run build:deck-bites && npm run export:pdf-bites"
+    "deck": "npm run validate && npm run build:deck-bites"
   },
   "dependencies": {
     "@radix-ui/react-tooltip": "^1.2.7",
