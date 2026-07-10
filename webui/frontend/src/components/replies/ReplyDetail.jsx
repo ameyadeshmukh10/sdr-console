@@ -13,14 +13,15 @@ function ProgressBar({ pct }) {
 }
 
 function PlayProgress({ job }) {
-  const doneIdx = job.stage === 'done' ? PLAY_STAGES.length : PLAY_STAGES.indexOf(job.stage)
+  const stages = job.stages || PLAY_STAGES   // backend list is authoritative
+  const doneIdx = job.stage === 'done' ? stages.length : stages.indexOf(job.stage)
   return (
     <div style={{ marginTop: 12 }}>
       <div className="muted" style={{ fontSize: 12, fontWeight: 600 }}>
         Building the signal play — research, deck, hosted PDF, then the draft. This takes a few minutes.
       </div>
       <div className="stage-list">
-        {PLAY_STAGES.map((s, i) => (
+        {stages.map((s, i) => (
           <span key={s} className={`stage-chip${i < doneIdx ? ' done' : i === doneIdx ? ' now' : ''}`}>
             {i < doneIdx ? '✓ ' : ''}{s}
           </span>

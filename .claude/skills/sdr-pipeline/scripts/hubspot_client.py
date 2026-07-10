@@ -566,14 +566,25 @@ class HubSpotClient:
             if not after:
                 return
 
-    def find_email_engagement(self, contact_id, ts_ms, *, window_ms=120000):
+    def find_email_engagement(self, contact_id, ts_ms, *, window_ms=120000,
+                              direction=None, subject=None):
         """An existing email engagement on this contact within ±window of ts_ms —
-        used to seed the dedup ledger instead of re-creating the engagement."""
+        used to seed the dedup ledger instead of re-creating the engagement.
+        direction/subject narrow the match so a nearby unrelated engagement (e.g.
+        a native-logged reply a minute from our send) is never adopted."""
+        filters = [
+            {"propertyName": "associations.contact", "operator": "EQ", "value": str(contact_id)},
+            {"propertyName": "hs_timestamp", "operator": "BETWEEN",
+             "value": str(int(ts_ms) - window_ms), "highValue": str(int(ts_ms) + window_ms)},
+        ]
+        if direction:
+            filters.append({"propertyName": "hs_email_direction", "operator": "EQ",
+                            "value": direction})
+        if subject:
+            filters.append({"propertyName": "hs_email_subject", "operator": "EQ",
+                            "value": str(subject)[:200]})
         payload = self.search_objects(
-            "emails",
-            [{"propertyName": "associations.contact", "operator": "EQ", "value": str(contact_id)},
-             {"propertyName": "hs_timestamp", "operator": "BETWEEN",
-              "value": str(int(ts_ms) - window_ms), "highValue": str(int(ts_ms) + window_ms)}],
+            "emails", filters,
             ["hs_timestamp", "hs_email_subject", "hs_email_direction"], limit=10)
         results = payload.get("results", [])
         return results[0] if results else None

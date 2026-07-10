@@ -119,8 +119,6 @@ export const api = {
     if (!res.ok) throw new Error(`${res.status} could not load the play preview`)
     return URL.createObjectURL(await res.blob())
   },
-  hubspotActivityStatus: () => get('/api/hubspot/activity/status'),
-  syncHubspotActivity: (opts) => post('/api/hubspot/activity/sync', opts || {}),
   signals: () => get('/api/signals'),
   refreshSignal: (domain) => post('/api/signals/refresh', { domain }),
   variants: () => get('/api/variants'),

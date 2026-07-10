@@ -165,7 +165,8 @@ class Logger:
             existing = None
             if ms:
                 try:
-                    existing = self.hs.find_email_engagement(contact_id, ms)
+                    existing = self.hs.find_email_engagement(
+                        contact_id, ms, direction=direction, subject=subject)
                 except HubSpotError:
                     existing = None
             if existing:

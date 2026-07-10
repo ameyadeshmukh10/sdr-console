@@ -36,10 +36,14 @@ SKILLS = HERE.parents[1]                                    # .claude/skills
 PROJECT_ROOT = HERE.parents[3]
 sys.path.insert(0, str(SKILLS / "ai-sdr" / "scripts"))     # anthropic_client
 sys.path.insert(0, str(SKILLS / "sdr-pipeline" / "scripts"))  # hubspot_client
+sys.path.insert(0, str(SKILLS / "email-bison" / "scripts"))   # draft_followups
 
 from anthropic_client import (                              # noqa: E402
     AnthropicClient, extract_json, AnthropicError, AnthropicJSONError,
 )
+# One knowledge loader for every reply agent — the standard drafter owns it, so
+# a knowledge-base change can't silently diverge between agents.
+from draft_followups import load_context as load_knowledge  # noqa: E402
 
 TEMPLATE = HERE.parent / "templates" / "research.template.md"
 SCHEMA = PROJECT_ROOT / "schemas" / "deck-data.schema.json"
@@ -50,8 +54,6 @@ PLAYS_DIR = PROJECT_ROOT / "data" / "signal-plays"
 REVIEW_QUEUE = PROJECT_ROOT / "data" / "interested-replies" / "review_queue.json"
 LI_REVIEW_QUEUE = PROJECT_ROOT / "data" / "interested-replies" / "li_review_queue.json"
 DRAFTS = PROJECT_ROOT / "data" / "interested-replies" / "followup_drafts.json"
-KNOWLEDGE_DIR = SKILLS / "ai-sdr" / "knowledge"
-PLAYBOOK = SKILLS / "ai-sdr" / "examples" / "reply-handling.md"
 
 REQUIRED_URL_SUFFIX = "everworker.ai"
 
@@ -275,18 +277,6 @@ link. Draft the same style of reply grounded in the thread + product knowledge, 
 walk them through the personalized play live instead."""
 
 
-def load_knowledge():
-    parts = []
-    for fname in ("offer.md", "cta-offers.md"):
-        p = KNOWLEDGE_DIR / fname
-        if p.is_file():
-            parts.append(p.read_text())
-    if PLAYBOOK.is_file():
-        parts.append("# Reply-handling playbook (emulate the shape + voice)\n\n"
-                     + PLAYBOOK.read_text())
-    return "\n\n---\n\n".join(parts)
-
-
 def play_summary(deck_data):
     if not deck_data:
         return ""
@@ -330,8 +320,13 @@ def merge_draft(item, reply_id, draft, play_meta, fallback, error):
     items = [d for d in payload.get("items") or []
              if str(d.get("reply_id")) != str(reply_id)]
     it = item or {}
+    # keep reply_id the same type as queue/draft records (int) — a str-typed copy
+    # would escape the str()-based dedup and collide with a later standard draft
+    rid = it.get("reply_id")
+    if rid is None:
+        rid = int(reply_id) if str(reply_id).isdigit() else reply_id
     items.append({
-        "reply_id": it.get("reply_id") or reply_id, "lead_id": it.get("lead_id"),
+        "reply_id": rid, "lead_id": it.get("lead_id"),
         "channel": it.get("channel", "email"),
         "sender_email_id": it.get("sender_email_id"),
         "linkedin_account_id": it.get("linkedin_account_id"),

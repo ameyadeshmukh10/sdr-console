@@ -35,6 +35,7 @@ export default function RepliesPage() {
   const [pct, setPct] = useState({})               // reply_id -> send progress %
   const [sendErr, setSendErr] = useState({})       // reply_id -> inline send error
   const [playJobs, setPlayJobs] = useState({})     // reply_id -> playbook job status
+  const [agentPick, setAgentPick] = useState({})   // reply_id -> agent id (optimistic)
   const timers = useRef({})
 
   const loadQueue = () => api.repliesQueue().then(setQueue).catch((e) => setError(e.message))
@@ -44,20 +45,38 @@ export default function RepliesPage() {
     api.repliesAgents().then((r) => r.agents?.length && setAgents(r.agents)).catch(() => {})
   }, [])
 
-  // Poll in-flight signal-playbook builds every 2.5s; refresh drafts when one lands.
+  // Poll in-flight signal-playbook builds every 2.5s; refresh drafts when one
+  // lands. Skips the setState when nothing changed (no pointless re-renders),
+  // and a lost job (server restart) surfaces as an error instead of vanishing.
   useEffect(() => {
     const running = Object.entries(playJobs).filter(([, j]) => j.status === 'running')
     if (!running.length) return undefined
     const t = setInterval(async () => {
-      for (const [rid, j] of running) {
-        try {
-          const s = await api.playbookStatus(j.job_id)
-          setPlayJobs((m) => ({ ...m, [rid]: { ...s, job_id: j.job_id } }))
-          if (s.status !== 'running') { loadDrafts(); loadQueue() }
-        } catch { /* job may have been evicted on restart — stop polling it */
-          setPlayJobs((m) => { const n = { ...m }; delete n[rid]; return n })
+      const updates = await Promise.all(running.map(async ([rid, j]) => {
+        try { return [rid, { ...(await api.playbookStatus(j.job_id)), job_id: j.job_id }] }
+        catch {
+          return [rid, { ...j, status: 'error', error: 'build job lost (server restarted?) — regenerate to retry' }]
         }
-      }
+      }))
+      setPlayJobs((m) => {
+        let changed = false
+        const next = { ...m }
+        for (const [rid, s] of updates) {
+          const prev = m[rid]
+          if (!prev || prev.status !== s.status || prev.stage !== s.stage
+              || prev.pct !== s.pct || (prev.log || []).length !== (s.log || []).length) {
+            next[rid] = s
+            changed = true
+          }
+          if (s.status !== 'running' && prev?.status === 'running') {
+            // the finished build wrote a NEW draft — drop any stale manual edit
+            // so Approve sends the fresh draft (with the play link), not old text
+            setEdits((e) => { const n = { ...e }; delete n[rid]; return n })
+            loadDrafts(); loadQueue()
+          }
+        }
+        return changed ? next : m
+      })
     }, 2500)
     return () => clearInterval(t)
   }, [playJobs])
@@ -102,10 +121,15 @@ export default function RepliesPage() {
     if (r?.ok) setSelectedId(it.reply_id)
   }
 
+  // Optimistic per-reply agent choice: the dropdown must win immediately — a
+  // Draft click right after switching would otherwise send the stale agent
+  // from the last queue snapshot.
+  const agentFor = (it) => agentPick[it.reply_id] ?? it.agent ?? 'standard'
+
   async function setAgent(it, agent) {
+    setAgentPick((m) => ({ ...m, [it.reply_id]: agent }))
     try {
       await api.setReplyAgent(it.reply_id, agent)
-      await loadQueue()
     } catch (e) { setMsg({ err: true, text: e.message }) }
   }
 
@@ -113,7 +137,7 @@ export default function RepliesPage() {
     const id = it.reply_id
     mark('regen', id, true); setMsg(null)
     try {
-      const r = await api.regenerateDraft(id, it.agent || 'standard')
+      const r = await api.regenerateDraft(id, agentFor(it))
       if (r.ok === false) setMsg({ err: true, text: r.error || 'draft failed' })
       else if (r.async) setPlayJobs((m) => ({ ...m, [id]: { job_id: r.job_id, status: 'running', stage: 'research', pct: 2 } }))
       else {
@@ -175,7 +199,7 @@ export default function RepliesPage() {
   const visible = items.filter(inChannel)
   const interested = visible.filter((it) => isInterested(it) && it.already_interested && !it.handled)
   const possible = visible.filter((it) => isInterested(it) && !it.already_interested && !it.handled)
-  const others = visible.filter((it) => !it.handled && !interested.includes(it) && !possible.includes(it))
+  const others = visible.filter((it) => !it.handled && !isInterested(it))
   const done = [...visible.filter((it) => it.handled), ...dismissedItems.filter(inChannel)]
   const liCount = items.filter((it) => it.channel === 'linkedin').length
   const needDrafts = interested.filter((it) => !draftFor(it)).length
@@ -183,9 +207,8 @@ export default function RepliesPage() {
   const sectionOf = (it) => {
     if (!it) return null
     if (it.dismissed || it.handled) return 'done'
-    if (interested.includes(it)) return 'interested'
-    if (possible.includes(it)) return 'possible'
-    return 'other'
+    if (!isInterested(it)) return 'other'
+    return it.already_interested ? 'interested' : 'possible'
   }
 
   const all = [...interested, ...possible, ...others, ...done]
@@ -269,7 +292,7 @@ export default function RepliesPage() {
             item={selected}
             section={sectionOf(selected)}
             agents={agents}
-            agentSel={selected?.agent || 'standard'}
+            agentSel={selected ? agentFor(selected) : 'standard'}
             draft={selected ? draftFor(selected) : null}
             editValue={selected ? edits[selected.reply_id] : undefined}
             setEdit={(id, v) => setEdits((m) => ({ ...m, [id]: v }))}

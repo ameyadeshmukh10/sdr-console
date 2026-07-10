@@ -901,16 +901,20 @@ AUTOSYNC_STATUS = {}
 def _autosync_status():
     """Last autosync outcome for the UI — from memory, falling back to the file
     mirror so a restart doesn't blank the indicator until the next cycle."""
-    return dict(AUTOSYNC_STATUS) if AUTOSYNC_STATUS else (_read_json(AUTOSYNC_STATUS_PATH) or {})
+    return AUTOSYNC_STATUS or (_read_json(AUTOSYNC_STATUS_PATH) or {})
 
 
 def _record_autosync(ok, mode, summary):
-    AUTOSYNC_STATUS.clear()
-    AUTOSYNC_STATUS.update({"ok": bool(ok), "mode": mode, "at": now_iso(),
-                            "summary": str(summary or "")[:300]})
+    # Reassign (never mutate in place): request threads read this concurrently.
+    global AUTOSYNC_STATUS
+    status = {"ok": bool(ok), "mode": mode, "at": now_iso(),
+              "summary": str(summary or "")[:300]}
+    AUTOSYNC_STATUS = status
     try:
         AUTOSYNC_STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        AUTOSYNC_STATUS_PATH.write_text(json.dumps(AUTOSYNC_STATUS, indent=2))
+        tmp = AUTOSYNC_STATUS_PATH.with_name(AUTOSYNC_STATUS_PATH.name + ".tmp")
+        tmp.write_text(json.dumps(status, indent=2))
+        os.replace(tmp, AUTOSYNC_STATUS_PATH)
     except OSError:
         pass
 
@@ -2040,24 +2044,49 @@ def _reply_state():
     return {"leads": leads if isinstance(leads, dict) else {}}
 
 
-def _reply_state_update(key, patch):
-    """Merge patch into one lead's state (a None value deletes that field).
-    Lock-guarded + atomic write — dismiss/tag/agent-pick can arrive concurrently."""
+def _reply_state_update_many(patches):
+    """Merge {lead_key: patch} into the state in ONE locked read+atomic write
+    (a None value in a patch deletes that field)."""
     with REPLY_STATE_LOCK:
         data = _reply_state()
-        cur = data["leads"].setdefault(key, {})
-        for k, v in patch.items():
-            if v is None:
-                cur.pop(k, None)
-            else:
-                cur[k] = v
-        if not cur:
-            data["leads"].pop(key, None)
+        for key, patch in patches.items():
+            cur = data["leads"].setdefault(key, {})
+            for k, v in patch.items():
+                if v is None:
+                    cur.pop(k, None)
+                else:
+                    cur[k] = v
+            if not cur:
+                data["leads"].pop(key, None)
         REPLY_STATE.parent.mkdir(parents=True, exist_ok=True)
         tmp = REPLY_STATE.with_name(REPLY_STATE.name + ".tmp")
         tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False))
         os.replace(tmp, REPLY_STATE)
-        return data["leads"].get(key)
+        return data
+
+
+def _reply_state_update(key, patch):
+    return _reply_state_update_many({key: patch})["leads"].get(key)
+
+
+def _norm_ts(d):
+    """Comparable timestamp key across the mixed formats the channels emit
+    ('YYYY-MM-DD HH:MM:SS' vs ISO 'T'-separated)."""
+    return (d or "").replace(" ", "T")[:19]
+
+
+def _force_interested(item):
+    """Apply the manual 'reclassified as interested' override to one item,
+    keeping the model's verdict in classifier_original for audit."""
+    cl = item.get("classifier") or {}
+    if not cl.get("interested"):
+        item.setdefault("classifier_original", dict(cl))
+        cl.update({"interested": True,
+                   "confidence": max(float(cl.get("confidence") or 0), 0.51),
+                   "reason": "manually reclassified as interested"})
+        item["classifier"] = cl
+    item["already_interested"] = True
+    return item
 
 
 def _apply_reply_state(items):
@@ -2078,19 +2107,18 @@ def _apply_reply_state(items):
         if st.get("agent"):
             it["agent"] = st["agent"]
         rec = st.get("reclassified")
-        cl = it.get("classifier") or {}
         if rec and rec.get("interested"):
-            if not cl.get("interested"):   # a rescan re-ran the model — re-apply the override
-                it.setdefault("classifier_original", dict(cl))
-                cl.update({"interested": True,
-                           "confidence": max(float(cl.get("confidence") or 0), 0.51),
-                           "reason": "manually reclassified as interested"})
-                it["classifier"] = cl
+            _force_interested(it)   # a rescan re-runs the model — re-apply the override
             it["reclassified"] = rec
-            it["already_interested"] = True
         dis = st.get("dismissed")
-        if dis and (it.get("date_received") or "") <= (dis.get("last_reply_at") or ""):
-            it["dismissed"] = dis
+        if dis:
+            # Hidden while it's the same reply that was dismissed, or an older one.
+            # A dateless item (either side) is NOT assumed old — a new reply must
+            # never stay buried just because its timestamp is missing.
+            same_reply = str(it.get("reply_id")) == str(dis.get("reply_id") or "")
+            d_recv, last = _norm_ts(it.get("date_received")), _norm_ts(dis.get("last_reply_at"))
+            if same_reply or (d_recv and last and d_recv <= last):
+                it["dismissed"] = dis
     return items
 
 
@@ -2104,9 +2132,16 @@ def _attach_threads(items):
     sent_meta = (_read_json(SENT_FOLLOWUPS) or {}).get("sent") or {}
     sent_drafts = [d for d in drafts
                    if d.get("status") == "sent" and (d.get("sent_message") or d.get("draft"))]
-
-    def norm_date(d):
-        return (d or "").replace(" ", "T")[:19]
+    # Index once — the match below would otherwise be O(items x sent_drafts) on
+    # every queue fetch, which the UI re-issues after each action.
+    by_lead, by_conv, by_email = {}, {}, {}
+    for d in sent_drafts:
+        if d.get("lead_id") is not None:
+            by_lead.setdefault(d["lead_id"], []).append(d)
+        if d.get("conversation_id"):
+            by_conv.setdefault(d["conversation_id"], []).append(d)
+        if d.get("from_email"):
+            by_email.setdefault(d["from_email"].lower(), []).append(d)
 
     for it in items or []:
         thread = []
@@ -2123,11 +2158,14 @@ def _attach_threads(items):
         conv_id = it.get("conversation_id")
         lead_emails = {e for e in ((it.get("lead_email") or "").lower(),
                                    (it.get("from_email") or "").lower()) if e}
-        for d in sent_drafts:
-            if not ((lead_id and d.get("lead_id") == lead_id)
-                    or (conv_id and d.get("conversation_id") == conv_id)
-                    or (d.get("from_email") or "").lower() in lead_emails):
-                continue
+        matched, seen = [], set()
+        for d in ((by_lead.get(lead_id) or []) if lead_id is not None else []) \
+                + ((by_conv.get(conv_id) or []) if conv_id else []) \
+                + [d for e in lead_emails for d in (by_email.get(e) or [])]:
+            if id(d) not in seen:
+                seen.add(id(d))
+                matched.append(d)
+        for d in matched:
             meta = sent_meta.get(str(d.get("reply_id"))) or {}
             thread.append({"dir": "out", "kind": "followup",
                            "subject": f"Re: {d.get('subject')}" if d.get("subject") else None,
@@ -2135,7 +2173,7 @@ def _attach_threads(items):
                            "from": it.get("sending_email"),
                            "agent": d.get("agent"),
                            "text": d.get("sent_message") or d.get("draft") or ""})
-        thread.sort(key=lambda m: norm_date(m.get("date")))
+        thread.sort(key=lambda m: _norm_ts(m.get("date")))
         it["thread"] = thread
     return items
 
@@ -2180,8 +2218,20 @@ def review_queue_payload():
     }
 
 
+# Queue files are rewritten by request threads (reclassify/tag) and by the scan
+# scripts; one writer at a time + atomic replace so readers never see torn JSON.
+QUEUE_WRITE_LOCK = threading.Lock()
+
+
+def _write_json_atomic(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    os.replace(tmp, path)
+
+
 def _find_queue_item(reply_id):
-    return next((it for it in _apply_reply_state(_merged_queue_items())
+    return next((it for it in _apply_reply_state(_stamp_handled(_merged_queue_items()))
                  if str(it.get("reply_id")) == str(reply_id)), None)
 
 
@@ -2197,6 +2247,7 @@ def do_dismiss_reply(reply_id, reason=None):
         return {"ok": False, "error": "item has no lead identity to key dismissal on"}, 409
     _reply_state_update(key, {"dismissed": {
         "reason": (reason or "handled")[:120], "at": now_iso(),
+        "reply_id": str(reply_id),               # covers items with no usable date
         "last_reply_at": it.get("date_received") or "",
     }})
     return {"ok": True, "reply_id": reply_id, "lead_key": key}, 200
@@ -2216,33 +2267,36 @@ def do_reclassify_reply(reply_id):
     (non-interested items are never enriched at scan time), flip the classifier
     verdict in the queue file (so drafting picks it up), record the manual override
     per lead (so it survives rescans), then run the standard tag-interested flow."""
-    email_q = _read_json(REVIEW_QUEUE) or {}
-    li_q = _read_json(LI_REVIEW_QUEUE) or {}
-    item, queue, path = None, None, None
-    for q, p, ch in ((email_q, REVIEW_QUEUE, "email"), (li_q, LI_REVIEW_QUEUE, "linkedin")):
-        for it in q.get("items") or []:
+    item, channel = None, None
+    for path, ch in ((REVIEW_QUEUE, "email"), (LI_REVIEW_QUEUE, "linkedin")):
+        for it in (_read_json(path) or {}).get("items") or []:
             if str(it.get("reply_id")) == str(reply_id):
                 it.setdefault("channel", ch)
-                item, queue, path = it, q, p
+                item, channel = it, ch
                 break
         if item:
             break
     if item is None:
         return {"ok": False, "error": f"no queue item {reply_id}"}, 404
-    if item.get("channel") == "email" and not item.get("enriched") and item.get("lead_id"):
+    # Enrich OUTSIDE the lock — it's a network round-trip.
+    if channel == "email" and not item.get("enriched") and item.get("lead_id"):
         try:
             sys.path.insert(0, str(SCRIPTS / "email-bison" / "scripts"))
             from classify_replies import enrich_item  # noqa: E402
             enrich_item(_bison(), item)
         except Exception as e:  # noqa: BLE001 — enrichment is context, not a gate
             item["enrich_error"] = str(e)[:200]
-    cl = item.get("classifier") or {}
-    item.setdefault("classifier_original", dict(cl))
-    cl.update({"interested": True,
-               "confidence": max(float(cl.get("confidence") or 0), 0.51),
-               "reason": "manually reclassified as interested"})
-    item["classifier"] = cl
-    path.write_text(json.dumps(queue, indent=2, ensure_ascii=False))
+    _force_interested(item)
+    # Re-read + mutate + atomic-write under the lock, so a scan or another request
+    # finishing in between can't be clobbered with our stale copy of the file.
+    qpath = REVIEW_QUEUE if channel == "email" else LI_REVIEW_QUEUE
+    with QUEUE_WRITE_LOCK:
+        queue = _read_json(qpath) or {}
+        for fresh in queue.get("items") or []:
+            if str(fresh.get("reply_id")) == str(reply_id):
+                fresh.update(item)
+                _write_json_atomic(qpath, queue)
+                break
     key = _lead_key(item)
     if key:
         _reply_state_update(key, {"reclassified": {"interested": True, "at": now_iso()},
@@ -2263,13 +2317,14 @@ def do_tag_replies(reply_ids):
     tag_id = interested_tag_id()
     bison = None
     results, tagged, failed = [], 0, 0
+    tagged_ids, state_patches = set(), {}
     for rid in reply_ids:
         li_item = li_by_id.get(str(rid))
         if li_item is not None:                          # LinkedIn — local flip only
-            li_item["already_interested"] = True
             key = _lead_key(li_item)
             if key:  # durable: the queue file is rewritten on every rescan
-                _reply_state_update(key, {"tagged_interested": True, "tagged_at": now_iso()})
+                state_patches[key] = {"tagged_interested": True, "tagged_at": now_iso()}
+            tagged_ids.add(str(rid))
             results.append({"reply_id": rid, "channel": "linkedin", "ok": True})
             tagged += 1
             continue
@@ -2282,17 +2337,28 @@ def do_tag_replies(reply_ids):
                 bison.attach_tags_to_leads([tag_id], [lead_id])
             results.append({"reply_id": rid, "lead_id": lead_id, "ok": True})
             tagged += 1
-            item["already_interested"] = True  # update cache
+            tagged_ids.add(str(rid))
             key = _lead_key(item)
             if key:
-                _reply_state_update(key, {"tagged_interested": True, "tagged_at": now_iso()})
+                state_patches[key] = {"tagged_interested": True, "tagged_at": now_iso()}
         except Exception as e:  # noqa: BLE001 - one bad reply must not abort the rest
             results.append({"reply_id": rid, "lead_id": lead_id, "ok": False, "error": str(e)[:200]})
             failed += 1
-    if email_q:
-        REVIEW_QUEUE.write_text(json.dumps(email_q, indent=2))
-    if li_q:
-        LI_REVIEW_QUEUE.write_text(json.dumps(li_q, indent=2))
+    if state_patches:
+        _reply_state_update_many(state_patches)
+    if tagged_ids:
+        # Re-read + atomic-write under the lock (the Bison calls above take long
+        # enough for a scan to have rewritten the file since we read it).
+        with QUEUE_WRITE_LOCK:
+            for qpath in (REVIEW_QUEUE, LI_REVIEW_QUEUE):
+                queue = _read_json(qpath) or {}
+                changed = False
+                for it in queue.get("items") or []:
+                    if str(it.get("reply_id")) in tagged_ids:
+                        it["already_interested"] = True
+                        changed = True
+                if changed:
+                    _write_json_atomic(qpath, queue)
     return {"ok": failed == 0, "tagged": tagged, "failed": failed, "results": results}
 
 
@@ -2386,7 +2452,9 @@ def do_approve_followup(reply_id, message):
 # async build job below and its draft lands in the same followup_drafts.json.
 # ----------------------------------------------------------------------------
 def _reply_agents_mod():
-    sys.path.insert(0, str(SCRIPTS / "email-bison" / "scripts"))
+    p = str(SCRIPTS / "email-bison" / "scripts")
+    if p not in sys.path:   # called per request — don't grow sys.path unboundedly
+        sys.path.insert(0, p)
     import reply_agents  # noqa: E402
     return reply_agents
 
@@ -2418,24 +2486,31 @@ def do_regenerate_followup(reply_id, agent=None):
     it = _find_queue_item(reply_id)
     if it is None:
         return {"ok": False, "error": f"no queue item {reply_id}"}, 404
+    if it.get("handled"):   # never clobber the record of an already-sent follow-up
+        return {"ok": False, "error": "a follow-up was already sent for this reply"}, 409
     ra = _reply_agents_mod()
     agent = agent or it.get("agent") or ra.DEFAULT_AGENT
-    if not ra.get(agent):
+    spec = ra.get(agent)
+    if not spec:
         return {"ok": False, "error": f"unknown agent {agent!r}"}, 400
-    if agent == "signal-playbook":
+    if spec.get("kind") == "pipeline":   # registry-driven: async build agents
         return start_play_job(reply_id)
     res = run_script([str(DRAFT_FOLLOWUPS), "--reply-id", str(reply_id)], timeout=600)
     drafts = _read_json(FOLLOWUP_DRAFTS) or {"items": []}
     draft = next((d for d in drafts.get("items", [])
                   if str(d.get("reply_id")) == str(reply_id)), None)
-    if res["returncode"] != 0 or not draft:
-        err = (res["stderr"] or res["stdout"]).strip()[-500:] or "draft failed"
+    # exit code 0 + a record is not success: draft_one records API errors in-place
+    if (res["returncode"] != 0 or not draft or draft.get("error")
+            or not (draft.get("draft") or "").strip()):
+        err = ((draft or {}).get("error")
+               or (res["stderr"] or res["stdout"]).strip()[-500:] or "draft failed")
         return {"ok": False, "error": err}, 502
     return {"ok": True, "async": False, "agent": agent, "draft": draft}, 200
 
 
 # ---- Signal Playbook build job (async; clones the SOURCE_JOBS pattern) ----------
 PLAY_JOBS = {}
+PLAY_LOCK = threading.Lock()   # guards the one-build-per-lead check-then-insert
 _PLAY_SEQ = [0]
 PLAY_STAGES = ["research", "deck-data", "render", "upload", "draft"]
 
@@ -2481,22 +2556,25 @@ def start_play_job(reply_id):
     if not BUILD_PLAY.is_file():
         return {"ok": False, "error": "signal-playbook skill not installed"}, 501
     key = _lead_key(it) or str(reply_id)
-    running = next((j for j in PLAY_JOBS.values()
-                    if j["lead_key"] == key and j["status"] == "running"), None)
-    if running:  # one build per lead at a time — return the in-flight job
-        return {"ok": True, "async": True, "agent": "signal-playbook",
-                "job_id": running["job_id"], "existing": True}, 200
-    contact = _play_contact_inputs(it)
-    if not contact.get("companyDomain"):
-        return {"ok": False, "error": "could not resolve a company domain for this lead"}, 409
-    job_id = _new_play_job_id()
-    PLAY_JOBS[job_id] = {
-        "job_id": job_id, "reply_id": reply_id, "lead_key": key, "status": "running",
-        "agent": "signal-playbook", "contact": contact,
-        "stage": "research", "pct": 2, "stages": PLAY_STAGES, "log": [],
-        "play": None, "draft": None, "fallback": None, "error": None,
-        "started_at": now_iso(), "finished_at": None,
-    }
+    # Check-then-insert must be atomic or two concurrent regenerates for the same
+    # lead both pass the check and spawn two full build pipelines.
+    with PLAY_LOCK:
+        running = next((j for j in PLAY_JOBS.values()
+                        if j["lead_key"] == key and j["status"] == "running"), None)
+        if running:  # one build per lead at a time — return the in-flight job
+            return {"ok": True, "async": True, "agent": "signal-playbook",
+                    "job_id": running["job_id"], "existing": True}, 200
+        contact = _play_contact_inputs(it)
+        if not contact.get("companyDomain"):
+            return {"ok": False, "error": "could not resolve a company domain for this lead"}, 409
+        job_id = _new_play_job_id()
+        PLAY_JOBS[job_id] = {
+            "job_id": job_id, "reply_id": reply_id, "lead_key": key, "status": "running",
+            "agent": "signal-playbook", "contact": contact,
+            "stage": "research", "pct": 2, "stages": PLAY_STAGES, "log": [],
+            "play": None, "draft": None, "fallback": None, "error": None,
+            "started_at": now_iso(), "finished_at": None,
+        }
     threading.Thread(target=_run_play_job, args=(job_id,), daemon=True).start()
     return {"ok": True, "async": True, "agent": "signal-playbook", "job_id": job_id}, 200
 
@@ -3217,6 +3295,9 @@ def _activity_autosync_loop():
         try:
             full = full_on and (tick % full_every == 0)
             args = [str(HUBSPOT_ACTIVITY_SYNC), "--json", "--since-days", "60"]
+            if (os.environ.get("HUBSPOT_ACTIVITY_ALLOW_BACKFILL", "") or "").strip().lower() \
+                    in ("1", "true", "yes"):
+                args.append("--allow-backfill")     # intentional first backfill opt-in
             if full:
                 args += ["--sleep", "0.1"]          # throttle the heavier outbound sweep
             else:
@@ -3225,7 +3306,20 @@ def _activity_autosync_loop():
                 res = run_script(args, timeout=5400)
             lines = [ln for ln in (res.get("stdout") or "").splitlines() if ln.strip()]
             summary = lines[-1] if lines else (res.get("stderr") or "")[:200]
-            _record_autosync(res["returncode"] == 0, "full" if full else "replies", summary)
+            # The script exits 0 even when the run failed or the fresh-ledger guard
+            # refused — health must come from the JSON summary, not the exit code.
+            parsed = None
+            try:
+                parsed = json.loads(summary)
+            except (json.JSONDecodeError, TypeError):
+                pass
+            ok = bool(parsed.get("ok")) if isinstance(parsed, dict) else res["returncode"] == 0
+            if isinstance(parsed, dict) and parsed.get("guard"):
+                summary = (f"refused: empty dedup ledger, {parsed.get('would_log')} events would "
+                           f"log (> {parsed.get('threshold')}). Recover with "
+                           f"--reconcile-from-hubspot, or set HUBSPOT_ACTIVITY_ALLOW_BACKFILL=1 "
+                           f"for an intentional first backfill.")
+            _record_autosync(ok, "full" if full else "replies", summary)
             print(f"[activity-sync] {'full' if full else 'replies'}: {summary}", flush=True)
         except Exception as e:  # noqa: BLE001 - auto-sync must never crash the server
             _record_autosync(False, "error", f"{type(e).__name__}: {e}")

@@ -31,6 +31,45 @@ PLAYBOOK = SKILLS / "ai-sdr" / "examples" / "reply-handling.md"
 REVIEW_QUEUE = PROJECT_ROOT / "data" / "interested-replies" / "review_queue.json"
 LI_REVIEW_QUEUE = PROJECT_ROOT / "data" / "interested-replies" / "li_review_queue.json"
 DRAFTS = PROJECT_ROOT / "data" / "interested-replies" / "followup_drafts.json"
+REPLY_STATE = PROJECT_ROOT / "data" / "interested-replies" / "reply_state.json"
+
+
+# ---- per-lead console state (mirrors the webui overlay) -----------------------
+# Scans rewrite the queue files, so manual reclassifies and dismissals live in
+# reply_state.json keyed by lead. The bulk path must honor them: draft leads the
+# SDR reclassified as interested, skip leads they dismissed as handled-in-CRM.
+def _norm_ts(d):
+    return (d or "").replace(" ", "T")[:19]
+
+
+def lead_key(item):
+    if (item.get("channel") or "email") == "linkedin":
+        cid = item.get("conversation_id") or item.get("reply_id")
+        return f"li:{cid}" if cid else None
+    email = (item.get("lead_email") or item.get("from_email") or "").strip().lower()
+    return email or None
+
+
+def apply_overlay(items):
+    try:
+        leads = json.loads(REPLY_STATE.read_text()).get("leads") or {}
+    except (OSError, ValueError):
+        leads = {}
+    if not isinstance(leads, dict):
+        leads = {}
+    out = []
+    for it in items:
+        st = leads.get(lead_key(it) or "") or {}
+        if (st.get("reclassified") or {}).get("interested"):
+            it["classifier"] = {**(it.get("classifier") or {}), "interested": True}
+        dis = st.get("dismissed")
+        if dis:
+            same = str(it.get("reply_id")) == str(dis.get("reply_id") or "")
+            d, last = _norm_ts(it.get("date_received")), _norm_ts(dis.get("last_reply_at"))
+            if same or (d and last and d <= last):
+                continue   # dismissed — don't spend a draft on a handled lead
+        out.append(it)
+    return out
 
 # Extra steer for LinkedIn replies — same playbook voice, but a DM, not an email.
 LINKEDIN_NOTE = (
@@ -116,7 +155,7 @@ def main():
 
     email_items, queue = load_items(REVIEW_QUEUE, "email")
     li_items, _ = load_items(LI_REVIEW_QUEUE, "linkedin")
-    all_items = email_items + li_items
+    all_items = apply_overlay(email_items + li_items)
 
     def read_prior():
         if DRAFTS.is_file():
@@ -132,15 +171,23 @@ def main():
             print(f"no queue item {args.reply_id}")
             return 1
         prior = read_prior()
+        existing = prior.get(target[0].get("reply_id"))
+        if existing and existing.get("status") == "sent":
+            print(f"reply {args.reply_id} already has a SENT follow-up — refusing to overwrite "
+                  f"its record (the thread + HubSpot sync read the sent body from it)")
+            return 1
         prior.pop(target[0].get("reply_id"), None)     # force a fresh draft
         todo = target
     else:
         interested = [it for it in all_items if (it.get("classifier") or {}).get("interested")]
         if not interested:
-            DRAFTS.write_text(json.dumps({"generated_at": now_iso(), "items": []}, indent=2))
+            # leave followup_drafts.json untouched — it holds SENT records the
+            # thread view and the HubSpot our-reply sync still need
             print("no interested replies to draft for.")
             return 0
-        prior = {} if args.refresh else read_prior()
+        prior = read_prior()
+        if args.refresh:   # re-draft drafted-but-unsent replies; never touch sent records
+            prior = {rid: d for rid, d in prior.items() if d.get("status") == "sent"}
         todo = [it for it in interested if it.get("reply_id") not in prior][: args.max]
     client = AnthropicClient()
     system = build_system()
