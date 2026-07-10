@@ -107,6 +107,7 @@ export const api = {
   dismissReply: (replyId, reason) => post('/api/replies/dismiss', { reply_id: replyId, reason }),
   undismissReply: (replyId) => post('/api/replies/undismiss', { reply_id: replyId }),
   reclassifyReply: (replyId) => post('/api/replies/reclassify', { reply_id: replyId }),
+  moveReply: (replyId, to) => post('/api/replies/followup/move', { reply_id: replyId, to }),
   repliesAgents: () => get('/api/replies/agents'),
   setReplyAgent: (replyId, agent) => post('/api/replies/agent', { reply_id: replyId, agent }),
   regenerateDraft: (replyId, agent) => post('/api/replies/followup/regenerate', { reply_id: replyId, agent }),

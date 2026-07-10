@@ -70,7 +70,7 @@ function PlayChip({ play, onPreview }) {
 export default function ReplyDetail({
   item, section, agents, agentSel, draft, editValue, setEdit,
   busy, playJob, sendPct, sendErr,
-  onTag, onDismiss, onUndismiss, onReclassify, onAgentChange, onRegenerate, onApprove, onPreviewPlay,
+  onTag, onDismiss, onUndismiss, onReclassify, onMove, onAgentChange, onRegenerate, onApprove, onPreviewPlay,
 }) {
   if (!item) {
     return <div className="inbox-detail"><div className="empty" style={{ border: 'none', background: 'none' }}>
@@ -115,7 +115,7 @@ export default function ReplyDetail({
               {cls.intent}{cls.confidence != null ? ` · ${Math.round(cls.confidence * 100)}%` : ''}
             </span>
             {item.already_interested && <span className="badge status-enrolled">interested</span>}
-            {item.handled && <span className="badge status-generated">follow-up sent</span>}
+            {item.handled && <span className="badge status-generated">{item.parked ? 'parked' : 'follow-up sent'}</span>}
           </div>
         </div>
         {cls.reason && (
@@ -132,6 +132,11 @@ export default function ReplyDetail({
             reply from this lead resurfaces them automatically.{' '}
             <button className="linklike" onClick={() => onUndismiss(item)} disabled={!!busy.undismiss}>
               {busy.undismiss ? 'Restoring…' : 'Restore to queue'}
+            </button>
+            {' · '}
+            <button className="linklike" onClick={() => onMove(item, 'followup')} disabled={!!busy.move}
+              title="Park this lead in Follow up — you're on it or handled it outside the console.">
+              {busy.move ? 'Moving…' : 'Move to Follow up'}
             </button>
           </div>
         )}
@@ -153,8 +158,18 @@ export default function ReplyDetail({
         <div className="row" style={{ justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
           <Dismiss label="Dismiss" />
           <button onClick={() => onReclassify(item)} disabled={!!busy.reclassify}
-            title="The classifier got it wrong — mark this reply interested. It moves to the Interested queue and is tagged in Bison.">
+            title="The classifier got it wrong — mark this reply interested. It moves to the Interested queue and is tagged in the email platform.">
             {busy.reclassify ? <Spinner label="Reclassifying…" /> : '↺ Reclassify as interested'}
+          </button>
+        </div>
+      )}
+
+      {section === 'followup' && (
+        <div className="row" style={{ justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
+          <Dismiss label="Dismiss" />
+          <button onClick={() => onMove(item, 'interested')} disabled={!!busy.move}
+            title="Un-park this conversation and move it back to Interested so you can draft and send again.">
+            {busy.move ? <Spinner label="Moving…" /> : '↩ Move to Interested'}
           </button>
         </div>
       )}
@@ -231,10 +246,13 @@ export default function ReplyDetail({
         </div>
       )}
 
-      {item.handled && (
+      {section === 'followup' && (
         <div className="muted" style={{ fontSize: 12.5 }}>
-          Follow-up sent from the console — it appears in the thread above. A new reply from
-          {' '}{name} will bring this conversation back into the queue.
+          {item.parked
+            ? <>Parked in Follow up — nothing was sent from the console. A new reply from
+              {' '}{name} moves this conversation to <b>Possible interested</b> for review.</>
+            : <>Follow-up sent — it appears in the thread above. When {name} replies, this
+              conversation moves to <b>Possible interested</b> for review automatically.</>}
         </div>
       )}
     </div>

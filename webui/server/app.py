@@ -594,10 +594,17 @@ def analytics_payload():
         except json.JSONDecodeError:
             last_run = {}
 
+    rate = lambda num, den: round(100 * num / den, 2) if den else None
+
     steps_by_campaign = {}
     for s in steps:
+        # Interested rate = interested ÷ replies. Recomputed from the raw counts
+        # so snapshots cached by an older fetch (which divided by contacted)
+        # display the current metric without waiting for a refresh.
+        s["interested_rate_pct"] = rate(s.get("interested") or 0, s.get("unique_replies") or 0)
         steps_by_campaign.setdefault(s.get("campaign_id"), []).append(s)
     for c in campaigns:
+        c["interested_rate_pct"] = rate(c.get("interested") or 0, c.get("unique_replies") or 0)
         c["steps"] = sorted(steps_by_campaign.get(c.get("campaign_id"), []),
                             key=lambda s: s.get("step_number", 0))
 
@@ -605,7 +612,6 @@ def analytics_payload():
     total_interested = sum(c.get("interested") or 0 for c in campaigns)
     total_replies = sum(c.get("unique_replies") or 0 for c in campaigns)
     total_leads = sum(c.get("total_leads") or 0 for c in campaigns)
-    rate = lambda num, den: round(100 * num / den, 2) if den else None
 
     return {
         "fetched_at": last_run.get("fetched_at"),
@@ -616,7 +622,7 @@ def analytics_payload():
             "total_replies": total_replies,
             "total_interested": total_interested,
             "overall_reply_rate_pct": rate(total_replies, total_contacted),
-            "overall_interested_rate_pct": rate(total_interested, total_contacted),
+            "overall_interested_rate_pct": rate(total_interested, total_replies),
         },
         "errors": last_run.get("errors", []),
     }
@@ -2006,11 +2012,37 @@ def _load_sent():
     return set((data.get("sent") or {}).keys())
 
 
+# One writer at a time on the sent-followups ledger — approve/send and the
+# section-move endpoint both mutate it from request threads.
+SENT_LOCK = threading.Lock()
+
+
+def _sent_records():
+    return (_read_json(SENT_FOLLOWUPS) or {}).get("sent") or {}
+
+
 def _mark_sent(reply_id, meta):
-    data = _read_json(SENT_FOLLOWUPS) or {}
-    data.setdefault("sent", {})[str(reply_id)] = meta
-    SENT_FOLLOWUPS.parent.mkdir(parents=True, exist_ok=True)
-    SENT_FOLLOWUPS.write_text(json.dumps(data, indent=2))
+    with SENT_LOCK:
+        data = _read_json(SENT_FOLLOWUPS) or {}
+        data.setdefault("sent", {})[str(reply_id)] = meta
+        _write_json_atomic(SENT_FOLLOWUPS, data)
+
+
+def _patch_sent(reply_id, patch):
+    """Merge a patch into one ledger record (a None value deletes that key).
+    Returns the record, or None if the reply was never sent/parked."""
+    with SENT_LOCK:
+        data = _read_json(SENT_FOLLOWUPS) or {}
+        rec = (data.get("sent") or {}).get(str(reply_id))
+        if rec is None:
+            return None
+        for k, v in patch.items():
+            if v is None:
+                rec.pop(k, None)
+            else:
+                rec[k] = v
+        _write_json_atomic(SENT_FOLLOWUPS, data)
+        return rec
 
 
 def _stamp_handled(items):
@@ -2122,6 +2154,77 @@ def _apply_reply_state(items):
     return items
 
 
+def _sent_lead_key(meta):
+    """Lead identity for a sent-ledger record. New records store lead_key;
+    legacy ones derive it (LinkedIn: the conversation id; email: to_email)."""
+    if meta.get("lead_key"):
+        return meta["lead_key"]
+    channel = meta.get("channel") or ("linkedin" if meta.get("conversation_id") else "email")
+    if channel == "linkedin":
+        cid = meta.get("conversation_id")
+        return f"li:{cid}" if cid else None
+    to_email = (meta.get("to_email") or "").strip().lower()
+    return to_email or None
+
+
+def _stamp_sent_state(items):
+    """Stamp handled / parked / post_followup from the sent-followups ledger.
+
+    handled — the item's own reply has a live (non-resurfaced) send/park record;
+        it sits in "Follow up" until the lead answers. Email reply_ids are
+        per-message so membership is exact. LinkedIn reply_id IS the conversation
+        id, so a strictly newer inbound message (date_received past the record's
+        marker) un-handles the card — the lead replied since our send.
+    parked — handled via a manual "Move to Follow up" record (nothing was sent).
+    post_followup — not handled, and the lead replied AFTER our last send/park
+        for that lead; these route to "Possible interested" for review — unless
+        the SDR re-tagged/reclassified the lead since that send (re_engaged),
+        which releases them back to the normal interested buckets.
+
+    Timestamps: last_reply_at is channel-native clock (compare to date_received);
+    sent_at/parked_at are server UTC (compare to reply_state's tagged_at /
+    reclassified.at). Records with no comparable timestamps keep today's
+    behavior: stay handled, never stamp post_followup.
+    """
+    sent = _sent_records()
+    leads = _reply_state()["leads"]
+    lead_marker = {}   # lead_key -> newest send marker (channel-native clock)
+    lead_wall = {}     # lead_key -> newest send/park time (server UTC clock)
+    for meta in sent.values():
+        key = _sent_lead_key(meta)
+        if not key:
+            continue
+        marker = _norm_ts(meta.get("last_reply_at") or meta.get("sent_at"))
+        wall = _norm_ts(meta.get("sent_at") or meta.get("parked_at"))
+        if marker:
+            lead_marker[key] = max(lead_marker.get(key, ""), marker)
+        if wall:
+            lead_wall[key] = max(lead_wall.get(key, ""), wall)
+    for it in items or []:
+        meta = sent.get(str(it.get("reply_id")))
+        d_recv = _norm_ts(it.get("date_received"))
+        handled = False
+        if meta and not meta.get("resurfaced"):
+            if (it.get("channel") or "email") == "linkedin":
+                marker = _norm_ts(meta.get("last_reply_at") or meta.get("sent_at"))
+                handled = not (d_recv and marker and d_recv > marker)
+            else:
+                handled = True
+        it["handled"] = handled
+        it["parked"] = bool(handled and meta and meta.get("manual"))
+        key = _lead_key(it)
+        st = (leads.get(key) or {}) if key else {}
+        re_engaged_at = max(_norm_ts(st.get("tagged_at")),
+                            _norm_ts((st.get("reclassified") or {}).get("at")))
+        # "~" sorts after any timestamp — a lead with no send record on the
+        # server clock can never count as re-engaged.
+        re_engaged = re_engaged_at > lead_wall.get(key or "", "~")
+        it["post_followup"] = bool(
+            not handled and key and lead_marker.get(key) and d_recv
+            and d_recv > lead_marker[key] and not re_engaged)
+    return items
+
+
 def _attach_threads(items):
     """Attach a chronological `thread` to each item: the outbound sequence we sent,
     the prospect's reply, and any follow-ups sent from the console. Bison's
@@ -2142,6 +2245,21 @@ def _attach_threads(items):
             by_conv.setdefault(d["conversation_id"], []).append(d)
         if d.get("from_email"):
             by_email.setdefault(d["from_email"].lower(), []).append(d)
+    # Same-lead sibling replies (email reply_ids are per-message, so one lead can
+    # have several queue items) — each item's thread shows the whole exchange.
+    by_lead_inbound = {}
+    for it in items or []:
+        key = it.get("lead_key") or _lead_key(it)
+        if key:
+            by_lead_inbound.setdefault(key, []).append(it)
+    # Follow-ups sent BEFORE a "Move to Interested" re-opened the draft live on
+    # in the ledger's prior_sends — the draft record itself is back to "drafted".
+    prior_by_lead = {}
+    for meta in sent_meta.values():
+        key = _sent_lead_key(meta)
+        if key:
+            for p in meta.get("prior_sends") or []:
+                prior_by_lead.setdefault(key, []).append(p)
 
     for it in items or []:
         thread = []
@@ -2154,6 +2272,21 @@ def _attach_threads(items):
                        "date": it.get("date_received"),
                        "from": it.get("from_email") or it.get("from_name"),
                        "text": it.get("text_body") or ""})
+        lead_key = it.get("lead_key") or _lead_key(it)
+        for sib in (by_lead_inbound.get(lead_key) or []) if lead_key else []:
+            if str(sib.get("reply_id")) == str(it.get("reply_id")):
+                continue
+            thread.append({"dir": "in", "kind": "reply", "subject": sib.get("subject"),
+                           "date": sib.get("date_received"),
+                           "from": sib.get("from_email") or sib.get("from_name"),
+                           "text": sib.get("text_body") or ""})
+        for p in (prior_by_lead.get(lead_key) or []) if lead_key else []:
+            thread.append({"dir": "out", "kind": "followup",
+                           "subject": f"Re: {p.get('subject')}" if p.get("subject") else None,
+                           "date": p.get("sent_at"),
+                           "from": it.get("sending_email"),
+                           "agent": p.get("agent"),
+                           "text": p.get("text") or ""})
         lead_id = it.get("lead_id")
         conv_id = it.get("conversation_id")
         lead_emails = {e for e in ((it.get("lead_email") or "").lower(),
@@ -2190,9 +2323,31 @@ def review_queue_payload():
     for it in (email.get("items") or []):
         it.setdefault("channel", "email")
     items = list(email.get("items") or []) + list(li.get("items") or [])
-    _stamp_handled(items)
+    _stamp_sent_state(items)
     _apply_reply_state(items)
     _attach_threads(items)
+    # An item we already replied to / parked is superseded once a strictly newer
+    # reply from the same lead is in the queue: the conversation continues in the
+    # newer card (whose thread carries this one's inbound text via the sibling
+    # merge), so the stale card is dropped instead of lingering in Follow up.
+    sent = _sent_records()
+    latest = {}
+    for it in items:
+        k = it.get("lead_key")
+        if k:
+            cand = (_norm_ts(it.get("date_received")), str(it.get("reply_id")))
+            if cand > latest.get(k, ("", "")):
+                latest[k] = cand
+
+    def _superseded(it):
+        k = it.get("lead_key")
+        if not k or str(it.get("reply_id")) not in sent:
+            return False
+        newest = latest.get(k)
+        return bool(newest and newest[1] != str(it.get("reply_id"))
+                    and _norm_ts(it.get("date_received")) < newest[0])
+
+    items = [it for it in items if not _superseded(it)]
     active = [it for it in items if not it.get("dismissed")]
     dismissed = [it for it in items if it.get("dismissed")]
     ec, lc = (email.get("counts") or {}), (li.get("counts") or {})
@@ -2231,7 +2386,7 @@ def _write_json_atomic(path, data):
 
 
 def _find_queue_item(reply_id):
-    return next((it for it in _apply_reply_state(_stamp_handled(_merged_queue_items()))
+    return next((it for it in _apply_reply_state(_stamp_sent_state(_merged_queue_items()))
                  if str(it.get("reply_id")) == str(reply_id)), None)
 
 
@@ -2303,6 +2458,66 @@ def do_reclassify_reply(reply_id):
                                   "dismissed": None})
     tag = do_tag_replies([reply_id])
     return {"ok": bool(tag.get("ok")), "item": item, "tag": tag}, 200
+
+
+def do_move_reply(reply_id, to):
+    """Manual section moves.
+
+    to='interested' — un-park a Follow up item back to Interested (draft again):
+    the ledger record is kept but flagged resurfaced, the sent draft re-opens
+    (status back to 'drafted', which draft_followups.py otherwise refuses to
+    touch), the sent text is preserved in the record's prior_sends so the thread
+    keeps showing it, then the standard reclassify flow force-interests the item.
+    A later Approve & send overwrites the ledger meta, clearing the flag.
+
+    to='followup' — park a lead in Follow up (used from Dismissed: "I'm on it /
+    handled outside the console"). Manual parks carry parked_at and never
+    sent_at, so hubspot_activity_sync's our-replies pass ignores them."""
+    it = _find_queue_item(reply_id)
+    if it is None:
+        return {"ok": False, "error": f"no queue item {reply_id}"}, 404
+    key = _lead_key(it)
+    if not key:
+        return {"ok": False, "error": "item has no lead identity"}, 409
+
+    if to == "interested":
+        rec = _sent_records().get(str(reply_id))
+        if rec is None:
+            return {"ok": False, "error": "nothing was sent or parked for this reply"}, 409
+        patch = {"resurfaced": True, "resurfaced_at": now_iso()}
+        drafts = _read_json(FOLLOWUP_DRAFTS) or {"items": []}
+        d = next((x for x in drafts.get("items") or []
+                  if str(x.get("reply_id")) == str(reply_id)), None)
+        if d and d.get("status") == "sent":
+            prior = {"text": d.get("sent_message") or d.get("draft") or "",
+                     "sent_at": d.get("sent_at"), "agent": d.get("agent"),
+                     "subject": d.get("subject")}
+            if prior["text"]:
+                patch["prior_sends"] = (rec.get("prior_sends") or []) + [prior]
+            d["status"] = "drafted"
+            _write_json_atomic(FOLLOWUP_DRAFTS, drafts)
+        _patch_sent(reply_id, patch)
+        payload, code = do_reclassify_reply(reply_id)
+        payload["moved"] = "interested"
+        return payload, code
+
+    # to == "followup"
+    rec = _sent_records().get(str(reply_id))
+    if rec is not None:
+        _patch_sent(reply_id, {"resurfaced": None, "resurfaced_at": None, "lead_key": key,
+                               "last_reply_at": it.get("date_received")
+                                                or rec.get("last_reply_at") or ""})
+    else:
+        meta = {"manual": True, "parked_at": now_iso(),
+                "channel": it.get("channel") or "email",
+                "lead_key": key, "last_reply_at": it.get("date_received") or ""}
+        if (it.get("channel") or "email") == "linkedin":
+            meta["conversation_id"] = it.get("conversation_id") or it.get("reply_id")
+        else:
+            meta["to_email"] = (it.get("from_email") or it.get("lead_email") or "").strip().lower()
+        _mark_sent(reply_id, meta)
+    _reply_state_update(key, {"dismissed": None})
+    return {"ok": True, "reply_id": reply_id, "lead_key": key, "moved": "followup"}, 200
 
 
 def do_tag_replies(reply_ids):
@@ -2418,7 +2633,9 @@ def do_approve_followup(reply_id, message):
         except Exception:  # noqa: BLE001
             pass
         _mark_sent(reply_id, {"sent_at": now_iso(), "channel": "linkedin",
-                              "conversation_id": conv_id, "linkedin_account_id": acct_id})
+                              "conversation_id": conv_id, "linkedin_account_id": acct_id,
+                              "lead_key": _lead_key(src),
+                              "last_reply_at": src.get("date_received") or ""})
         _mark_draft_sent(drafts, draft, body_text)
         return {"ok": True, "reply_id": reply_id, "channel": "linkedin",
                 "to_name": src.get("from_name")}, 200
@@ -2441,7 +2658,8 @@ def do_approve_followup(reply_id, message):
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)[:300]}, 502
     _mark_sent(reply_id, {"sent_at": now_iso(), "channel": "email", "to_email": to_email,
-                          "sender_email_id": sender_email_id})
+                          "sender_email_id": sender_email_id, "lead_key": _lead_key(src),
+                          "last_reply_at": src.get("date_received") or ""})
     _mark_draft_sent(drafts, draft, body_text)
     return {"ok": True, "reply_id": reply_id, "channel": "email", "to_email": to_email}, 200
 
@@ -3100,6 +3318,14 @@ class Handler(BaseHTTPRequestHandler):
                 if not body.get("reply_id"):
                     return self._error(400, "reply_id required")
                 payload, code = do_reclassify_reply(body.get("reply_id"))
+                return self._json(payload, code=code)
+            if path == "/api/replies/followup/move":
+                body = self._read_body()
+                if not body.get("reply_id"):
+                    return self._error(400, "reply_id required")
+                if body.get("to") not in ("interested", "followup"):
+                    return self._error(400, "to must be 'interested' or 'followup'")
+                payload, code = do_move_reply(body.get("reply_id"), body.get("to"))
                 return self._json(payload, code=code)
             if path == "/api/replies/followup/draft":
                 return self._json(do_draft_followups())

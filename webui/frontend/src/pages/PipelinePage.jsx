@@ -68,7 +68,7 @@ export default function PipelinePage() {
       <div className="row between">
         <div>
           <h1 className="page-title">Pipeline</h1>
-          <p className="page-sub">Live batch generation progress, then enroll the generated copy into Bison.</p>
+          <p className="page-sub">Live batch generation progress, then enroll the generated copy into the email campaign.</p>
         </div>
         <div className="row" style={{ gap: 12 }}>
           <label className="row" style={{ gap: 6, fontSize: 13, color: 'var(--muted)' }}>

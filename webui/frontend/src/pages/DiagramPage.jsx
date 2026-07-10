@@ -1,13 +1,12 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api.js'
-import { Spinner, ErrorBanner, num, pct } from '../components/ui.jsx'
+import { Spinner, ErrorBanner, num, pct, EmailIcon, LinkedInIcon, LINKEDIN_BLUE } from '../components/ui.jsx'
 import { BRAND, PERSONA_COLORS } from '../theme.js'
 
 // Pillar 2 — See: orchestration topology. HubSpot list -> persona routing ->
 // persona sub-agents -> EVERY Bison campaign contacts actually route into (per
 // contact: variant campaign first, persona campaign fallback) + HeyReach (LinkedIn).
 const PERSONA_COLOR = PERSONA_COLORS
-const LINKEDIN_BLUE = '#0a66c2'
 const AGENT = {
   'sales-leadership': 'sdr-sales-leadership',
   'revops': 'sdr-revops',
@@ -16,25 +15,6 @@ const AGENT = {
 }
 // Accent per campaign node by how it's routed.
 const KIND_COLOR = { variant: BRAND.jade, persona: BRAND.teal, unrouted: BRAND.red, campaign: BRAND.muted }
-
-// Small inline channel icons (drawn, so they render consistently).
-function EmailIcon({ x, y, color = BRAND.muted }) {
-  return (
-    <g transform={`translate(${x},${y})`}>
-      <rect x="0" y="0" width="16" height="12" rx="2" fill="none" stroke={color} strokeWidth="1.4" />
-      <path d="M1,1 L8,7 L15,1" fill="none" stroke={color} strokeWidth="1.4" />
-    </g>
-  )
-}
-function LinkedInIcon({ x, y, size = 16 }) {
-  return (
-    <g transform={`translate(${x},${y})`}>
-      <rect x="0" y="0" width={size} height={size} rx="3" fill={LINKEDIN_BLUE} />
-      <text x={size / 2} y={size - 4} textAnchor="middle" fill="#fff" fontSize={size - 5} fontWeight="700"
-        fontFamily="Georgia, serif">in</text>
-    </g>
-  )
-}
 
 // horizontal-tangent bezier between two points (left edge -> right edge of nodes)
 function curve(x1, y1, x2, y2) {
@@ -98,8 +78,8 @@ export default function DiagramPage() {
     <div>
       <h1 className="page-title">Orchestration</h1>
       <p className="page-sub">
-        How contacts route from a HubSpot list through persona sub-agents into the Bison campaigns
-        they actually enroll in (variant campaign first, persona campaign as fallback) and HeyReach (LinkedIn).
+        How contacts route from a HubSpot list through persona sub-agents into the email campaigns
+        they actually enroll in (variant campaign first, persona campaign as fallback) and LinkedIn.
       </p>
       <ErrorBanner error={error} />
       {!rollup ? <Spinner label="Loading…" /> : (
@@ -165,9 +145,9 @@ export default function DiagramPage() {
                 <LinkedInIcon x={xLink + 14} y={midY - 38} />
                 <text x={xLink + 38} y={midY - 26} fill={BRAND.ink} fontSize="13" fontWeight="700">LinkedIn</text>
                 <text x={xLink + 16} y={midY} fill={BRAND.ink} fontSize="13" fontWeight="700">
-                  {linkedin.campaign_name || `HeyReach #${linkedin.campaign_id}`}
+                  {linkedin.campaign_name || `LinkedIn #${linkedin.campaign_id}`}
                 </text>
-                <text x={xLink + 16} y={midY + 20} fill={BRAND.muted} fontSize="11">HeyReach · #{linkedin.campaign_id}</text>
+                <text x={xLink + 16} y={midY + 20} fill={BRAND.muted} fontSize="11">LinkedIn · #{linkedin.campaign_id}</text>
                 <text x={xLink + 16} y={midY + 40} fill={LINKEDIN_BLUE} fontSize="12" fontWeight="700">{num(linkedin.leads)} leads in campaign</text>
               </g>
             )}
@@ -235,14 +215,14 @@ export default function DiagramPage() {
           <div className="row" style={{ gap: 18, marginTop: 10, fontSize: 12, alignItems: 'center', flexWrap: 'wrap' }}>
             <span className="muted">Channels:</span>
             <span className="row" style={{ gap: 6, alignItems: 'center' }}>
-              <svg width="18" height="14"><EmailIcon x={1} y={1} color={BRAND.jade} /></svg> Email (Bison)
+              <svg width="18" height="14"><EmailIcon x={1} y={1} color={BRAND.jade} /></svg> Email
             </span>
             <span className="row" style={{ gap: 6, alignItems: 'center' }}>
-              <svg width="18" height="16"><LinkedInIcon x={1} y={0} /></svg> LinkedIn (HeyReach)
+              <svg width="18" height="16"><LinkedInIcon x={1} y={0} /></svg> LinkedIn
             </span>
             <span className="muted">
               · <b>routed here</b> / <b>enrolled</b> count this pipeline's contacts; <b>campaign total</b> is the full
-              Bison campaign (every lead from any source). Hover a node to isolate its routes.
+              email campaign (every lead from any source). Hover a node to isolate its routes.
             </span>
           </div>
         </div>

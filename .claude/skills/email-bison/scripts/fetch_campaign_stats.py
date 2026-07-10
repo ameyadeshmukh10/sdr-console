@@ -84,7 +84,7 @@ def main():
             "interested": interested,
             "bounced": to_int(c.get("bounced")),
             "unsubscribed": to_int(c.get("unsubscribed")),
-            "interested_rate_pct": rate(interested, contacted),
+            "interested_rate_pct": rate(interested, unique_replies),
             "reply_rate_pct": rate(unique_replies, contacted),
             "fetched_at": fetched_at,
         })
@@ -110,7 +110,7 @@ def main():
                 "leads_contacted": lc,
                 "unique_replies": sr,
                 "interested": si,
-                "interested_rate_pct": rate(si, lc),
+                "interested_rate_pct": rate(si, sr),
                 "reply_rate_pct": rate(sr, lc),
                 "fetched_at": fetched_at,
             })
