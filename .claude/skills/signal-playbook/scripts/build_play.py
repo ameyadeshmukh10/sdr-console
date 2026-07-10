@@ -489,30 +489,45 @@ def stage_publish(html_path, company, slug):
         raise
     log(f"template published: {template_path}")
 
-    body = {"name": title, "slug": page_slug, "templatePath": template_path,
-            "state": "DRAFT"}
+    # htmlTitle is the PUBLIC page title — publish validation refuses a SITE_PAGE
+    # without one (CONTENT_TITLE_MISSING); `name` alone is only the dashboard name.
+    body = {"name": title, "htmlTitle": title, "slug": page_slug,
+            "templatePath": template_path, "state": "DRAFT"}
     domain = (os.environ.get("SIGNAL_PLAY_DOMAIN") or "").strip()
     if domain:
         body["domain"] = domain
     existing = hs.get_site_page_by_slug(page_slug)
+    was_published = False
     if existing:
         page_id = existing.get("id")
+        was_published = "PUBLISHED" in str(existing.get("currentState")
+                                           or existing.get("state") or "").upper()
         hs.update_site_page_draft(page_id, body)
-        log(f"page draft updated: id {page_id}")
-        try:  # meaningful only on an already-live page: fold draft edits into it
-            hs.push_site_page_live(page_id)
-        except HubSpotError as e:
-            log(f"push-live skipped ({str(e)[:120]})")
+        log(f"page draft updated: id {page_id} (currently "
+            f"{'published' if was_published else 'unpublished'})")
     else:
         created = hs.create_site_page(body)
         page_id = created.get("id")
         log(f"page created: id {page_id}")
-    # The actual instant publish: v3's schedule-with-now (there is no separate
-    # publish-now endpoint; /draft/push-live does NOT publish a draft page).
-    hs.publish_site_page_now(page_id)
+
+    # Preflight: publish validation requires a public title + template — verify
+    # they took before attempting to publish, so failures are self-explanatory.
+    check = hs.get_site_page(page_id) or {}
+    if not (check.get("htmlTitle") or "").strip():
+        raise RuntimeError(f"page {page_id} still has no htmlTitle after update — "
+                           f"HubSpot will refuse to publish it")
+
+    if was_published:
+        # already live: fold the fresh draft into the live page
+        hs.push_site_page_live(page_id)
+        log("republished: draft pushed live")
+    else:
+        # never published: v3's schedule-with-now IS the publish action
+        # (/draft/push-live does NOT publish a draft page)
+        hs.publish_site_page_now(page_id)
 
     # Verify it actually went live — a silent Draft must never happen again.
-    page, state = {}, ""
+    page, state = check, ""
     for attempt in range(5):
         page = hs.get_site_page(page_id) or {}
         state = str(page.get("currentState") or page.get("state") or "").upper()
