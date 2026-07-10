@@ -163,6 +163,8 @@ research file.
 Hard rules:
 - Respect every maxLength/maxItems in the schema; condense copy to fit (the validator rejects
   violations). The ==double-equals== highlight markers count toward length budgets.
+- You cannot count characters precisely — target roughly 85-90% of every maxLength budget so
+  you land safely under, and prefer cutting a whole clause over trimming single words.
 - Exact counts: buyingGroup = 3 (Champion, Decision Maker, Economic Buyer, in that order),
   target.stats = 3, outreach.linkedin = 2, outreach.email = 2 (matching the first two
   target.contacts, same order).
@@ -181,6 +183,100 @@ def run_validator(data_path):
     return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
 
 
+# The model cannot count characters, so pure length/count overruns are fixed
+# mechanically instead of hoping another LLM round lands under budget (it
+# routinely misses by a few chars and used to fail the whole build).
+_ERR_TOO_LONG = re.compile(r"deck\.([^\s:]+): too long — \d+/(\d+) chars")
+_ERR_TOO_MANY = re.compile(r"deck\.([^\s:]+): allows at most (\d+) items")
+_PATH_SEG = re.compile(r"([^.\[\]]+)|\[(\d+)\]")
+
+
+def parse_validator_errors(report):
+    """Validator report -> [{kind: 'too_long'|'too_many', path: [seg,...], limit: N}].
+    Path segments are dict keys (str) and list indexes (int); leading 'deck.' stripped."""
+    out = []
+    for line in (report or "").splitlines():
+        m = _ERR_TOO_LONG.search(line)
+        kind = "too_long" if m else None
+        if not m:
+            m = _ERR_TOO_MANY.search(line)
+            kind = "too_many" if m else None
+        if not m:
+            continue
+        path = [seg if seg else int(idx)
+                for seg, idx in _PATH_SEG.findall(m.group(1)) if seg or idx]
+        out.append({"kind": kind, "path": path, "limit": int(m.group(2))})
+    return out
+
+
+def _balance_highlights(s):
+    """Truncation can cut inside a ==highlight==; an odd marker count would leak
+    literal '==' onto the slide. Close the last open marker if its text survived,
+    else drop it."""
+    if s.count("==") % 2 == 0:
+        return s
+    i = s.rfind("==")
+    tail = s[i + 2:].strip()
+    if tail:            # highlight text survived the cut — close it (adds 2 chars;
+        return s + "==" # the caller's loop re-trims if that pushes past the budget)
+    return (s[:i] + s[i + 2:]).rstrip()
+
+
+def _clamp_string(s, limit):
+    """Shorten to <= limit at a word boundary (never below ~60% of the budget),
+    keeping ==highlight== markers balanced."""
+    while True:
+        cut = s[:limit]
+        sp = cut.rfind(" ")
+        if sp >= int(limit * 0.6):
+            cut = cut[:sp]
+        cut = cut.rstrip(" ,;:-—").rstrip()
+        cut = _balance_highlights(cut)
+        if len(cut) <= limit:
+            return cut
+        limit -= 2  # balancing re-added a marker; trim a little further
+
+
+def clamp_deck_data(data, errors):
+    """Apply mechanical fixes for length/count overruns in place. Returns the
+    number of fields clamped (other error classes are left for the LLM repair)."""
+    fixed = 0
+    for err in errors:
+        node = data
+        try:
+            for seg in err["path"][:-1]:
+                node = node[seg]
+            leaf = err["path"][-1]
+            val = node[leaf]
+        except (KeyError, IndexError, TypeError):
+            continue
+        if err["kind"] == "too_long" and isinstance(val, str):
+            clamped = _clamp_string(val, err["limit"])
+            node[leaf] = clamped
+            log(f"clamped deck.{'.'.join(map(str, err['path']))}: "
+                f"{len(val)} -> {len(clamped)} chars (budget {err['limit']})")
+            fixed += 1
+        elif err["kind"] == "too_many" and isinstance(val, list):
+            node[leaf] = val[:err["limit"]]
+            log(f"clamped deck.{'.'.join(map(str, err['path']))}: "
+                f"{len(val)} -> {err['limit']} items")
+            fixed += 1
+    return fixed
+
+
+def _validate_with_clamp(data, data_path):
+    """Validate; mechanically fix any length/count overruns and re-validate.
+    Returns (ok, report, data)."""
+    data_path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    ok, report = run_validator(data_path)
+    if ok:
+        return True, report, data
+    if clamp_deck_data(data, parse_validator_errors(report)):
+        data_path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        ok, report = run_validator(data_path)
+    return ok, report, data
+
+
 def stage_deck_data(client, research_md, out_dir):
     log("stage: deck-data")
     schema = SCHEMA.read_text()
@@ -189,20 +285,19 @@ def stage_deck_data(client, research_md, out_dir):
     res = client.complete(system, user, use_web_search=False, max_tokens=8000, timeout=600)
     data = extract_json(res["text"])
     data_path = out_dir / "deck-data.json"
-    data_path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-    ok, report = run_validator(data_path)
+    ok, report, data = _validate_with_clamp(data, data_path)
     if not ok:
+        # Structural problems (missing fields, bad enums) — the one LLM repair
+        # round is for these; leftover length overruns get clamped again after.
         log("deck-data invalid; one repair round-trip")
         repair = client.complete(
             system,
             user + "\n\nYour previous attempt:\n" + json.dumps(data, ensure_ascii=False)
             + "\n\nThe validator rejected it with:\n" + report[:3000]
-            + "\n\nFix every reported issue (usually: shorten over-budget strings) and "
-              "return the corrected FULL JSON.",
+            + "\n\nFix every reported issue and return the corrected FULL JSON.",
             use_web_search=False, max_tokens=8000, timeout=600)
         data = extract_json(repair["text"])
-        data_path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-        ok, report = run_validator(data_path)
+        ok, report, data = _validate_with_clamp(data, data_path)
         if not ok:
             raise RuntimeError(f"deck-data failed validation after repair: {report[:500]}")
     return data
