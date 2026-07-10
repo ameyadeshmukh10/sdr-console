@@ -32,6 +32,7 @@ import concurrent.futures
 import hashlib
 import hmac
 import json
+import os
 import re
 import secrets
 import sqlite3
@@ -62,6 +63,7 @@ HUBSPOT_LISTS = SCRIPTS / "sdr-pipeline" / "scripts" / "hubspot_lists.py"
 HUBSPOT_ACTIVITY_SYNC = SCRIPTS / "sdr-pipeline" / "scripts" / "hubspot_activity_sync.py"
 HEYREACH_ACTIVITY = SCRIPTS / "sdr-pipeline" / "scripts" / "heyreach_activity.py"
 AISDR_SYNC = SCRIPTS / "sdr-pipeline" / "scripts" / "aisdr_attribution_sync.py"
+HUBSPOT_ACTIVITY_AUDIT = SCRIPTS / "sdr-pipeline" / "scripts" / "hubspot_activity_audit.py"
 MAX_WEBHOOK_BODY = 1_048_576  # 1 MB cap on a webhook body (LinkedIn events are tiny) — DoS guard
 SOURCE_CONTACTS = SCRIPTS / "sdr-pipeline" / "scripts" / "source_contacts.py"
 CLAY_ENRICH = SCRIPTS / "sdr-pipeline" / "scripts" / "clay_enrich.py"
@@ -72,6 +74,13 @@ CLASSIFY_LI_REPLIES = SCRIPTS / "email-bison" / "scripts" / "classify_li_replies
 DRAFT_FOLLOWUPS = SCRIPTS / "email-bison" / "scripts" / "draft_followups.py"
 FOLLOWUP_DRAFTS = DATA / "interested-replies" / "followup_drafts.json"
 SENT_FOLLOWUPS = DATA / "interested-replies" / "sent_followups.json"
+# Per-lead console state (dismissed / tagged / reclassified / agent choice). Keyed by
+# lead identity — NOT reply_id — because scans rewrite the queue files and every new
+# inbound reply gets a fresh reply_id; this file is what makes those actions durable.
+REPLY_STATE = DATA / "interested-replies" / "reply_state.json"
+AUTOSYNC_STATUS_PATH = DATA / "interested-replies" / ".autosync_status.json"
+BUILD_PLAY = SCRIPTS / "signal-playbook" / "scripts" / "build_play.py"
+SIGNAL_PLAYS_DIR = DATA / "signal-plays"
 ANALYZE = SCRIPTS / "interested-trends" / "scripts"
 TRENDS_DIR = DATA / "interested-replies" / "analysis"
 REPLIES_LAST_RUN = DATA / "interested-replies" / "last_run.json"
@@ -883,6 +892,33 @@ def do_hubspot_lists(query, list_type=None):
         return {"ok": False, "error": "could not parse list search output"}
 
 
+# One HubSpot activity sync at a time: the hourly autosync loop and the API path
+# share this lock so two concurrent runs can't race the ledger's check-then-log.
+HS_SYNC_LOCK = threading.Lock()
+AUTOSYNC_STATUS = {}
+
+
+def _autosync_status():
+    """Last autosync outcome for the UI — from memory, falling back to the file
+    mirror so a restart doesn't blank the indicator until the next cycle."""
+    return AUTOSYNC_STATUS or (_read_json(AUTOSYNC_STATUS_PATH) or {})
+
+
+def _record_autosync(ok, mode, summary):
+    # Reassign (never mutate in place): request threads read this concurrently.
+    global AUTOSYNC_STATUS
+    status = {"ok": bool(ok), "mode": mode, "at": now_iso(),
+              "summary": str(summary or "")[:300]}
+    AUTOSYNC_STATUS = status
+    try:
+        AUTOSYNC_STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = AUTOSYNC_STATUS_PATH.with_name(AUTOSYNC_STATUS_PATH.name + ".tmp")
+        tmp.write_text(json.dumps(status, indent=2))
+        os.replace(tmp, AUTOSYNC_STATUS_PATH)
+    except OSError:
+        pass
+
+
 def do_hubspot_activity_sync(since_days=None, limit=None, dry_run=False, contact_id=None,
                              event_types=None, replies_only=False, refresh_leads=False):
     """Shell out to the HubSpot activity-sync reconcile script and return its JSON
@@ -904,7 +940,8 @@ def do_hubspot_activity_sync(since_days=None, limit=None, dry_run=False, contact
     for et in (event_types or []):
         if et in ("outbound", "inbound", "our_reply"):
             args += ["--event-type", et]
-    res = run_script(args, timeout=3600)
+    with HS_SYNC_LOCK:
+        res = run_script(args, timeout=3600)
     if res["returncode"] != 0:
         return {"ok": False, "error": (res["stderr"] or res["stdout"]).strip()[:500]}
     try:  # the script prints progress lines, then the JSON summary on the last line
@@ -913,6 +950,24 @@ def do_hubspot_activity_sync(since_days=None, limit=None, dry_run=False, contact
     except (json.JSONDecodeError, IndexError):
         return {"ok": False, "error": "could not parse activity-sync output",
                 "stdout": (res["stdout"] or "")[-500:]}
+
+
+def system_status_payload():
+    """Deploy/durability status: Railway volume attachment + the entrypoint's boot
+    marker. volume_suspect flags a data dir that looks non-durable — either the
+    seed ran more than once on the same marker, or we're on Railway with no volume
+    mounted at /app/data (Railway injects RAILWAY_VOLUME_MOUNT_PATH when one is)."""
+    marker = _read_json(DATA / ".boot-marker.json") or {}
+    mount = (os.environ.get("RAILWAY_VOLUME_MOUNT_PATH") or "").rstrip("/")
+    on_railway = bool(os.environ.get("RAILWAY_ENVIRONMENT")
+                      or os.environ.get("RAILWAY_PROJECT_ID"))
+    volume_attached = mount == "/app/data"
+    suspect = (marker.get("seed_count") or 0) > 1 or (on_railway and not volume_attached)
+    return {"ok": True, "boot_marker": marker, "on_railway": on_railway,
+            "railway_volume_mount": mount or None,
+            "volume_attached": volume_attached if on_railway else None,
+            "volume_suspect": suspect,
+            "hubspot_autosync": _autosync_status()}
 
 
 def hubspot_activity_status_payload():
@@ -1965,9 +2020,169 @@ def _stamp_handled(items):
     return items
 
 
+# ---- Durable per-lead console state --------------------------------------------
+# Scans regenerate review_queue.json / li_review_queue.json from scratch, so any
+# state the console itself creates (dismissed, tagged, reclassified, agent choice)
+# lives in reply_state.json keyed by lead identity and is merged back at read time.
+REPLY_STATE_LOCK = threading.Lock()
+
+
+def _lead_key(item):
+    """Stable per-lead identity across scans. reply_ids change with every new
+    inbound reply, so per-lead state keys off the lead itself: the lead's email
+    for the email channel, the HeyReach conversation id for LinkedIn."""
+    if (item.get("channel") or "email") == "linkedin":
+        cid = item.get("conversation_id") or item.get("reply_id")
+        return f"li:{cid}" if cid else None
+    email_addr = (item.get("lead_email") or item.get("from_email") or "").strip().lower()
+    return email_addr or None
+
+
+def _reply_state():
+    data = _read_json(REPLY_STATE) or {}
+    leads = data.get("leads")
+    return {"leads": leads if isinstance(leads, dict) else {}}
+
+
+def _reply_state_update_many(patches):
+    """Merge {lead_key: patch} into the state in ONE locked read+atomic write
+    (a None value in a patch deletes that field)."""
+    with REPLY_STATE_LOCK:
+        data = _reply_state()
+        for key, patch in patches.items():
+            cur = data["leads"].setdefault(key, {})
+            for k, v in patch.items():
+                if v is None:
+                    cur.pop(k, None)
+                else:
+                    cur[k] = v
+            if not cur:
+                data["leads"].pop(key, None)
+        REPLY_STATE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = REPLY_STATE.with_name(REPLY_STATE.name + ".tmp")
+        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        os.replace(tmp, REPLY_STATE)
+        return data
+
+
+def _reply_state_update(key, patch):
+    return _reply_state_update_many({key: patch})["leads"].get(key)
+
+
+def _norm_ts(d):
+    """Comparable timestamp key across the mixed formats the channels emit
+    ('YYYY-MM-DD HH:MM:SS' vs ISO 'T'-separated)."""
+    return (d or "").replace(" ", "T")[:19]
+
+
+def _force_interested(item):
+    """Apply the manual 'reclassified as interested' override to one item,
+    keeping the model's verdict in classifier_original for audit."""
+    cl = item.get("classifier") or {}
+    if not cl.get("interested"):
+        item.setdefault("classifier_original", dict(cl))
+        cl.update({"interested": True,
+                   "confidence": max(float(cl.get("confidence") or 0), 0.51),
+                   "reason": "manually reclassified as interested"})
+        item["classifier"] = cl
+    item["already_interested"] = True
+    return item
+
+
+def _apply_reply_state(items):
+    """Overlay per-lead console state onto queue items. Dismissal hides a lead only
+    for the replies seen up to dismiss time — a NEWER reply (date_received past the
+    snapshot) resurfaces them. A manual reclassify keeps the model's verdict in
+    classifier_original for audit."""
+    leads = _reply_state()["leads"]
+    for it in items or []:
+        key = _lead_key(it)
+        if key:
+            it["lead_key"] = key
+        st = leads.get(key) if key else None
+        if not st:
+            continue
+        if st.get("tagged_interested"):
+            it["already_interested"] = True
+        if st.get("agent"):
+            it["agent"] = st["agent"]
+        rec = st.get("reclassified")
+        if rec and rec.get("interested"):
+            _force_interested(it)   # a rescan re-runs the model — re-apply the override
+            it["reclassified"] = rec
+        dis = st.get("dismissed")
+        if dis:
+            # Hidden while it's the same reply that was dismissed, or an older one.
+            # A dateless item (either side) is NOT assumed old — a new reply must
+            # never stay buried just because its timestamp is missing.
+            same_reply = str(it.get("reply_id")) == str(dis.get("reply_id") or "")
+            d_recv, last = _norm_ts(it.get("date_received")), _norm_ts(dis.get("last_reply_at"))
+            if same_reply or (d_recv and last and d_recv <= last):
+                it["dismissed"] = dis
+    return items
+
+
+def _attach_threads(items):
+    """Attach a chronological `thread` to each item: the outbound sequence we sent,
+    the prospect's reply, and any follow-ups sent from the console. Bison's
+    sent-emails endpoint returns only sequence sends, so console follow-ups are
+    merged from the drafts/sent records — matched by lead (lead_id / lead email /
+    conversation id), never by reply_id, which changes with each inbound reply."""
+    drafts = (_read_json(FOLLOWUP_DRAFTS) or {}).get("items") or []
+    sent_meta = (_read_json(SENT_FOLLOWUPS) or {}).get("sent") or {}
+    sent_drafts = [d for d in drafts
+                   if d.get("status") == "sent" and (d.get("sent_message") or d.get("draft"))]
+    # Index once — the match below would otherwise be O(items x sent_drafts) on
+    # every queue fetch, which the UI re-issues after each action.
+    by_lead, by_conv, by_email = {}, {}, {}
+    for d in sent_drafts:
+        if d.get("lead_id") is not None:
+            by_lead.setdefault(d["lead_id"], []).append(d)
+        if d.get("conversation_id"):
+            by_conv.setdefault(d["conversation_id"], []).append(d)
+        if d.get("from_email"):
+            by_email.setdefault(d["from_email"].lower(), []).append(d)
+
+    for it in items or []:
+        thread = []
+        for m in reversed(it.get("sent_emails") or []):    # stored newest-first
+            thread.append({"dir": "out", "kind": "sequence", "subject": m.get("subject"),
+                           "date": m.get("date"),
+                           "from": m.get("from_email") or it.get("sending_email"),
+                           "text": m.get("text") or ""})
+        thread.append({"dir": "in", "kind": "reply", "subject": it.get("subject"),
+                       "date": it.get("date_received"),
+                       "from": it.get("from_email") or it.get("from_name"),
+                       "text": it.get("text_body") or ""})
+        lead_id = it.get("lead_id")
+        conv_id = it.get("conversation_id")
+        lead_emails = {e for e in ((it.get("lead_email") or "").lower(),
+                                   (it.get("from_email") or "").lower()) if e}
+        matched, seen = [], set()
+        for d in ((by_lead.get(lead_id) or []) if lead_id is not None else []) \
+                + ((by_conv.get(conv_id) or []) if conv_id else []) \
+                + [d for e in lead_emails for d in (by_email.get(e) or [])]:
+            if id(d) not in seen:
+                seen.add(id(d))
+                matched.append(d)
+        for d in matched:
+            meta = sent_meta.get(str(d.get("reply_id"))) or {}
+            thread.append({"dir": "out", "kind": "followup",
+                           "subject": f"Re: {d.get('subject')}" if d.get("subject") else None,
+                           "date": d.get("sent_at") or meta.get("sent_at"),
+                           "from": it.get("sending_email"),
+                           "agent": d.get("agent"),
+                           "text": d.get("sent_message") or d.get("draft") or ""})
+        thread.sort(key=lambda m: _norm_ts(m.get("date")))
+        it["thread"] = thread
+    return items
+
+
 def review_queue_payload():
     """Unified review queue: email (Bison) + LinkedIn (HeyReach) replies in one
-    list, each item carrying a `channel`. Counts are summed across channels."""
+    list, each item carrying a `channel`. Counts are summed across channels.
+    Per-lead console state and the merged conversation thread are attached at
+    read time so they survive scans rewriting the queue files."""
     email = _read_json(REVIEW_QUEUE) or {}
     li = _read_json(LI_REVIEW_QUEUE) or {}
     if not email and not li:
@@ -1976,6 +2191,10 @@ def review_queue_payload():
         it.setdefault("channel", "email")
     items = list(email.get("items") or []) + list(li.get("items") or [])
     _stamp_handled(items)
+    _apply_reply_state(items)
+    _attach_threads(items)
+    active = [it for it in items if not it.get("dismissed")]
+    dismissed = [it for it in items if it.get("dismissed")]
     ec, lc = (email.get("counts") or {}), (li.get("counts") or {})
     counts = {
         "scanned": (ec.get("scanned") or 0) + (lc.get("scanned") or 0),
@@ -1983,17 +2202,107 @@ def review_queue_payload():
         "already": ec.get("already") or 0,
         "unsubscribed": ec.get("unsubscribed") or 0,
         "filtered": (ec.get("filtered") or 0) + (lc.get("filtered") or 0),
+        "dismissed": len(dismissed),
         "email_scanned": ec.get("scanned") or 0,
         "linkedin_scanned": lc.get("scanned") or 0,
     }
     return {
         "available": True,
-        "items": items,
+        "items": active,
+        "dismissed": dismissed,
         "counts": counts,
         "scanned_at": email.get("scanned_at") or li.get("scanned_at"),
         "lookback_days": email.get("lookback_days") or li.get("lookback_days"),
         "linkedin": {"configured": bool(li.get("configured")), "error": li.get("error")},
+        "hubspot_autosync": _autosync_status(),
     }
+
+
+# Queue files are rewritten by request threads (reclassify/tag) and by the scan
+# scripts; one writer at a time + atomic replace so readers never see torn JSON.
+QUEUE_WRITE_LOCK = threading.Lock()
+
+
+def _write_json_atomic(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    os.replace(tmp, path)
+
+
+def _find_queue_item(reply_id):
+    return next((it for it in _apply_reply_state(_stamp_handled(_merged_queue_items()))
+                 if str(it.get("reply_id")) == str(reply_id)), None)
+
+
+def do_dismiss_reply(reply_id, reason=None):
+    """Clear a lead out of the queue without sending anything — e.g. the SDR already
+    replied or booked them from the CRM. Keyed per lead and windowed to the replies
+    seen so far, so the lead stays gone across rescans but a NEW reply resurfaces."""
+    it = _find_queue_item(reply_id)
+    if it is None:
+        return {"ok": False, "error": f"no queue item {reply_id}"}, 404
+    key = _lead_key(it)
+    if not key:
+        return {"ok": False, "error": "item has no lead identity to key dismissal on"}, 409
+    _reply_state_update(key, {"dismissed": {
+        "reason": (reason or "handled")[:120], "at": now_iso(),
+        "reply_id": str(reply_id),               # covers items with no usable date
+        "last_reply_at": it.get("date_received") or "",
+    }})
+    return {"ok": True, "reply_id": reply_id, "lead_key": key}, 200
+
+
+def do_undismiss_reply(reply_id):
+    it = _find_queue_item(reply_id)
+    key = _lead_key(it) if it else None
+    if not key:
+        return {"ok": False, "error": f"no queue item {reply_id}"}, 404
+    _reply_state_update(key, {"dismissed": None})
+    return {"ok": True, "reply_id": reply_id, "lead_key": key}, 200
+
+
+def do_reclassify_reply(reply_id):
+    """Promote a misclassified 'other' reply to interested: enrich it on demand
+    (non-interested items are never enriched at scan time), flip the classifier
+    verdict in the queue file (so drafting picks it up), record the manual override
+    per lead (so it survives rescans), then run the standard tag-interested flow."""
+    item, channel = None, None
+    for path, ch in ((REVIEW_QUEUE, "email"), (LI_REVIEW_QUEUE, "linkedin")):
+        for it in (_read_json(path) or {}).get("items") or []:
+            if str(it.get("reply_id")) == str(reply_id):
+                it.setdefault("channel", ch)
+                item, channel = it, ch
+                break
+        if item:
+            break
+    if item is None:
+        return {"ok": False, "error": f"no queue item {reply_id}"}, 404
+    # Enrich OUTSIDE the lock — it's a network round-trip.
+    if channel == "email" and not item.get("enriched") and item.get("lead_id"):
+        try:
+            sys.path.insert(0, str(SCRIPTS / "email-bison" / "scripts"))
+            from classify_replies import enrich_item  # noqa: E402
+            enrich_item(_bison(), item)
+        except Exception as e:  # noqa: BLE001 — enrichment is context, not a gate
+            item["enrich_error"] = str(e)[:200]
+    _force_interested(item)
+    # Re-read + mutate + atomic-write under the lock, so a scan or another request
+    # finishing in between can't be clobbered with our stale copy of the file.
+    qpath = REVIEW_QUEUE if channel == "email" else LI_REVIEW_QUEUE
+    with QUEUE_WRITE_LOCK:
+        queue = _read_json(qpath) or {}
+        for fresh in queue.get("items") or []:
+            if str(fresh.get("reply_id")) == str(reply_id):
+                fresh.update(item)
+                _write_json_atomic(qpath, queue)
+                break
+    key = _lead_key(item)
+    if key:
+        _reply_state_update(key, {"reclassified": {"interested": True, "at": now_iso()},
+                                  "dismissed": None})
+    tag = do_tag_replies([reply_id])
+    return {"ok": bool(tag.get("ok")), "item": item, "tag": tag}, 200
 
 
 def do_tag_replies(reply_ids):
@@ -2008,10 +2317,14 @@ def do_tag_replies(reply_ids):
     tag_id = interested_tag_id()
     bison = None
     results, tagged, failed = [], 0, 0
+    tagged_ids, state_patches = set(), {}
     for rid in reply_ids:
         li_item = li_by_id.get(str(rid))
         if li_item is not None:                          # LinkedIn — local flip only
-            li_item["already_interested"] = True
+            key = _lead_key(li_item)
+            if key:  # durable: the queue file is rewritten on every rescan
+                state_patches[key] = {"tagged_interested": True, "tagged_at": now_iso()}
+            tagged_ids.add(str(rid))
             results.append({"reply_id": rid, "channel": "linkedin", "ok": True})
             tagged += 1
             continue
@@ -2024,14 +2337,28 @@ def do_tag_replies(reply_ids):
                 bison.attach_tags_to_leads([tag_id], [lead_id])
             results.append({"reply_id": rid, "lead_id": lead_id, "ok": True})
             tagged += 1
-            item["already_interested"] = True  # update cache
+            tagged_ids.add(str(rid))
+            key = _lead_key(item)
+            if key:
+                state_patches[key] = {"tagged_interested": True, "tagged_at": now_iso()}
         except Exception as e:  # noqa: BLE001 - one bad reply must not abort the rest
             results.append({"reply_id": rid, "lead_id": lead_id, "ok": False, "error": str(e)[:200]})
             failed += 1
-    if email_q:
-        REVIEW_QUEUE.write_text(json.dumps(email_q, indent=2))
-    if li_q:
-        LI_REVIEW_QUEUE.write_text(json.dumps(li_q, indent=2))
+    if state_patches:
+        _reply_state_update_many(state_patches)
+    if tagged_ids:
+        # Re-read + atomic-write under the lock (the Bison calls above take long
+        # enough for a scan to have rewritten the file since we read it).
+        with QUEUE_WRITE_LOCK:
+            for qpath in (REVIEW_QUEUE, LI_REVIEW_QUEUE):
+                queue = _read_json(qpath) or {}
+                changed = False
+                for it in queue.get("items") or []:
+                    if str(it.get("reply_id")) in tagged_ids:
+                        it["already_interested"] = True
+                        changed = True
+                if changed:
+                    _write_json_atomic(qpath, queue)
     return {"ok": failed == 0, "tagged": tagged, "failed": failed, "results": results}
 
 
@@ -2117,6 +2444,188 @@ def do_approve_followup(reply_id, message):
                           "sender_email_id": sender_email_id})
     _mark_draft_sent(drafts, draft, body_text)
     return {"ok": True, "reply_id": reply_id, "channel": "email", "to_email": to_email}, 200
+
+
+# ----------------------------------------------------------------------------
+# Reply agents: registry + per-lead selection + regenerate. The standard agent
+# drafts synchronously via draft_followups.py; the signal-playbook agent runs the
+# async build job below and its draft lands in the same followup_drafts.json.
+# ----------------------------------------------------------------------------
+def _reply_agents_mod():
+    p = str(SCRIPTS / "email-bison" / "scripts")
+    if p not in sys.path:   # called per request — don't grow sys.path unboundedly
+        sys.path.insert(0, p)
+    import reply_agents  # noqa: E402
+    return reply_agents
+
+
+def reply_agents_payload():
+    ra = _reply_agents_mod()
+    return {"ok": True, "agents": ra.AGENTS, "default": ra.DEFAULT_AGENT}
+
+
+def do_set_reply_agent(reply_id, agent):
+    ra = _reply_agents_mod()
+    if not ra.get(agent):
+        return {"ok": False, "error": f"unknown agent {agent!r}"}, 400
+    it = _find_queue_item(reply_id)
+    if it is None:
+        return {"ok": False, "error": f"no queue item {reply_id}"}, 404
+    key = _lead_key(it)
+    if not key:
+        return {"ok": False, "error": "item has no lead identity"}, 409
+    # the default agent is represented as no stored state
+    _reply_state_update(key, {"agent": None if agent == ra.DEFAULT_AGENT else agent})
+    return {"ok": True, "reply_id": reply_id, "agent": agent}, 200
+
+
+def do_regenerate_followup(reply_id, agent=None):
+    """Re-draft one follow-up with the chosen agent. Standard = synchronous; the
+    signal-playbook agent kicks off the async build job and the UI polls its
+    status until the draft lands in followup_drafts.json."""
+    it = _find_queue_item(reply_id)
+    if it is None:
+        return {"ok": False, "error": f"no queue item {reply_id}"}, 404
+    if it.get("handled"):   # never clobber the record of an already-sent follow-up
+        return {"ok": False, "error": "a follow-up was already sent for this reply"}, 409
+    ra = _reply_agents_mod()
+    agent = agent or it.get("agent") or ra.DEFAULT_AGENT
+    spec = ra.get(agent)
+    if not spec:
+        return {"ok": False, "error": f"unknown agent {agent!r}"}, 400
+    if spec.get("kind") == "pipeline":   # registry-driven: async build agents
+        return start_play_job(reply_id)
+    res = run_script([str(DRAFT_FOLLOWUPS), "--reply-id", str(reply_id)], timeout=600)
+    drafts = _read_json(FOLLOWUP_DRAFTS) or {"items": []}
+    draft = next((d for d in drafts.get("items", [])
+                  if str(d.get("reply_id")) == str(reply_id)), None)
+    # exit code 0 + a record is not success: draft_one records API errors in-place
+    if (res["returncode"] != 0 or not draft or draft.get("error")
+            or not (draft.get("draft") or "").strip()):
+        err = ((draft or {}).get("error")
+               or (res["stderr"] or res["stdout"]).strip()[-500:] or "draft failed")
+        return {"ok": False, "error": err}, 502
+    return {"ok": True, "async": False, "agent": agent, "draft": draft}, 200
+
+
+# ---- Signal Playbook build job (async; clones the SOURCE_JOBS pattern) ----------
+PLAY_JOBS = {}
+PLAY_LOCK = threading.Lock()   # guards the one-build-per-lead check-then-insert
+_PLAY_SEQ = [0]
+PLAY_STAGES = ["research", "deck-data", "render", "upload", "draft"]
+
+
+def _new_play_job_id():
+    with JOB_LOCK:
+        _PLAY_SEQ[0] += 1
+        return f"play-{_PLAY_SEQ[0]}"
+
+
+def _play_contact_inputs(item):
+    """Resolve the contact profile the play pipeline needs from the queue item,
+    topped up from the contacts table (company/domain) and falling back to the
+    lead's email domain."""
+    email_addr = (item.get("lead_email") or item.get("from_email") or "").strip().lower()
+    parts = (item.get("from_name") or "").split()
+    first = item.get("first_name") or (parts[0] if parts else "")
+    last = item.get("last_name") or (" ".join(parts[1:]) if len(parts) > 1 else "")
+    company = item.get("company")
+    domain = None
+    if email_addr and "@" in email_addr:
+        try:
+            conn = db_connect()
+            row = conn.execute(
+                "SELECT company, domain FROM contacts WHERE lower(email)=? LIMIT 1",
+                (email_addr,)).fetchone()
+            conn.close()
+            if row:
+                company = company or row["company"]
+                domain = row["domain"]
+        except sqlite3.Error:
+            pass
+        domain = domain or email_addr.rsplit("@", 1)[-1]
+    return {"firstName": first, "lastName": last, "jobTitle": item.get("title") or "",
+            "businessEmail": email_addr, "companyName": company or (domain or "").split(".")[0],
+            "companyDomain": domain or ""}
+
+
+def start_play_job(reply_id):
+    it = _find_queue_item(reply_id)
+    if it is None:
+        return {"ok": False, "error": f"no queue item {reply_id}"}, 404
+    if not BUILD_PLAY.is_file():
+        return {"ok": False, "error": "signal-playbook skill not installed"}, 501
+    key = _lead_key(it) or str(reply_id)
+    # Check-then-insert must be atomic or two concurrent regenerates for the same
+    # lead both pass the check and spawn two full build pipelines.
+    with PLAY_LOCK:
+        running = next((j for j in PLAY_JOBS.values()
+                        if j["lead_key"] == key and j["status"] == "running"), None)
+        if running:  # one build per lead at a time — return the in-flight job
+            return {"ok": True, "async": True, "agent": "signal-playbook",
+                    "job_id": running["job_id"], "existing": True}, 200
+        contact = _play_contact_inputs(it)
+        if not contact.get("companyDomain"):
+            return {"ok": False, "error": "could not resolve a company domain for this lead"}, 409
+        job_id = _new_play_job_id()
+        PLAY_JOBS[job_id] = {
+            "job_id": job_id, "reply_id": reply_id, "lead_key": key, "status": "running",
+            "agent": "signal-playbook", "contact": contact,
+            "stage": "research", "pct": 2, "stages": PLAY_STAGES, "log": [],
+            "play": None, "draft": None, "fallback": None, "error": None,
+            "started_at": now_iso(), "finished_at": None,
+        }
+    threading.Thread(target=_run_play_job, args=(job_id,), daemon=True).start()
+    return {"ok": True, "async": True, "agent": "signal-playbook", "job_id": job_id}, 200
+
+
+def _play_progress_cb(job):
+    """build_play.py announces each stage as 'stage: <name>' on stderr; everything
+    else is free-text progress kept for the job's log tail."""
+    order = {s: i for i, s in enumerate(PLAY_STAGES)}
+    def on_line(line):
+        job["log"] = (job["log"] + [line[:300]])[-40:]
+        m = re.match(r"stage:\s*([a-z-]+)", line.strip())
+        if m and m.group(1) in order:
+            job["stage"] = m.group(1)
+            job["pct"] = min(95, int(order[m.group(1)] / len(PLAY_STAGES) * 100) + 5)
+    return on_line
+
+
+def _run_play_job(job_id):
+    job = PLAY_JOBS[job_id]
+    try:
+        args = [str(BUILD_PLAY), "--reply-id", str(job["reply_id"]),
+                "--contact-json", json.dumps(job["contact"])]
+        res = run_script_streaming(args, _play_progress_cb(job), timeout=3600)
+        out = {}
+        try:  # progress goes to stderr; the JSON result is stdout's last line
+            last = [ln for ln in (res.get("stdout") or "").splitlines() if ln.strip()][-1]
+            out = json.loads(last)
+        except (json.JSONDecodeError, IndexError):
+            pass
+        if not out:
+            job["status"] = "error"
+            job["error"] = (res.get("stderr") or "").strip()[-500:] or "signal play build failed"
+            return
+        job["play"] = out.get("play")
+        job["draft"] = out.get("draft")
+        job["fallback"] = out.get("fallback")
+        job["error"] = out.get("error")
+        job["status"] = "done" if (out.get("ok") or out.get("draft")) else "error"
+        if job["status"] == "done":
+            job["stage"], job["pct"] = "done", 100
+    except Exception as e:  # noqa: BLE001
+        job["status"] = "error"
+        job["error"] = f"{type(e).__name__}: {e}"
+    finally:
+        job["finished_at"] = now_iso()
+
+
+def _play_job_public(job):
+    if not job:
+        return None
+    return {k: v for k, v in job.items() if k != "contact"}
 
 
 # ----------------------------------------------------------------------------
@@ -2324,6 +2833,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True})
             if path == "/api/status":
                 return self._json(db_status())
+            if path == "/api/system/status":
+                return self._json(system_status_payload())
             if path == "/api/batches":
                 status = (params.get("status", [""])[0] or None)
                 limit = (params.get("limit", [""])[0] or None)
@@ -2346,6 +2857,29 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(review_queue_payload())
             if path == "/api/replies/followup/drafts":
                 return self._json(followup_drafts_payload())
+            if path == "/api/replies/agents":
+                return self._json(reply_agents_payload())
+            if path.startswith("/api/replies/playbook/status/"):
+                job_id = path[len("/api/replies/playbook/status/"):]
+                job = PLAY_JOBS.get(job_id)
+                if not job:
+                    return self._error(404, f"no play job {job_id}")
+                return self._json(_play_job_public(job))
+            if path.startswith("/api/plays/") and path.endswith("/html"):
+                slug = path[len("/api/plays/"):-len("/html")]
+                if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,80}", slug or ""):
+                    return self._error(400, "bad slug")
+                d = SIGNAL_PLAYS_DIR / slug
+                html = next(iter(sorted(d.glob("*.html"))), None) if d.is_dir() else None
+                if not html:
+                    return self._error(404, f"no play html for {slug}")
+                body = html.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if path == "/api/signals":
                 return self._json(signals_payload())
             if path == "/api/variants":
@@ -2370,6 +2904,24 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(do_hubspot_lists(q, list_type))
             if path == "/api/hubspot/activity/status":
                 return self._json(hubspot_activity_status_payload())
+            if path == "/api/hubspot/activity/audit":
+                # read-only duplicate diagnosis — see hubspot_activity_audit.py
+                args = [str(HUBSPOT_ACTIVITY_AUDIT), "--json"]
+                for cid in params.get("contact_id", []):
+                    args += ["--contact-id", cid]
+                sample = (params.get("sample", [""])[0] or "").strip()
+                if sample.isdigit():
+                    args += ["--sample", sample]
+                elif not params.get("contact_id"):
+                    args += ["--sample", "5"]
+                res = run_script(args, timeout=600)
+                if res["returncode"] != 0:
+                    return self._error(502, (res["stderr"] or res["stdout"]).strip()[:400])
+                try:
+                    last = [ln for ln in res["stdout"].splitlines() if ln.strip()][-1]
+                    return self._json(json.loads(last))
+                except (json.JSONDecodeError, IndexError):
+                    return self._error(502, "could not parse audit output")
             if path == "/api/heyreach/activity/status":
                 return self._json(heyreach_activity_status_payload())
             if path == "/api/clay/status":
@@ -2519,6 +3071,36 @@ class Handler(BaseHTTPRequestHandler):
                 if not reply_ids:
                     return self._error(400, "reply_ids required")
                 return self._json(do_tag_replies(reply_ids))
+            if path == "/api/replies/agent":
+                body = self._read_body()
+                if not (body.get("reply_id") and body.get("agent")):
+                    return self._error(400, "reply_id and agent required")
+                payload, code = do_set_reply_agent(body.get("reply_id"), body.get("agent"))
+                return self._json(payload, code=code)
+            if path == "/api/replies/followup/regenerate":
+                body = self._read_body()
+                if not body.get("reply_id"):
+                    return self._error(400, "reply_id required")
+                payload, code = do_regenerate_followup(body.get("reply_id"), body.get("agent"))
+                return self._json(payload, code=code)
+            if path == "/api/replies/dismiss":
+                body = self._read_body()
+                if not body.get("reply_id"):
+                    return self._error(400, "reply_id required")
+                payload, code = do_dismiss_reply(body.get("reply_id"), body.get("reason"))
+                return self._json(payload, code=code)
+            if path == "/api/replies/undismiss":
+                body = self._read_body()
+                if not body.get("reply_id"):
+                    return self._error(400, "reply_id required")
+                payload, code = do_undismiss_reply(body.get("reply_id"))
+                return self._json(payload, code=code)
+            if path == "/api/replies/reclassify":
+                body = self._read_body()
+                if not body.get("reply_id"):
+                    return self._error(400, "reply_id required")
+                payload, code = do_reclassify_reply(body.get("reply_id"))
+                return self._json(payload, code=code)
             if path == "/api/replies/followup/draft":
                 return self._json(do_draft_followups())
             if path == "/api/replies/followup/approve":
@@ -2713,15 +3295,34 @@ def _activity_autosync_loop():
         try:
             full = full_on and (tick % full_every == 0)
             args = [str(HUBSPOT_ACTIVITY_SYNC), "--json", "--since-days", "60"]
+            if (os.environ.get("HUBSPOT_ACTIVITY_ALLOW_BACKFILL", "") or "").strip().lower() \
+                    in ("1", "true", "yes"):
+                args.append("--allow-backfill")     # intentional first backfill opt-in
             if full:
                 args += ["--sleep", "0.1"]          # throttle the heavier outbound sweep
             else:
                 args.append("--replies-only")       # cheap: inbound + our replies only
-            res = run_script(args, timeout=5400)
+            with HS_SYNC_LOCK:
+                res = run_script(args, timeout=5400)
             lines = [ln for ln in (res.get("stdout") or "").splitlines() if ln.strip()]
-            print(f"[activity-sync] {'full' if full else 'replies'}: "
-                  f"{lines[-1] if lines else (res.get('stderr') or '')[:200]}", flush=True)
+            summary = lines[-1] if lines else (res.get("stderr") or "")[:200]
+            # The script exits 0 even when the run failed or the fresh-ledger guard
+            # refused — health must come from the JSON summary, not the exit code.
+            parsed = None
+            try:
+                parsed = json.loads(summary)
+            except (json.JSONDecodeError, TypeError):
+                pass
+            ok = bool(parsed.get("ok")) if isinstance(parsed, dict) else res["returncode"] == 0
+            if isinstance(parsed, dict) and parsed.get("guard"):
+                summary = (f"refused: empty dedup ledger, {parsed.get('would_log')} events would "
+                           f"log (> {parsed.get('threshold')}). Recover with "
+                           f"--reconcile-from-hubspot, or set HUBSPOT_ACTIVITY_ALLOW_BACKFILL=1 "
+                           f"for an intentional first backfill.")
+            _record_autosync(ok, "full" if full else "replies", summary)
+            print(f"[activity-sync] {'full' if full else 'replies'}: {summary}", flush=True)
         except Exception as e:  # noqa: BLE001 - auto-sync must never crash the server
+            _record_autosync(False, "error", f"{type(e).__name__}: {e}")
             print(f"[activity-sync] error: {type(e).__name__}: {e}", flush=True)
         # Safety net for LinkedIn: re-drain any HeyReach webhook events left pending/failed
         # (HubSpot was down, the contact wasn't in the table yet, an inline drain raced).

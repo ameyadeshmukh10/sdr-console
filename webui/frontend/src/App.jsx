@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react'
 import { NavLink, Route, Routes } from 'react-router-dom'
+import { api } from './api.js'
 import { useAuth } from './AuthContext.jsx'
 import { BrandLogo } from './components/BrandLogo.jsx'
 import LoginPage from './pages/LoginPage.jsx'
@@ -39,6 +41,23 @@ const NAV = [
   { to: '/outreach', ico: '✉', label: 'Outreach' },
 ]
 
+// One-time durability check: if the server says the data dir looks non-durable
+// (no Railway Volume at /app/data), warn on every page — everything the console
+// records (dedup ledgers, queues, dismissals) is lost on redeploy until fixed.
+function VolumeBanner() {
+  const [sys, setSys] = useState(null)
+  useEffect(() => { api.systemStatus().then(setSys).catch(() => {}) }, [])
+  if (!sys?.volume_suspect) return null
+  return (
+    <div className="banner warn" style={{ marginBottom: 20 }}>
+      <b>Data volume looks non-persistent.</b> Attach a Railway Volume mounted at{' '}
+      <code>/app/data</code> (Railway dashboard → this service → Settings → Volumes → Attach),
+      or everything recorded here — HubSpot dedup ledger, reply queues, dismissals — resets on
+      every redeploy and activity re-logs to HubSpot as duplicates.
+    </div>
+  )
+}
+
 export default function App() {
   const { token, email, logout } = useAuth()
   if (!token) return <LoginPage />
@@ -62,6 +81,7 @@ export default function App() {
         </div>
       </aside>
       <main className="main">
+        <VolumeBanner />
         <Routes>
           <Route path="/" element={<UsePage />} />
           <Route path="/pipeline" element={<PipelinePage />} />

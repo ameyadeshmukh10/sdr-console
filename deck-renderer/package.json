@@ -1,0 +1,37 @@
+{
+  "name": "sdr-console-deck-renderer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Vendored (pruned) Bites AI SDR Playbook deck renderer from SDR-Playbook-Multi-Agent-System — only the `deck` path: validate deck-data.json, build the single-file HTML, export the PDF.",
+  "scripts": {
+    "validate": "node scripts/validate-deck-data.mjs",
+    "build:deck-bites": "vite build --config vite.config.deck-bites.ts && node scripts/finalize-deck-bites.mjs",
+    "export:pdf-bites": "node scripts/export-deck-bites-pdf.mjs",
+    "deck": "npm run validate && npm run build:deck-bites && npm run export:pdf-bites"
+  },
+  "dependencies": {
+    "@radix-ui/react-tooltip": "^1.2.7",
+    "@tanstack/react-query": "^5.62.0",
+    "clsx": "^2.1.1",
+    "framer-motion": "^11.0.0",
+    "lucide-react": "^0.462.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-icons": "^5.6.0",
+    "react-router-dom": "^6.30.1",
+    "tailwind-merge": "^2.6.0",
+    "tailwindcss-animate": "^1.0.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.57.0",
+    "@vitejs/plugin-react-swc": "^3.11.0",
+    "autoprefixer": "^10.4.21",
+    "pdf-lib": "^1.17.1",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.8.3",
+    "vite": "^5.4.19",
+    "vite-plugin-singlefile": "^2.1.0"
+  }
+}

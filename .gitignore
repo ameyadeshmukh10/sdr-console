@@ -19,3 +19,7 @@ dist/
 
 # OS
 .DS_Store
+deck-renderer/export-deck-bites/
+deck-renderer/.deck.lock
+# Signal plays are runtime artifacts (built per lead, live on the volume)
+data/signal-plays/

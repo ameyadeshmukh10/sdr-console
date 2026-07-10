@@ -182,3 +182,58 @@ The product knowledge the agents write from: `skills/ai-sdr/knowledge/` (`offer.
   `*_BASE_URL` in `.env`.
 - **Always dry-run before a live enroll** (`enroll --dry-run`) to eyeball routing + payloads.
 ```
+
+---
+
+## Replies management (webui → Replies)
+
+The Replies view is a two-pane inbox over both reply channels (Bison email + HeyReach
+LinkedIn). Left: the message list — **Interested** (draft & send), **Possible interested**
+(review), **Other** (not interested / low confidence), **Done & dismissed**. Right: the full
+conversation thread (outbound sequence, the reply, and any console-sent follow-ups, merged
+chronologically) plus the actions for that reply.
+
+- **Dismiss** ("handled in CRM") clears a lead from the queue without sending anything —
+  for leads you've already replied to / booked from HubSpot. Dismissals persist across
+  rescans (`data/interested-replies/reply_state.json`, keyed per lead) and auto-expire the
+  moment the lead sends a **new** reply.
+- **Reclassify as interested** promotes a misclassified "Other" reply: it's enriched on
+  demand, flipped to interested (the model's original verdict is kept for audit), tagged in
+  Bison, and moved to the Interested queue. The override survives rescans.
+- **Reply agents** — each interested reply has an agent dropdown + Regenerate:
+  - **Standard**: the playbook-grounded drafter (`draft_followups.py`).
+  - **Signal Playbook**: builds a personalized signal play for the lead's company
+    (research → deck-data → HTML+PDF via `deck-renderer/`), uploads the PDF to HubSpot File
+    Manager (public URL; `files` scope required), and drafts a reply embedding the link.
+    Runs as a background job with stage progress; artifacts land in
+    `data/signal-plays/<slug>/`. Falls back to a standard draft if the build fails.
+- **HubSpot logging is automatic** — an hourly background loop logs replies in/out (and the
+  outbound sequence every 12th cycle). There is no manual button. The toolbar shows
+  `Last scanned` plus a red dot if the last auto-log failed.
+
+### HubSpot duplicate-logging runbook
+
+If contacts show the same email logged multiple times:
+
+1. **Audit (read-only):** `python3 .claude/skills/sdr-pipeline/scripts/hubspot_activity_audit.py --sample 5`
+   (or `--contact-id <id>`; also `GET /api/hubspot/activity/audit`). Each duplicate cluster
+   is labeled:
+   - `overlapping_loggers` — our sync AND another logger (HubSpot native inbox/BCC logging,
+     or HeyReach's native sync + our webhook drain for LinkedIn) both log the same email.
+     Fix: turn one off (e.g. disconnect native logging for the SDR aliases, or set
+     `HEYREACH_ACTIVITY_AUTOSYNC=0`).
+   - `ledger_loss_or_manual` — engagements re-created after the dedup ledger was wiped
+     (non-durable volume) or logged by a human.
+   - `dedup_bug` — duplicates that are all ours; report it.
+2. **Guard:** with an empty ledger, a live sync that would create more than
+   `HUBSPOT_ACTIVITY_FRESH_MAX` (default 50) engagements refuses and reports instead.
+3. **Recover a wiped ledger:** `python3 .claude/skills/sdr-pipeline/scripts/hubspot_activity_sync.py --reconcile-from-hubspot`
+   — adopts existing engagements (matched by contact + timestamp) into the ledger instead of
+   re-creating them.
+
+### Data durability (Railway)
+
+Everything the console records lives under `/app/data` — attach a **Railway Volume** mounted
+at `/app/data` (service → Settings → Volumes) or it resets on every redeploy. The app checks
+this at boot (`/api/system/status`, entrypoint boot marker) and shows a warning banner when
+the data dir looks non-durable.

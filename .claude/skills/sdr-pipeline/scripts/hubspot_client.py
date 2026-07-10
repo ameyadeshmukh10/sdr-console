@@ -474,3 +474,117 @@ class HubSpotClient:
         """Property definition (GET /crm/v3/properties/{type}/{name}) — used for
         enumeration option -> label maps (deal stage, owner, created-by)."""
         return self._request("GET", f"/crm/v3/properties/{object_type}/{name}")
+
+    # ---- File Manager (files/v3) ----------------------------------------
+    def upload_file(self, file_path, folder_path="signal-plays", access="PUBLIC_INDEXABLE",
+                    file_name=None):
+        """Upload a file to HubSpot File Manager and return {"id", "url", "name"}.
+
+        The returned url is the file's public URL — served from the portal's
+        file-hosting domain (a connected domain like files.everworker.ai when one
+        is configured in Settings -> Content -> Domains & URLs, otherwise the
+        default *.hubspotusercontent* host). Requires the `files` scope on the
+        private-app token.
+
+        stdlib multipart POST /files/v3/files with parts: file, options, folderPath.
+        """
+        import mimetypes
+        import uuid
+        p = Path(file_path)
+        data = p.read_bytes()
+        name = file_name or p.name
+        ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        options = json.dumps({"access": access, "overwrite": True})
+        boundary = f"----hs-{uuid.uuid4().hex}"
+
+        def part(headers, payload):
+            head = "".join(h + "\r\n" for h in headers)
+            return (f"--{boundary}\r\n{head}\r\n").encode() + payload + b"\r\n"
+
+        body = b"".join([
+            part([f'Content-Disposition: form-data; name="file"; filename="{name}"',
+                  f"Content-Type: {ctype}"], data),
+            part(['Content-Disposition: form-data; name="options"',
+                  "Content-Type: application/json"], options.encode()),
+            part(['Content-Disposition: form-data; name="folderPath"'],
+                 folder_path.encode()),
+        ]) + f"--{boundary}--\r\n".encode()
+
+        url = self.base_url + "/files/v3/files"
+        req = urllib.request.Request(url, data=body, method="POST")
+        req.add_header("Authorization", f"Bearer {self.token}")
+        req.add_header("Accept", "application/json")
+        req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+        last = None
+        for attempt in range(4):
+            try:
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    payload = json.loads(resp.read().decode("utf-8") or "{}")
+                return {"id": payload.get("id"), "url": payload.get("url"),
+                        "name": payload.get("name"), "raw": payload}
+            except urllib.error.HTTPError as e:
+                detail = e.read().decode("utf-8", "replace")[:300]
+                if (e.code == 429 or 500 <= e.code < 600) and attempt < 3:
+                    time.sleep(2 ** attempt)
+                    last = HubSpotError(f"HTTP {e.code} for {url}: {detail}")
+                    continue
+                raise HubSpotError(f"HTTP {e.code} for {url}: {detail}") from e
+            except urllib.error.URLError as e:
+                if attempt < 3:
+                    time.sleep(2 ** attempt)
+                    last = HubSpotError(f"Network error for {url}: {e.reason}")
+                    continue
+                raise HubSpotError(f"Network error for {url}: {e.reason}") from e
+        raise last
+
+    # ---- generic CRM search (engagement audit / reconcile) ---------------
+    def search_objects(self, object_type, filters, properties, *, limit=100, after=None,
+                       sorts=None):
+        """One page of POST /crm/v3/objects/{type}/search. Returns the raw payload
+        ({results, paging}). filters is one AND filter group."""
+        body = {"filterGroups": [{"filters": filters}],
+                "properties": list(properties), "limit": limit}
+        if after:
+            body["after"] = after
+        if sorts:
+            body["sorts"] = sorts
+        return self._request("POST", f"/crm/v3/objects/{object_type}/search", body=body)
+
+    def iter_contact_engagements(self, object_type, contact_id, properties, *, page_cap=20):
+        """All engagements of one type associated with a contact (paginated search
+        by the associations.contact pseudo-property)."""
+        after = None
+        for _ in range(page_cap):
+            payload = self.search_objects(
+                object_type,
+                [{"propertyName": "associations.contact", "operator": "EQ",
+                  "value": str(contact_id)}],
+                properties, after=after)
+            for r in payload.get("results", []):
+                yield r
+            after = ((payload.get("paging") or {}).get("next") or {}).get("after")
+            if not after:
+                return
+
+    def find_email_engagement(self, contact_id, ts_ms, *, window_ms=120000,
+                              direction=None, subject=None):
+        """An existing email engagement on this contact within ±window of ts_ms —
+        used to seed the dedup ledger instead of re-creating the engagement.
+        direction/subject narrow the match so a nearby unrelated engagement (e.g.
+        a native-logged reply a minute from our send) is never adopted."""
+        filters = [
+            {"propertyName": "associations.contact", "operator": "EQ", "value": str(contact_id)},
+            {"propertyName": "hs_timestamp", "operator": "BETWEEN",
+             "value": str(int(ts_ms) - window_ms), "highValue": str(int(ts_ms) + window_ms)},
+        ]
+        if direction:
+            filters.append({"propertyName": "hs_email_direction", "operator": "EQ",
+                            "value": direction})
+        if subject:
+            filters.append({"propertyName": "hs_email_subject", "operator": "EQ",
+                            "value": str(subject)[:200]})
+        payload = self.search_objects(
+            "emails", filters,
+            ["hs_timestamp", "hs_email_subject", "hs_email_direction"], limit=10)
+        results = payload.get("results", [])
+        return results[0] if results else None

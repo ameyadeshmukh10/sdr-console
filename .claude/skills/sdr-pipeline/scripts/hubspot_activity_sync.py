@@ -93,14 +93,17 @@ class Logger:
     row + (unless dry-run) a HubSpot email engagement. Centralises dedup, dry-run,
     throttling, and error capture so the three event loops stay simple."""
 
-    def __init__(self, conn, hs, *, ai_from, owner_id, dry_run, sleep, target_cid):
+    def __init__(self, conn, hs, *, ai_from, owner_id, dry_run, sleep, target_cid,
+                 reconcile=False):
         self.conn, self.hs = conn, hs
         self.ai_from = ai_from
         self.owner_id = owner_id
         self.dry_run = dry_run
         self.sleep = sleep
         self.target_cid = target_cid
-        self.counts = {"logged": 0, "skipped_dupe": 0, "skipped_no_contact": 0, "failed": 0}
+        self.reconcile = reconcile
+        self.counts = {"logged": 0, "skipped_dupe": 0, "skipped_no_contact": 0, "failed": 0,
+                       "reconciled": 0}
         self.by_type = {"outbound": 0, "inbound": 0, "our_reply": 0}
         self.errors = []
 
@@ -154,6 +157,24 @@ class Logger:
             print(f"  [dry] {event_type:9s} -> contact {contact_id}  {status:8s} "
                   f"{(subject or '')[:60]!r}")
             return
+        # Reconcile mode (ledger recovery): if HubSpot already has an engagement on
+        # this contact at ~this timestamp, adopt it into the ledger instead of
+        # creating a duplicate. Only truly-missing events fall through and log.
+        if self.reconcile:
+            ms = to_ms_epoch(timestamp)
+            existing = None
+            if ms:
+                try:
+                    existing = self.hs.find_email_engagement(
+                        contact_id, ms, direction=direction, subject=subject)
+                except HubSpotError:
+                    existing = None
+            if existing:
+                db.record_activity(self.conn, dedup_key, event_type, "logged",
+                                   contact_id=contact_id, engagement_id=existing.get("id"),
+                                   event_ts=timestamp)
+                self.counts["reconciled"] += 1
+                return
         try:
             eng_id = self.hs.log_email(
                 contact_id, timestamp=timestamp, direction=direction, status=status,
@@ -461,6 +482,12 @@ def main():
     ap.add_argument("--include-auto-replies", action="store_true")
     ap.add_argument("--resolve-owner", default=None, metavar="EMAIL",
                     help="print the HubSpot owner id for EMAIL and exit (for HUBSPOT_AISDR_OWNER_ID)")
+    ap.add_argument("--allow-backfill", action="store_true",
+                    help="bypass the fresh-ledger guard (intentional first-run/mass backfill)")
+    ap.add_argument("--reconcile-from-hubspot", action="store_true",
+                    help="ledger recovery: adopt existing HubSpot engagements (matched by "
+                         "contact + timestamp) into the ledger instead of re-creating them; "
+                         "only truly-missing events get logged")
     args = ap.parse_args()
 
     import os
@@ -496,25 +523,63 @@ def main():
     conn = db.connect()
     db.init_schema(conn)
     email_to_cid = load_email_to_cid(conn)
-    logger = Logger(conn, hs, ai_from=ai_from, owner_id=owner_id, dry_run=args.dry_run,
-                    sleep=args.sleep, target_cid=args.contact_id)
-    lead_alias = {}  # lead_id -> alias address, shared so inbound can fill the "to" header
     bison = BisonClient()  # cheap (just loads env); used for sweeps + lead-id resolution
-    lead_cid = lead_to_cid_map(conn)  # whatever email->lead->contact mappings are cached
 
-    if "outbound" in types:
-        refresh_lead_map(conn, bison, email_to_cid, hs=hs, force=args.refresh_leads,
-                         max_age_hours=args.leads_max_age_hours, log_fn=log_fn)
-        run_outbound(conn, bison, logger, since_ms=since_ms, settle_days=args.settle_days,
-                     limit=args.limit, lead_alias=lead_alias, log_fn=log_fn)
-        lead_cid = lead_to_cid_map(conn)  # refreshed map now resolves more threads
-    if "inbound" in types:
-        run_inbound(conn, bison, logger, since_ms=since_ms, max_replies=args.max_replies,
-                    include_auto=args.include_auto_replies, email_to_cid=email_to_cid,
-                    lead_cid=lead_cid, lead_alias=lead_alias, log_fn=log_fn)
-    if "our_reply" in types:
-        run_our_replies(conn, bison, logger, since_ms=since_ms, email_to_cid=email_to_cid,
-                        lead_cid=lead_cid, log_fn=log_fn)
+    def run_all(logger):
+        lead_alias = {}  # lead_id -> alias address, shared so inbound can fill the "to" header
+        lead_cid = lead_to_cid_map(conn)  # whatever email->lead->contact mappings are cached
+        if "outbound" in types:
+            refresh_lead_map(conn, bison, email_to_cid, hs=hs, force=args.refresh_leads,
+                             max_age_hours=args.leads_max_age_hours, log_fn=log_fn)
+            run_outbound(conn, bison, logger, since_ms=since_ms, settle_days=args.settle_days,
+                         limit=args.limit, lead_alias=lead_alias, log_fn=log_fn)
+            lead_cid = lead_to_cid_map(conn)  # refreshed map now resolves more threads
+        if "inbound" in types:
+            run_inbound(conn, bison, logger, since_ms=since_ms, max_replies=args.max_replies,
+                        include_auto=args.include_auto_replies, email_to_cid=email_to_cid,
+                        lead_cid=lead_cid, lead_alias=lead_alias, log_fn=log_fn)
+        if "our_reply" in types:
+            run_our_replies(conn, bison, logger, since_ms=since_ms, email_to_cid=email_to_cid,
+                            lead_cid=lead_cid, log_fn=log_fn)
+
+    def make_logger(dry_run):
+        return Logger(conn, hs, ai_from=ai_from, owner_id=owner_id, dry_run=dry_run,
+                      sleep=args.sleep, target_cid=args.contact_id,
+                      reconcile=args.reconcile_from_hubspot)
+
+    # Fresh-ledger guard: an EMPTY ledger + a live run is exactly the shape of the
+    # "wiped volume re-logs everything as duplicates" failure. Probe with a dry-run
+    # first; a would-log volume above the threshold refuses to write unless the
+    # caller explicitly opts in (--allow-backfill) or reconciles (--reconcile-from-hubspot).
+    fresh_max = int(os.environ.get("HUBSPOT_ACTIVITY_FRESH_MAX", "50") or 50)
+    ledger_logged = conn.execute(
+        "SELECT COUNT(*) FROM hubspot_activity_log WHERE status='logged'").fetchone()[0]
+    guard_active = (ledger_logged == 0 and not args.dry_run
+                    and not args.allow_backfill and not args.reconcile_from_hubspot)
+    if guard_active:
+        log_fn(f"fresh ledger (0 logged rows) — probing with a dry-run first "
+               f"(guard threshold {fresh_max})")
+        probe = make_logger(dry_run=True)
+        run_all(probe)
+        if probe.counts["logged"] > fresh_max:
+            summary = {
+                "ok": False, "guard": "fresh_ledger", "would_log": probe.counts["logged"],
+                "threshold": fresh_max, "scope": sorted(types),
+                "hint": "ledger is empty but a mass backfill was about to run — if the data "
+                        "volume was wiped, run with --reconcile-from-hubspot to adopt the "
+                        "existing engagements; for an intentional first backfill use "
+                        "--allow-backfill",
+            }
+            if not quiet:
+                print(f"\nGUARD: would log {probe.counts['logged']} engagements onto an "
+                      f"empty ledger (> {fresh_max}) — refusing. {summary['hint']}")
+            if args.json:
+                print(json.dumps(summary))
+            return
+        log_fn(f"guard passed ({probe.counts['logged']} <= {fresh_max}) — running live")
+
+    logger = make_logger(dry_run=args.dry_run)
+    run_all(logger)
 
     summary = {
         "ok": logger.counts["failed"] == 0,

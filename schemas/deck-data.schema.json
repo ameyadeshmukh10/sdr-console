@@ -1,0 +1,184 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "everworker-sdr-deck-data",
+  "title": "EverWorker AI SDR Deck Data",
+  "description": "Single fill file for the tailored 4-slide deck. prospect/cover/research describe the company the deck is FOR (EverWorker's buyer). target/outreach describe a discovered account that fits the prospect's ICP. maxLength / maxItems mirror the proven reference copy so text never overflows the fixed 1280x720 cards. Wrap punchy phrases in ==double-equals== to get the emerald highlight.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["prospect", "cover", "research", "target", "outreach"],
+  "properties": {
+    "_about": { "type": "string" },
+    "_notes": { "type": "string" },
+
+    "prospect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "logoText"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "logoText": { "type": "string", "minLength": 1, "maxLength": 24, "description": "Cover wordmark. Keep it the brand name only, short enough to sit beside the EverWorker logo." },
+        "logoDataUri": { "type": "string", "maxLength": 400000, "description": "Optional. A light/white logo as a data: URI for the cover. Leave empty to use the text wordmark (recommended)." }
+      }
+    },
+
+    "cover": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tagline"],
+      "properties": {
+        "tagline": { "type": "string", "minLength": 1, "maxLength": 44, "description": "Renders UPPERCASE on one line. Default: 'AI SDR Customized to your GTM'." }
+      }
+    },
+
+    "research": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["offering", "icp", "buyingGroup"],
+      "properties": {
+        "offering": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["headline", "bullets", "core"],
+          "properties": {
+            "headline": { "type": "string", "minLength": 1, "maxLength": 70, "description": "One line describing what the prospect sells." },
+            "bullets": {
+              "type": "array", "minItems": 2, "maxItems": 3,
+              "items": { "type": "string", "minLength": 1, "maxLength": 52, "description": "Proof point. ==highlight== the metric/number." }
+            },
+            "core": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "desc", "tags", "trustedBy"],
+              "properties": {
+                "name": { "type": "string", "minLength": 1, "maxLength": 24, "description": "The prospect's flagship product." },
+                "desc": { "type": "string", "minLength": 1, "maxLength": 110 },
+                "tags": { "type": "array", "minItems": 1, "maxItems": 2, "items": { "type": "string", "minLength": 1, "maxLength": 22 } },
+                "trustedBy": { "type": "string", "minLength": 1, "maxLength": 44, "description": "2-3 well-known customer names, comma separated." }
+              }
+            }
+          }
+        },
+        "icp": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["summary", "size", "industries", "whyNow"],
+          "properties": {
+            "summary": { "type": "string", "minLength": 1, "maxLength": 95, "description": "One line describing who the prospect sells to." },
+            "size": { "type": "string", "minLength": 1, "maxLength": 56, "description": "e.g. '1,000+ employees · multi-site / multi-region'." },
+            "industries": { "type": "array", "minItems": 2, "maxItems": 4, "items": { "type": "string", "minLength": 1, "maxLength": 16 } },
+            "whyNow": { "type": "array", "minItems": 2, "maxItems": 3, "items": { "type": "string", "minLength": 1, "maxLength": 52, "description": "A trigger that puts the ICP in-market." } }
+          }
+        },
+        "buyingGroup": {
+          "type": "array", "minItems": 3, "maxItems": 3,
+          "description": "Exactly three tiers, in order: Champion, Decision Maker, Economic Buyer.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["tier", "owns", "who"],
+            "properties": {
+              "tier": { "type": "string", "minLength": 1, "maxLength": 18 },
+              "owns": { "type": "string", "minLength": 1, "maxLength": 20, "description": "e.g. 'owns the budget'." },
+              "who": { "type": "string", "minLength": 1, "maxLength": 72, "description": "Job titles, separated by ' · '." }
+            }
+          }
+        }
+      }
+    },
+
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "blurb", "stats", "gate", "signals", "contacts"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "ticker": { "type": "string", "maxLength": 14, "description": "Optional. e.g. 'NYSE: CAVA'. Omit or empty if private." },
+        "blurb": { "type": "string", "minLength": 1, "maxLength": 62, "description": "Industry · category · HQ. Truncates with ellipsis if too long." },
+        "stats": {
+          "type": "array", "minItems": 3, "maxItems": 3,
+          "description": "Exactly three headline numbers about the target.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["value", "label"],
+            "properties": {
+              "value": { "type": "string", "minLength": 1, "maxLength": 8, "description": "e.g. '459', '~2,500', '75–77'." },
+              "label": { "type": "string", "minLength": 1, "maxLength": 18 }
+            }
+          }
+        },
+        "gate": { "type": "string", "minLength": 1, "maxLength": 220, "description": "Why this account cleared the prospect's ICP gate." },
+        "signals": {
+          "type": "array", "minItems": 3, "maxItems": 5,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "label", "detail"],
+            "properties": {
+              "kind": { "type": "string", "enum": ["expansion", "hiring", "tech", "program", "news"], "description": "Drives the glyph: expansion→trend, hiring→briefcase, tech→radar, program→sparkle, news→newspaper." },
+              "label": { "type": "string", "minLength": 1, "maxLength": 24, "description": "e.g. 'News · Expansion', 'Hiring · L&D org', 'Technographic · Harri'." },
+              "detail": { "type": "string", "minLength": 1, "maxLength": 100 }
+            }
+          }
+        },
+        "contacts": {
+          "type": "array", "minItems": 2, "maxItems": 3,
+          "description": "Buyer-group contacts AT THE TARGET. The first two also receive outreach. Two is the cleanest layout.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["initials", "name", "title", "email", "linkedin", "linkedinUrl"],
+            "properties": {
+              "initials": { "type": "string", "minLength": 1, "maxLength": 3 },
+              "name": { "type": "string", "minLength": 1, "maxLength": 34 },
+              "title": { "type": "string", "minLength": 1, "maxLength": 44 },
+              "meta": { "type": "string", "maxLength": 56, "description": "Optional context (tenure, location). Not rendered on the deck but kept for the SE." },
+              "tag": { "type": "string", "maxLength": 56, "description": "Optional buyer-role note. Not rendered on the deck." },
+              "email": { "type": "string", "minLength": 1, "maxLength": 48 },
+              "linkedin": { "type": "string", "minLength": 1, "maxLength": 44, "description": "Display form, e.g. 'linkedin.com/in/jane-doe'. Truncates if long." },
+              "linkedinUrl": { "type": "string", "minLength": 1, "maxLength": 200, "description": "Full https URL." }
+            }
+          }
+        }
+      }
+    },
+
+    "outreach": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["linkedin", "email"],
+      "properties": {
+        "linkedin": {
+          "type": "array", "minItems": 2, "maxItems": 2,
+          "description": "Exactly two LinkedIn messages — one per first-two target contacts, same order.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["to", "title", "initials", "body"],
+            "properties": {
+              "to": { "type": "string", "minLength": 1, "maxLength": 34 },
+              "title": { "type": "string", "minLength": 1, "maxLength": 52, "description": "e.g. 'Director of L&D at CAVA'." },
+              "initials": { "type": "string", "minLength": 1, "maxLength": 3 },
+              "body": { "type": "string", "minLength": 1, "maxLength": 340, "description": "Connection-note length. ==highlight== 1-3 signal phrases." }
+            }
+          }
+        },
+        "email": {
+          "type": "array", "minItems": 2, "maxItems": 2,
+          "description": "Exactly two emails — one per first-two target contacts, same order.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["to", "address", "subject", "body"],
+            "properties": {
+              "to": { "type": "string", "minLength": 1, "maxLength": 34 },
+              "address": { "type": "string", "minLength": 1, "maxLength": 48 },
+              "subject": { "type": "string", "minLength": 1, "maxLength": 44, "description": "Lowercase, specific, no fluff." },
+              "body": { "type": "string", "minLength": 1, "maxLength": 430, "description": "Short cold email. ==highlight== 2-4 signal phrases." }
+            }
+          }
+        }
+      }
+    }
+  }
+}
