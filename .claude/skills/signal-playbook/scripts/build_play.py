@@ -71,6 +71,59 @@ def slugify(name):
     return s[:60] or "prospect"
 
 
+# ---------------------------------------------------------------------------
+# Unicode sanitation. Web-scraped content is full of typographic junk — thin /
+# narrow no-break spaces, soft hyphens, zero-widths — and the model copies it
+# verbatim into research/deck copy. On the deck these render as gaps INSIDE
+# words ("pe tabyte", "G DPR"), and they silently eat the character budgets.
+# ---------------------------------------------------------------------------
+_INVISIBLE = re.compile("[\\u00ad\\u200b\\u200c\\u200d\\u200e\\u200f\\u2060\\ufeff]")
+_EXOTIC_SP = "\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000"
+# Two-letter words that legitimately follow a space — never glue these on.
+_SMALL_WORDS = {"a", "i", "an", "as", "at", "be", "by", "do", "go", "if", "in",
+                "is", "it", "my", "no", "of", "on", "or", "so", "to", "up", "us", "we"}
+
+
+def sanitize_text(s):
+    if not isinstance(s, str) or not s:
+        return s
+    s = _INVISIBLE.sub("", s)
+    s = s.replace("\u2010", "-").replace("\u2011", "-")
+    # exotic space hugging punctuation: drop the space ("file /object", "70– 90")
+    s = re.sub(f"[{_EXOTIC_SP}]+(?=[^\\w\\s])", "", s)
+    s = re.sub(f"(?<=[^\\w\\s])[{_EXOTIC_SP}]+", "", s)
+
+    def fix(m):
+        b, a = m.group(1), m.group(2)
+        if b[-1].isupper() and len(a) >= 2 and a[0].isupper() and a[1].isupper():
+            return b + a          # split acronym: "G DPR" -> "GDPR"
+        if a[0].islower() and (len(b) <= 3
+                               or (len(a) <= 2 and a.lower() not in _SMALL_WORDS)):
+            return b + a          # hyphenation-point split: "pe tabyte", "cove ry"
+        return b + " " + a        # genuine word gap: "Data Dynamics"
+
+    prev = None
+    while prev != s:              # chains like "uns truc tured" need repeated passes
+        prev = s
+        s = re.sub(f"([A-Za-z]+)[{_EXOTIC_SP}]+([A-Za-z]+)", fix, s)
+    s = re.sub(f"[{_EXOTIC_SP}]+", " ", s)   # leftovers (around digits etc.)
+    return re.sub(r" {2,}", " ", s)
+
+
+def sanitize_deck(node, counter=None):
+    """Recursively sanitize every string in the deck-data structure."""
+    if isinstance(node, str):
+        clean = sanitize_text(node)
+        if counter is not None and clean != node:
+            counter[0] += 1
+        return clean
+    if isinstance(node, list):
+        return [sanitize_deck(x, counter) for x in node]
+    if isinstance(node, dict):
+        return {k: sanitize_deck(v, counter) for k, v in node.items()}
+    return node
+
+
 def load_queue_item(reply_id):
     for path, channel in ((REVIEW_QUEUE, "email"), (LI_REVIEW_QUEUE, "linkedin")):
         if not path.is_file():
@@ -124,7 +177,13 @@ Rules:
 - For technographic signals, reason from public evidence (job postings, site markup, docs,
   partner pages) — no detector tool is available here.
 - Wrap the punchiest metric/phrase of offering bullets and outreach drafts in ==double-equals==.
-- Respect every length ceiling noted in the template — the deck has fixed-size cards.
+- Respect every length ceiling noted in the template — the deck has fixed-size cards. The
+  ceilings are hard LIMITS, not targets.
+- Outreach drafts: SHORT WINS. Target 200-280 characters per email body and 150-250 per
+  LinkedIn message. One idea per message, grounded in a named signal, complete sentences
+  only, and ALWAYS end on a single clear, low-friction question or concrete offer.
+- Type only plain ASCII spaces — never thin/narrow/no-break spaces or soft hyphens (web
+  pages are full of them; do NOT copy them into your text).
 
 Produce ONE markdown document following the template below EXACTLY — same headings, same
 order. Return ONLY the markdown document, no preamble.
@@ -146,7 +205,7 @@ def stage_research(client, contact):
     res = client.complete(RESEARCH_SYSTEM + "\n# TEMPLATE\n\n" + template, user,
                           use_web_search=True, max_web_searches=10,
                           max_tokens=8000, timeout=1500)
-    text = (res.get("text") or "").strip()
+    text = sanitize_text((res.get("text") or "").strip())
     if len(text) < 500 or "TARGET" not in text.upper():
         raise RuntimeError("research output too thin to build a play from")
     return text
@@ -163,8 +222,16 @@ research file.
 Hard rules:
 - Respect every maxLength/maxItems in the schema; condense copy to fit (the validator rejects
   violations). The ==double-equals== highlight markers count toward length budgets.
-- You cannot count characters precisely — target roughly 85-90% of every maxLength budget so
-  you land safely under, and prefer cutting a whole clause over trimming single words.
+- maxLength budgets are CEILINGS, not targets — and you cannot count characters precisely,
+  so land WELL under them. When condensing, drop a whole middle sentence rather than
+  trimming words off the end.
+- Outreach copy: SHORT WINS. Target 200-280 chars per email body and 150-250 per LinkedIn
+  message. One idea per message, grounded in a named signal, complete sentences only, and
+  every message MUST end with a single clear, low-friction question or concrete offer as
+  its final sentence. Never trail off mid-thought.
+- target.gate and icp.summary must read as complete thoughts — no dangling conjunctions.
+- Type only plain ASCII spaces — never thin/narrow/no-break spaces or soft hyphens (do not
+  copy them from the research file).
 - Exact counts: buyingGroup = 3 (Champion, Decision Maker, Economic Buyer, in that order),
   target.stats = 3, outreach.linkedin = 2, outreach.email = 2 (matching the first two
   target.contacts, same order).
@@ -222,15 +289,35 @@ def _balance_highlights(s):
     return (s[:i] + s[i + 2:]).rstrip()
 
 
+# Trailing connector words/symbols left behind by a word-boundary cut — stripped
+# repeatedly so a clamp never ends "...needing governance &" or "...for a".
+_DANGLING = re.compile(
+    r"(?:\s+(?:&|and|or|but|with|for|to|the|an?|of|on|in|at|by|as|that|its?|their|your|our)"
+    r"|[\s,;:&—–-])+$", re.IGNORECASE)
+_SENT_END = re.compile(r"[.!?](?=\s)")
+
+
 def _clamp_string(s, limit):
-    """Shorten to <= limit at a word boundary (never below ~60% of the budget),
-    keeping ==highlight== markers balanced."""
+    """Shorten to <= limit, preferring the last COMPLETE SENTENCE at or above
+    half the budget (a mid-sentence cut reads as gibberish on the slide); else
+    cut at a word boundary and strip dangling connectors. Keeps ==highlight==
+    markers balanced."""
     while True:
         cut = s[:limit]
-        sp = cut.rfind(" ")
-        if sp >= int(limit * 0.6):
-            cut = cut[:sp]
-        cut = cut.rstrip(" ,;:-—").rstrip()
+        sent_end = None
+        if cut.rstrip()[-1:] in (".", "!", "?"):
+            sent_end = len(cut.rstrip())
+        else:
+            ends = [m.end() for m in _SENT_END.finditer(cut)]
+            if ends:
+                sent_end = ends[-1]
+        if sent_end and sent_end >= int(limit * 0.5):
+            cut = cut[:sent_end].rstrip()
+        else:
+            sp = cut.rfind(" ")
+            if sp >= int(limit * 0.6):
+                cut = cut[:sp]
+            cut = _DANGLING.sub("", cut).rstrip()
         cut = _balance_highlights(cut)
         if len(cut) <= limit:
             return cut
@@ -283,7 +370,7 @@ def stage_deck_data(client, research_md, out_dir):
     system = DATA_SYSTEM + "\n# SCHEMA (authoritative)\n\n" + schema
     user = "# RESEARCH FILE\n\n" + research_md + "\n\nProduce the deck-data JSON."
     res = client.complete(system, user, use_web_search=False, max_tokens=8000, timeout=600)
-    data = extract_json(res["text"])
+    data = _sanitized(extract_json(res["text"]))
     data_path = out_dir / "deck-data.json"
     ok, report, data = _validate_with_clamp(data, data_path)
     if not ok:
@@ -296,10 +383,18 @@ def stage_deck_data(client, research_md, out_dir):
             + "\n\nThe validator rejected it with:\n" + report[:3000]
             + "\n\nFix every reported issue and return the corrected FULL JSON.",
             use_web_search=False, max_tokens=8000, timeout=600)
-        data = extract_json(repair["text"])
+        data = _sanitized(extract_json(repair["text"]))
         ok, report, data = _validate_with_clamp(data, data_path)
         if not ok:
             raise RuntimeError(f"deck-data failed validation after repair: {report[:500]}")
+    return data
+
+
+def _sanitized(data):
+    counter = [0]
+    data = sanitize_deck(data, counter)
+    if counter[0]:
+        log(f"sanitized exotic whitespace/invisible chars in {counter[0]} deck field(s)")
     return data
 
 
@@ -399,8 +494,8 @@ def stage_draft(client, item, contact, deck_data, upload, fallback):
             f"Draft the reply. Return ONLY the JSON.")
     res = client.complete(system, user, use_web_search=False, max_tokens=900, timeout=300)
     data = extract_json(res["text"])
-    return {"draft": str(data.get("draft", "")).strip(),
-            "rationale": str(data.get("rationale", ""))[:300]}
+    return {"draft": sanitize_text(str(data.get("draft", "")).strip()),
+            "rationale": sanitize_text(str(data.get("rationale", ""))[:300])}
 
 
 def merge_draft(item, reply_id, draft, play_meta, fallback, error):
