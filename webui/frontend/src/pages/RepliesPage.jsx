@@ -31,6 +31,7 @@ export default function RepliesPage() {
   const [campaign, setCampaign] = useState('')
   const [channelFilter, setChannelFilter] = useState('all')
   const [selectedId, setSelectedId] = useState(null)
+  const [collapsed, setCollapsed] = useState({ dismissed: true })  // section key -> collapsed
   const [edits, setEdits] = useState({})           // reply_id -> edited draft text
   const [pct, setPct] = useState({})               // reply_id -> send progress %
   const [sendErr, setSendErr] = useState({})       // reply_id -> inline send error
@@ -85,6 +86,7 @@ export default function RepliesPage() {
   const busyFor = (id) => ({
     tag: busy[`tag:${id}`], dismiss: busy[`dismiss:${id}`], undismiss: busy[`undismiss:${id}`],
     reclassify: busy[`reclassify:${id}`], regen: busy[`regen:${id}`], approve: busy[`approve:${id}`],
+    move: busy[`move:${id}`],
   })
 
   async function scan() {
@@ -118,6 +120,13 @@ export default function RepliesPage() {
   const reclassify = async (it) => {
     const r = await act('reclassify', it, () => api.reclassifyReply(it.reply_id),
       `${it.from_name || it.from_email} reclassified as interested.`)
+    if (r?.ok) setSelectedId(it.reply_id)
+  }
+  const move = async (it, to) => {
+    const r = await act('move', it, () => api.moveReply(it.reply_id, to),
+      to === 'interested'
+        ? `${it.from_name || it.from_email} moved to Interested — draft when ready.`
+        : `${it.from_name || it.from_email} parked in Follow up.`)
     if (r?.ok) setSelectedId(it.reply_id)
   }
 
@@ -197,21 +206,29 @@ export default function RepliesPage() {
   const isInterested = (it) => !!it.classifier?.interested && (conf(it) > MIN_CONF || !!it.reclassified)
 
   const visible = items.filter(inChannel)
-  const interested = visible.filter((it) => isInterested(it) && it.already_interested && !it.handled)
-  const possible = visible.filter((it) => isInterested(it) && !it.already_interested && !it.handled)
-  const others = visible.filter((it) => !it.handled && !isInterested(it))
-  const done = [...visible.filter((it) => it.handled), ...dismissedItems.filter(inChannel)]
+  // Follow up = we replied (or parked) and are waiting on the lead. A reply that
+  // arrives after our follow-up comes back flagged post_followup and routes to
+  // Possible for review, whatever the classifier said.
+  const followup = visible.filter((it) => it.handled)
+  const possible = visible.filter((it) => !it.handled
+    && (it.post_followup || (isInterested(it) && !it.already_interested)))
+  const interested = visible.filter((it) => !it.handled && !it.post_followup
+    && isInterested(it) && it.already_interested)
+  const others = visible.filter((it) => !it.handled && !it.post_followup && !isInterested(it))
+  const dismissedList = dismissedItems.filter(inChannel)
   const liCount = items.filter((it) => it.channel === 'linkedin').length
   const needDrafts = interested.filter((it) => !draftFor(it)).length
 
   const sectionOf = (it) => {
     if (!it) return null
-    if (it.dismissed || it.handled) return 'done'
+    if (it.dismissed) return 'dismissed'
+    if (it.handled) return 'followup'
+    if (it.post_followup) return 'possible'
     if (!isInterested(it)) return 'other'
     return it.already_interested ? 'interested' : 'possible'
   }
 
-  const all = [...interested, ...possible, ...others, ...done]
+  const all = [...interested, ...possible, ...followup, ...others, ...dismissedList]
   const selected = all.find((it) => String(it.reply_id) === String(selectedId)) || null
   useEffect(() => {   // keep something sensible selected as the queue changes
     if (!selected && all.length) setSelectedId(all[0].reply_id)
@@ -230,15 +247,19 @@ export default function RepliesPage() {
       ),
     },
     { key: 'possible', label: 'Possible interested — review', items: possible, empty: 'Nothing to review — scan the inbox.' },
+    {
+      key: 'followup', label: 'Follow up', items: followup,
+      empty: 'Approve & send a follow-up and it parks here until the lead replies.',
+    },
     { key: 'other', label: 'Other — not interested / low confidence', items: others, empty: 'Nothing filtered out.' },
-    { key: 'done', label: 'Done & dismissed', items: done, dim: true, hideWhenEmpty: true },
+    { key: 'dismissed', label: 'Dismissed', items: dismissedList, dim: true, hideWhenEmpty: true },
   ]
 
   return (
     <div>
       <h1 className="page-title">Replies</h1>
       <p className="page-sub">
-        Every reply from the email (Bison) and LinkedIn (HeyReach) inboxes, classified by Claude.
+        Every reply from the email and LinkedIn inboxes, classified by Claude.
         Review, tag, dismiss what you've handled in the CRM, and send AI-drafted follow-ups in the
         prospect's own thread. Replies and follow-ups log to HubSpot automatically every hour.
       </p>
@@ -287,7 +308,9 @@ export default function RepliesPage() {
         <div className="empty">No replies scanned yet — set a lookback and <b>Scan inbox</b>.</div>
       ) : (
         <div className="inbox">
-          <InboxList sections={sections} selectedId={selectedId} onSelect={(it) => setSelectedId(it.reply_id)} />
+          <InboxList sections={sections} selectedId={selectedId} onSelect={(it) => setSelectedId(it.reply_id)}
+            collapsed={collapsed}
+            onToggle={(k) => setCollapsed((c) => ({ ...c, [k]: !c[k] }))} />
           <ReplyDetail
             item={selected}
             section={sectionOf(selected)}
@@ -301,7 +324,7 @@ export default function RepliesPage() {
             sendPct={selected ? pct[selected.reply_id] : null}
             sendErr={selected ? sendErr[selected.reply_id] : null}
             onTag={tag} onDismiss={dismiss} onUndismiss={undismiss} onReclassify={reclassify}
-            onAgentChange={setAgent} onRegenerate={regenerate} onApprove={approve}
+            onMove={move} onAgentChange={setAgent} onRegenerate={regenerate} onApprove={approve}
             onPreviewPlay={previewPlay}
           />
         </div>
@@ -310,7 +333,7 @@ export default function RepliesPage() {
       {queue?.counts?.unsubscribed > 0 && (
         <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
           {num(queue.counts.unsubscribed)} opt-out{queue.counts.unsubscribed === 1 ? '' : 's'} auto-unsubscribed
-          and suppressed in Bison this scan.
+          and suppressed in the email platform this scan.
         </div>
       )}
     </div>

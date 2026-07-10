@@ -30,6 +30,29 @@ export function ErrorBanner({ error }) {
   return <div className="banner error">{String(error)}</div>
 }
 
+// Channel icons shared by the Analytics section headers and the Orchestration
+// diagram. Both render inside an <svg> (they are <g> groups, not elements).
+export const LINKEDIN_BLUE = '#0a66c2'
+
+export function EmailIcon({ x, y, color = 'var(--muted)' }) {
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <rect x="0" y="0" width="16" height="12" rx="2" fill="none" stroke={color} strokeWidth="1.4" />
+      <path d="M1,1 L8,7 L15,1" fill="none" stroke={color} strokeWidth="1.4" />
+    </g>
+  )
+}
+
+export function LinkedInIcon({ x, y, size = 16 }) {
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <rect x="0" y="0" width={size} height={size} rx="3" fill={LINKEDIN_BLUE} />
+      <text x={size / 2} y={size - 4} textAnchor="middle" fill="#fff" fontSize={size - 5} fontWeight="700"
+        fontFamily="Georgia, serif">in</text>
+    </g>
+  )
+}
+
 export function pct(v) {
   return v == null ? '—' : `${v}%`
 }

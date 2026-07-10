@@ -43,7 +43,7 @@ export default function EnrollPanel({ generatedReady, onChanged }) {
   return (
     <div className="panel">
       <div className="row between">
-        <span className="section-h" style={{ margin: 0 }}>Enrollment → Email Bison</span>
+        <span className="section-h" style={{ margin: 0 }}>Enrollment → Email campaign</span>
         <span className="badge">{num(generatedReady)} generated ready</span>
       </div>
 
@@ -142,12 +142,12 @@ export default function EnrollPanel({ generatedReady, onChanged }) {
           }}>
             <h2 style={{ marginTop: 0 }}>Confirm live enrollment</h2>
             <p className="muted">
-              This sends <b>{num(preview?.rows.length || 0)}</b> leads live to Email Bison
+              This sends <b>{num(preview?.rows.length || 0)}</b> leads live to the email campaign
               (campaigns {Object.keys(byCampaign).join(', ')}). This is an outward action and cannot be undone.
             </p>
             <label className="row" style={{ gap: 8, margin: '14px 0' }}>
               <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} style={{ width: 'auto' }} />
-              <span>I understand this writes live to Bison.</span>
+              <span>I understand this writes live to the email campaign.</span>
             </label>
             <div className="row" style={{ gap: 10, justifyContent: 'flex-end' }}>
               <button className="ghost" onClick={() => setConfirming(false)} disabled={busy}>Cancel</button>
