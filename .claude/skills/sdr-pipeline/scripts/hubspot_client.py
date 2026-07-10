@@ -669,3 +669,18 @@ class HubSpotClient:
 
     def get_site_page(self, page_id):
         return self._request("GET", f"/cms/v3/pages/site-pages/{page_id}")
+
+    def publish_site_page_now(self, page_id):
+        """Publish a (draft) site page IMMEDIATELY. v3 has no separate publish-now
+        endpoint — the schedule call with a now publishDate is the publish action
+        (and in practice it publishes immediately). Falls back to the legacy v2
+        publish-action if the v3 call is rejected."""
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        try:
+            return self._request("POST", "/cms/v3/pages/site-pages/schedule",
+                                 body={"id": str(page_id), "publishDate": now})
+        except HubSpotError as e:
+            if not any(f"HTTP {c}" in str(e) for c in (400, 403, 404, 405, 409, 422)):
+                raise
+            return self._request("POST", f"/content/api/v2/pages/{page_id}/publish-action",
+                                 body={"action": "schedule-publish"})
