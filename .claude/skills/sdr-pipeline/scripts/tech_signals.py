@@ -508,29 +508,37 @@ def detect_and_store(domain, company=None, force=False, hubspot=None, rendered=F
                     "tech_checked_at": row.get("tech_checked_at"),
                     "detections": _detection_count(row.get("tech_detail")),
                     "hubspot": None}
+    finally:
+        conn.close()
 
-        res = detect_domain(host, rendered=rendered)
-        detail = {
-            "detections": res["detections"],
-            "fetch_error": res["fetch_error"],
-            "dns_error": res["dns_error"],
-            "dns_records": res["dns_records"],
-            "selection": _engine().selection_name,
-            "duration_ms": res["duration_ms"],
-            "rendered": res["rendered"],
-        }
+    res = detect_domain(host, rendered=rendered)
+
+    # HubSpot write-back BEFORE the upsert (no DB connection held across the
+    # HTTP call) so its outcome can be persisted into tech_detail and shown in
+    # the Signals drawer on a later page load — not just returned to the caller.
+    hs = None
+    if res["formatted"] is not None:
+        enabled = _flag("TECH_HUBSPOT_WRITEBACK", True) if hubspot is None else bool(hubspot)
+        hs = hubspot_writeback(host, res["formatted"]) if enabled else {"ok": False, "reason": "disabled"}
+
+    detail = {
+        "detections": res["detections"],
+        "fetch_error": res["fetch_error"],
+        "dns_error": res["dns_error"],
+        "dns_records": res["dns_records"],
+        "selection": _engine().selection_name,
+        "duration_ms": res["duration_ms"],
+        "rendered": res["rendered"],
+        "hubspot": hs,
+    }
+    conn = _db()
+    try:
         db.upsert_tech_signals(conn, host, res["formatted"],
                                tech_detail=json.dumps(detail, ensure_ascii=False),
                                tech_error=res["error"], company_name=company)
         stored = db.get_signal(conn, host) or {}
     finally:
         conn.close()
-
-    hs = None
-    if res["formatted"] is not None:
-        enabled = _flag("TECH_HUBSPOT_WRITEBACK", True) if hubspot is None else bool(hubspot)
-        if enabled:
-            hs = hubspot_writeback(host, res["formatted"])
 
     return {"domain": host, "skipped": False, "tech_signals": res["formatted"],
             "tech_error": res["error"], "tech_checked_at": stored.get("tech_checked_at"),

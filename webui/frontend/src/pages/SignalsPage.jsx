@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { Stat, Spinner, ErrorBanner, num } from '../components/ui.jsx'
+import SignalDetail from '../components/SignalDetail.jsx'
 
 // Signal cache — per-company research reused for 90 days so a company is searched
 // once instead of once per contact / per re-run. Force-refresh re-searches one.
@@ -14,6 +15,7 @@ export default function SignalsPage() {
   const [refreshing, setRefreshing] = useState(null)
   const [detecting, setDetecting] = useState(null)
   const [bulkJob, setBulkJob] = useState(null)
+  const [openDomain, setOpenDomain] = useState(null)
 
   function load() {
     api.signals().then((d) => { setData(d); setError(null) }).catch((e) => setError(e.message))
@@ -120,7 +122,7 @@ export default function SignalsPage() {
             </tr></thead>
             <tbody>
               {signals.map((s) => (
-                <tr key={s.domain}>
+                <tr key={s.domain} className="clickable" onClick={() => setOpenDomain(s.domain)}>
                   <td className="mono" style={{ whiteSpace: 'nowrap' }}>{s.domain}</td>
                   <td>
                     {s.company_name
@@ -154,7 +156,7 @@ export default function SignalsPage() {
                       {s.age_days == null ? '—' : `${s.age_days}d`}
                     </span>
                   </td>
-                  <td style={{ whiteSpace: 'nowrap' }}>
+                  <td style={{ whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
                     <button className="ghost sm" disabled={refreshing === s.domain} onClick={() => refresh(s.domain)}>
                       {refreshing === s.domain ? <Spinner /> : '↻ Refresh'}
                     </button>{' '}
@@ -168,6 +170,14 @@ export default function SignalsPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {openDomain && (
+        <SignalDetail
+          domain={openDomain}
+          onClose={() => setOpenDomain(null)}
+          onChanged={(d) => setData(d)}
+        />
       )}
     </div>
   )

@@ -2904,6 +2904,43 @@ def signals_payload():
             "tech_available": available, "tech_reason": reason}
 
 
+def signals_detail(domain):
+    """One domain's full cache row for the Signals drawer: the untruncated signal
+    + parsed tech_detail (per-vendor detections, evidence, scan metadata, HubSpot
+    write-back outcome) + the contacts that reuse this row. Read-only; degrades
+    gracefully, never 500."""
+    domain = (domain or "").strip().lower()
+    if not domain:
+        return {"ok": False, "error": "domain required", "signal": None}
+    row, contacts = None, []
+    with db_connect() as conn:
+        try:
+            r = conn.execute("SELECT * FROM account_signals WHERE domain=?", (domain,)).fetchone()
+            row = dict(r) if r else None
+        except sqlite3.Error:
+            row = None
+        try:
+            contacts = [dict(c) for c in conn.execute(
+                "SELECT contact_id, first_name, last_name, title, persona, status, batch_id "
+                "FROM contacts WHERE domain=? ORDER BY status, last_name, first_name", (domain,))]
+        except sqlite3.Error:
+            contacts = []
+    if row is None:
+        return {"ok": False, "error": f"no signal cached for {domain}", "signal": None,
+                "domain": domain, "contacts": contacts}
+    row["age_days"] = _age_days(row.get("researched_at"))
+    row["fresh"] = row["age_days"] is not None and row["age_days"] < 90
+    row["tech_age_days"] = _age_days(row.get("tech_checked_at"))
+    row["has_tech"] = bool(row.get("tech_signals"))
+    try:
+        row["tech_detail"] = json.loads(row.get("tech_detail") or "null")
+    except (ValueError, TypeError):
+        row["tech_detail"] = None
+    available, reason = _tech_status()
+    return {"ok": True, "domain": domain, "signal": row, "contacts": contacts,
+            "tech_available": available, "tech_reason": reason}
+
+
 def do_refresh_signal(domain, company=None):
     domain = (domain or "").strip().lower()
     if not domain:
@@ -3216,6 +3253,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/signals":
                 return self._json(signals_payload())
+            if path == "/api/signals/detail":
+                return self._json(signals_detail(params.get("domain", [""])[0]))
             if path.startswith("/api/signals/tech/status/"):
                 job_id = path[len("/api/signals/tech/status/"):]
                 job = TECH_JOBS.get(job_id)
