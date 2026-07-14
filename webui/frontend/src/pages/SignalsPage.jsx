@@ -108,19 +108,33 @@ export default function SignalsPage() {
         <div className="empty">No cached signals yet. They populate as you generate batches.</div>
       ) : (
         <div className="panel" style={{ padding: 0 }}>
-          <table>
-            <thead><tr><th>Domain</th><th>Company</th><th>Type</th><th>Signal</th><th>Tech</th><th>Age</th><th></th></tr></thead>
+          <table className="dense">
+            <thead><tr>
+              <th style={{ width: '13%' }}>Domain</th>
+              <th style={{ width: '12%' }}>Company</th>
+              <th style={{ width: '7%' }}>Type</th>
+              <th style={{ width: '32%' }}>Signal</th>
+              <th style={{ width: '24%' }}>Tech</th>
+              <th style={{ width: '5%' }}>Age</th>
+              <th></th>
+            </tr></thead>
             <tbody>
               {signals.map((s) => (
                 <tr key={s.domain}>
-                  <td className="mono">{s.domain}</td>
-                  <td>{s.company_name || <span className="muted">—</span>}</td>
+                  <td className="mono" style={{ whiteSpace: 'nowrap' }}>{s.domain}</td>
+                  <td>
+                    {s.company_name
+                      ? <span title={s.company_name} style={{ display: 'inline-block', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>{s.company_name}</span>
+                      : <span className="muted">—</span>}
+                  </td>
                   <td>
                     {s.has_recent
                       ? <span className="badge" style={{ color: 'var(--green)', borderColor: 'var(--green)' }}>recent</span>
                       : <span className="badge" style={{ color: 'var(--amber)', borderColor: 'var(--amber)' }}>fallback</span>}
                   </td>
-                  <td className="muted" style={{ maxWidth: 320 }}>{s.signal}</td>
+                  <td className="muted" style={{ maxWidth: 340 }}>
+                    <span className="clamp2" title={s.signal}>{s.signal}</span>
+                  </td>
                   <td style={{ maxWidth: 260 }}>
                     {s.tech_signals && s.tech_signals !== NO_TECH ? (
                       <span className="muted" title={`${s.tech_signals}${s.tech_age_days != null ? ` (scanned ${s.tech_age_days}d ago)` : ''}`}
