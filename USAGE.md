@@ -149,6 +149,28 @@ Results feed the "Deals created by AI SDR" / "Total pipeline" tiles on the Analy
 
 ---
 
+## 6. Technographic signals (which tech an account runs)
+
+Deterministic website + DNS scan (no LLM, no API keys — vendored `technographics/`
+engine) producing a line like `CRM: HubSpot | Ad Pixels: Meta Pixel | Martech: Segment`.
+Runs automatically with account research and after batch generation; results live on the
+Signals view (Tech column, per-row **⌁ Detect**, bulk **Detect missing**) and are written
+to the HubSpot company property `technographic_signals` (disable: `TECH_HUBSPOT_WRITEBACK=0`).
+Manual runs:
+
+```bash
+P=.claude/skills/sdr-pipeline/scripts
+
+python3 $P/tech_signals.py --domain acme.com             # scan one company (cached 90d; --force to re-scan)
+python3 $P/tech_signals.py --missing --limit 50          # backfill accounts with no scan yet
+python3 $P/tech_signals.py --self-test                   # offline fixture check (no network needed)
+```
+
+Add `--no-hubspot` to skip the property write-back; `--rendered` uses headless Chromium
+for JS-heavy sites (Claude sessions only — the Railway image has no browser).
+
+---
+
 ## Where things live
 
 ```

@@ -178,8 +178,10 @@ Rules:
   and list URLs under SOURCES.
 - Target news/hiring signals must be recent (within ~90 days of today). Older = not a "now"
   signal.
-- For technographic signals, reason from public evidence (job postings, site markup, docs,
-  partner pages) — no detector tool is available here.
+- Technographic signals: the PROSPECT's detected tech stack is provided in the input — it
+  comes from a deterministic website/DNS scanner, so trust it verbatim (no need to re-verify).
+  For the TARGET, infer tech from public evidence (job postings, site markup, docs, partner
+  pages); a verified scan of the target is appended to this file by the pipeline afterwards.
 - Wrap the punchiest metric/phrase of offering bullets and outreach drafts in ==double-equals==.
 - Respect every length ceiling noted in the template — the deck has fixed-size cards. The
   ceilings are hard LIMITS, not targets.
@@ -193,9 +195,50 @@ Produce ONE markdown document following the template below EXACTLY — same head
 order. Return ONLY the markdown document, no preamble.
 """
 
+def detect_prospect_tech(contact):
+    """Cache-aware technographic scan of the PROSPECT's domain (tech_signals.py,
+    sdr-pipeline scripts dir — already on sys.path). Returns the formatted line
+    or "". Best-effort: any failure only logs, the build never depends on it."""
+    domain = (contact.get("companyDomain") or "").strip()
+    if not domain:
+        return ""
+    try:
+        import tech_signals  # noqa: E402  (lazy: dnspython + vendored package)
+        res = tech_signals.detect_and_store(domain, company=contact.get("companyName"))
+        return (res or {}).get("tech_signals") or ""
+    except Exception as e:  # noqa: BLE001
+        log(f"prospect tech scan skipped: {e}")
+        return ""
+
+
+def augment_target_tech(research_md):
+    """Post-research: pull the TARGET's domain out of the research file, run the
+    deterministic scanner on it (pure detect, no store — targets are not outreach
+    accounts), and append a clearly-labeled verified block for stage_deck_data to
+    use. Best-effort; returns the file unchanged on any miss/failure."""
+    try:
+        m = re.search(r"\*\*Domain:\*\*\s*([A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,})", research_md)
+        if not m:
+            return research_md
+        target_domain = m.group(1).strip().rstrip(".")
+        import tech_signals  # noqa: E402
+        res = tech_signals.detect_domain(target_domain)
+        line = res.get("formatted") or f"unavailable ({res.get('error') or 'scan failed'})"
+        log(f"target tech scan ({target_domain}): {line[:120]}")
+        return (research_md.rstrip() + "\n\n"
+                "### 6c-verified · Technographic scan (TARGET)\n"
+                f"Deterministic DNS + website scan of {target_domain} run by the pipeline — "
+                "trust verbatim over inferred tech above:\n"
+                "```\n" + line + "\n```\n")
+    except Exception as e:  # noqa: BLE001
+        log(f"target tech scan skipped: {e}")
+        return research_md
+
+
 def stage_research(client, contact):
     log("stage: research")
     template = TEMPLATE.read_text()
+    tech_line = detect_prospect_tech(contact)
     user = (
         f"Input contact profile:\n"
         f"- Name: {contact.get('firstName','')} {contact.get('lastName','')}\n"
@@ -203,6 +246,7 @@ def stage_research(client, contact):
         f"- Business email: {contact.get('businessEmail','')}\n"
         f"- Prospect company: {contact.get('companyName','')}\n"
         f"- Company domain: {contact.get('companyDomain','')}\n"
+        f"- Detected tech stack (prospect; deterministic website/DNS scan): {tech_line or 'unavailable'}\n"
         f"- Today's date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}\n\n"
         f"Research the prospect and produce the completed research file."
     )
@@ -677,6 +721,7 @@ def main():
 
     try:
         research_md = stage_research(client, contact)
+        research_md = augment_target_tech(research_md)
         (out_dir / "research.md").write_text(research_md)
         deck_data = stage_deck_data(client, research_md, out_dir)
         html_out = stage_render(out_dir / "deck-data.json",

@@ -216,7 +216,7 @@ def build_system(knowledge, variant=DEFAULT_VARIANT, mode="research"):
     )
 
 
-def build_user(contact, cached_signal=None, prior_issues=None):
+def build_user(contact, cached_signal=None, prior_issues=None, tech_signals=None):
     persona = contact.get("persona", "sales-leadership")
     framing = PERSONA_FRAMING.get(persona, PERSONA_FRAMING["sales-leadership"])
     base = (
@@ -228,6 +228,13 @@ def build_user(contact, cached_signal=None, prior_issues=None):
         f"- linkedin: {contact.get('linkedin_url','')}\n\n"
         f"Persona framing: {framing}\n\n"
     )
+    if tech_signals:
+        base += (
+            f"Company tech stack (deterministic scan of their website/DNS; reliable): {tech_signals}\n"
+            "Background only: reference a specific tool ONLY when it sharpens one line's relevance "
+            "(e.g. their CRM or sales-engagement tool). Never list the stack, never mention scanning, "
+            "never present it as news.\n\n"
+        )
     if cached_signal:
         base += (f"Company signal (use this, do NOT search the web): {cached_signal}\n\n"
                  f"Use the contact's first name in the copy. Write the sequence. Return only the JSON object.")
@@ -336,11 +343,13 @@ def _atomic_write(contact_id, asset):
 
 
 def generate_contact(contact, knowledge, client, write=True, cached_signal=None,
-                     variant=DEFAULT_VARIANT):
+                     variant=DEFAULT_VARIANT, tech_signals=None):
     """Generate + validate one contact. Returns a result dict.
 
     cached_signal (when provided): use it as the company signal and DO NOT search
     the web — much cheaper. Otherwise research the signal with web search.
+    tech_signals (when provided): the company's detected tech-stack line, passed
+    to the prompt as background-only context.
     variant: which instruction set / linter to use (value-give | earn | show).
     write=False skips the file write (used by --contact-test); the asset is
     still returned under result["asset"].
@@ -357,7 +366,8 @@ def generate_contact(contact, knowledge, client, write=True, cached_signal=None,
             res = client.complete(
                 build_system(knowledge, variant=variant, mode=mode),
                 build_user(contact, cached_signal=cached_signal,
-                           prior_issues=None if attempt == 1 else issues),
+                           prior_issues=None if attempt == 1 else issues,
+                           tech_signals=tech_signals),
                 use_web_search=use_search, max_web_searches=3, max_tokens=4096,
             )
             web_searches = res.get("web_search_count", 0)
@@ -425,6 +435,37 @@ def _fresh_cached_signal(domain):
     return row["signal"] if db.signal_fresh(row) else None
 
 
+def _maybe_detect_tech(domain, company=None):
+    """Best-effort technographic scan alongside signal research (cache-aware, a
+    few seconds; TECH_DETECT_ENABLED=0 turns the inline hook off). Failures only
+    log to stderr — generation must never break on the detector."""
+    if not domain:
+        return
+    if (os.environ.get("TECH_DETECT_ENABLED") or "1").strip().lower() in ("0", "false", "no", "off"):
+        return
+    try:
+        import tech_signals as _tech  # lazy: pulls in dnspython + vendored package
+        _tech.detect_and_store(domain, company=company)
+    except Exception as e:  # noqa: BLE001
+        sys.stderr.write(f"[generate] tech detect skipped for {domain}: {e}\n")
+
+
+def _cached_tech(domain):
+    """The stored tech-stack line for prompt use, or None. The 'No signals
+    detected' literal (tech_signals.NO_SIGNALS) is treated as nothing to say."""
+    if not domain:
+        return None
+    conn = db.connect()
+    try:
+        row = db.get_signal(conn, domain)
+    finally:
+        conn.close()
+    tech = (row or {}).get("tech_signals")
+    if not tech or tech == "No signals detected":
+        return None
+    return tech
+
+
 def generate_one(contact, knowledge, client, write=True, variant=DEFAULT_VARIANT):
     """Cache-aware single-contact generation.
 
@@ -436,7 +477,8 @@ def generate_one(contact, knowledge, client, write=True, variant=DEFAULT_VARIANT
 
     cached = _fresh_cached_signal(domain)
     if cached:
-        r = generate_contact(contact, knowledge, client, write=write, cached_signal=cached, variant=variant)
+        r = generate_contact(contact, knowledge, client, write=write, cached_signal=cached, variant=variant,
+                             tech_signals=_cached_tech(domain))
         r["used_cache"] = True
         return r
 
@@ -447,10 +489,15 @@ def generate_one(contact, knowledge, client, write=True, variant=DEFAULT_VARIANT
         if domain:  # another thread may have cached it while we waited
             cached = _fresh_cached_signal(domain)
             if cached:
-                r = generate_contact(contact, knowledge, client, write=write, cached_signal=cached, variant=variant)
+                r = generate_contact(contact, knowledge, client, write=write, cached_signal=cached, variant=variant,
+                                     tech_signals=_cached_tech(domain))
                 r["used_cache"] = True
                 return r
-        r = generate_contact(contact, knowledge, client, write=write, variant=variant)  # search + write
+        # cache miss = this thread researches the company: scan its tech first
+        # (cache-aware, seconds) so this contact's copy can already use the line
+        _maybe_detect_tech(domain, contact.get("company", ""))
+        r = generate_contact(contact, knowledge, client, write=write, variant=variant,  # search + write
+                             tech_signals=_cached_tech(domain))
         r["used_cache"] = False
         sig = (r.get("signal") or "").strip()
         if domain and sig:
@@ -481,6 +528,8 @@ def research_signal(domain, company, client=None):
         db.upsert_signal(conn, domain, company or "", signal, has_recent, client.model)
     finally:
         conn.close()
+    # a signal refresh also freshens the tech scan (skip-if-fresh keeps it cheap)
+    _maybe_detect_tech(domain, company)
     return {"domain": domain, "company_name": company, "signal": signal,
             "has_recent": 1 if has_recent else 0, "web_searches": res.get("web_search_count", 0)}
 
@@ -536,13 +585,14 @@ def generate_samples(company, domain="", client=None):
 # Message Batches API path: build requests, then process results. Same prompts
 # and cache logic as the real-time path, just packaged for async batch submit.
 # ----------------------------------------------------------------------------
-def build_request_params(contact, knowledge, client, cached_signal=None, variant=DEFAULT_VARIANT):
+def build_request_params(contact, knowledge, client, cached_signal=None, variant=DEFAULT_VARIANT,
+                         tech_signals=None):
     """The Messages `params` for one contact (write-only if a cached signal is
     given, else a combined research+write request with web search). 1h cache."""
     mode = "write" if cached_signal else "research"
     return client.build_body(
         build_system(knowledge, variant=variant, mode=mode),
-        build_user(contact, cached_signal=cached_signal),
+        build_user(contact, cached_signal=cached_signal, tech_signals=tech_signals),
         use_web_search=cached_signal is None, max_web_searches=3,
         max_tokens=4096, cache_ttl="1h",
     )
@@ -559,7 +609,8 @@ def prepare_batch_requests(contacts, knowledge, client=None, variant=DEFAULT_VAR
         cached = _fresh_cached_signal(domain)
         cvariant = c.get("variant") or variant  # per-contact split wins over run-level
         requests.append({"custom_id": cid,
-                         "params": build_request_params(c, knowledge, client, cached_signal=cached, variant=cvariant)})
+                         "params": build_request_params(c, knowledge, client, cached_signal=cached,
+                                                        variant=cvariant, tech_signals=_cached_tech(domain))})
         manifest[cid] = {"contact": c, "domain": domain, "variant": cvariant,
                          "was_combined": cached is None, "cached_signal": cached}
     return requests, manifest

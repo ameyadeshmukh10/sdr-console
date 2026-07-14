@@ -1,3 +1,7 @@
 # Backend Python dependencies (the server is otherwise stdlib-only).
 # pymongo: AI SDR deal-attribution store (Railway MongoDB service, MONGO_URL).
 pymongo==4.13.2
+# dnspython: technographic detection DNS collector (vendored technographics/ package,
+# driven by .claude/skills/sdr-pipeline/scripts/tech_signals.py). Like pymongo it must
+# only ever be imported LAZILY — the server boots (and everything else works) without it.
+dnspython==2.7.0

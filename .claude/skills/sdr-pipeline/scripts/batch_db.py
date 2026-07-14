@@ -8,7 +8,7 @@ Statuses: contacts = pending|generated|enrolled|failed ; batches = pending|in_pr
 """
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]  # scripts/ -> sdr-pipeline -> skills -> .claude -> project
@@ -55,14 +55,20 @@ def init_schema(conn):
     );
     -- Per-company research cache, keyed by email domain. Reused for 90 days so a
     -- company is searched once instead of once per contact / per re-run.
+    -- tech_* columns hold the technographic scan (tech_signals.py): the formatted
+    -- summary string, the structured detections JSON, when it ran, and any error.
     CREATE TABLE IF NOT EXISTS account_signals (
-        domain        TEXT PRIMARY KEY,
-        company_name  TEXT,
-        signal        TEXT,
-        has_recent    INTEGER,
-        researched_at TEXT,
-        model         TEXT,
-        updated_at    TEXT
+        domain          TEXT PRIMARY KEY,
+        company_name    TEXT,
+        signal          TEXT,
+        has_recent      INTEGER,
+        researched_at   TEXT,
+        model           TEXT,
+        updated_at      TEXT,
+        tech_signals    TEXT,
+        tech_detail     TEXT,
+        tech_checked_at TEXT,
+        tech_error      TEXT
     );
     -- Idempotency ledger for HubSpot activity logging (hubspot_activity_sync.py).
     -- One row per logged email engagement; the dedup_key makes re-runs no-ops.
@@ -127,6 +133,11 @@ def init_schema(conn):
                  "WHERE (domain IS NULL OR domain='') AND email LIKE '%@%'")
     # index after the column is guaranteed to exist
     conn.execute("CREATE INDEX IF NOT EXISTS idx_contacts_domain ON contacts(domain)")
+    # migrate older DBs: additive technographic columns on the signal cache
+    sig_cols = [r["name"] for r in conn.execute("PRAGMA table_info(account_signals)")]
+    for col in ("tech_signals", "tech_detail", "tech_checked_at", "tech_error"):
+        if col not in sig_cols:
+            conn.execute(f"ALTER TABLE account_signals ADD COLUMN {col} TEXT")
     conn.commit()
 
 
@@ -238,6 +249,59 @@ def upsert_signal(conn, domain, company_name, signal, has_recent, model=None):
 def all_signals(conn):
     return [dict(r) for r in conn.execute(
         "SELECT * FROM account_signals ORDER BY updated_at DESC")]
+
+
+# ---- per-company technographic scan (tech_signals.py) ----------------------
+def tech_age_days(row):
+    """Whole days since the tech scan ran, or None if it never has."""
+    if not row or not row.get("tech_checked_at"):
+        return None
+    try:
+        ts = datetime.strptime(row["tech_checked_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return None
+    return (datetime.now(timezone.utc) - ts).days
+
+
+def tech_fresh(row, days=90):
+    age = tech_age_days(row)
+    return age is not None and age < days
+
+
+def upsert_tech_signals(conn, domain, tech_signals, tech_detail=None, tech_error=None,
+                        company_name=None):
+    """Store one domain's technographic scan. Touches ONLY the tech_* columns (plus
+    updated_at, so a fresh scan surfaces atop the Signals list) — the research signal
+    fields and their freshness (researched_at) are never affected. company_name only
+    fills a blank; an existing name wins."""
+    conn.execute("""
+        INSERT INTO account_signals
+          (domain, company_name, tech_signals, tech_detail, tech_checked_at, tech_error, updated_at)
+        VALUES (?,?,?,?,?,?,?)
+        ON CONFLICT(domain) DO UPDATE SET
+          company_name=COALESCE(NULLIF(account_signals.company_name,''), excluded.company_name),
+          tech_signals=excluded.tech_signals, tech_detail=excluded.tech_detail,
+          tech_checked_at=excluded.tech_checked_at, tech_error=excluded.tech_error,
+          updated_at=excluded.updated_at
+    """, (domain, company_name, tech_signals, tech_detail, now(), tech_error, now()))
+    conn.commit()
+
+
+def domains_missing_tech(conn, stale_days=None, limit=None):
+    """Domains with no tech scan yet (plus, when stale_days is given, scans older than
+    the cutoff). Newest research first, so backfills hit active accounts before
+    dormant ones. Returns [{domain, company_name}, ...]."""
+    where = "tech_checked_at IS NULL"
+    params = []
+    if stale_days is not None:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=int(stale_days))).strftime("%Y-%m-%dT%H:%M:%SZ")
+        where += " OR tech_checked_at < ?"
+        params.append(cutoff)
+    sql = f"SELECT domain, company_name FROM account_signals WHERE {where} ORDER BY updated_at DESC"
+    if limit:
+        sql += " LIMIT ?"
+        params.append(int(limit))
+    return [dict(r) for r in conn.execute(sql, params)]
 
 
 # ---- HubSpot activity ledger ---------------------------------------------

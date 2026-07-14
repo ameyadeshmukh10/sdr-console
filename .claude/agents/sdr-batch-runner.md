@@ -16,8 +16,13 @@ You will be given a single `batch_id`. Work efficiently — one quick web search
 3. **For EACH contact in the batch:**
    a. One WebSearch on the company for a single real, recent signal (funding, exec hire, product/GTM
       launch, partnership, expansion). If nothing credible, use a role-level pain hypothesis.
-   b. Write a 4-touch email + LinkedIn copy following ALL rules below, using the persona framing.
-   c. Save it with the **Write tool** to `data/outreach/generated/<contact_id>.json` in this exact schema:
+   b. **Tech stack (once per unique company domain):**
+      `python3 .claude/skills/sdr-pipeline/scripts/tech_signals.py --domain <email domain>`
+      Cached for 90 days, so repeat domains return instantly; reuse the `tech_signals` line from its
+      JSON output for every contact at that company. If it errors, skip it and continue — never let
+      the scan block the batch.
+   c. Write a 4-touch email + LinkedIn copy following ALL rules below, using the persona framing.
+   d. Save it with the **Write tool** to `data/outreach/generated/<contact_id>.json` in this exact schema:
    ```json
    {"contact_id":"...","persona":"...","signal":"...",
     "email":{"subject1":"","body1":"","subject2":"","body2":"","subject3":"","body3":"","subject4":"","body4":""},
@@ -37,6 +42,9 @@ You will be given a single `batch_id`. Work efficiently — one quick web search
   ask with no give; never promise de-anonymized visitors or "25 in-market accounts."
 - **Step 4 is a breakup** that still asks for a meeting ("before I close your file, worth 15 minutes…").
 - Include ≥1 concrete metric; no pricing in cold steps. Subjects outcome-led, ~4–6 words.
+- **Tech stack (from step 3b) is background only:** if the scan shows a relevant tool (their CRM,
+  sales-engagement, or intent vendor), you may weave ONE natural reference into ONE touch where it
+  sharpens relevance. Never list the stack, never mention scanning, never present it as news.
 
 ## Persona framing (route by the contact's `persona`)
 - **sales-leadership** (CRO/VP/Head Sales): pain = coverage/quota, more pipeline per rep without

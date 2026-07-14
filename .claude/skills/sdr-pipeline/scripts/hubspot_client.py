@@ -204,6 +204,49 @@ class HubSpotClient:
             out.extend(payload.get("results", []))
         return out
 
+    def find_company_id_by_domain(self, domain):
+        """First company id whose `domain` property equals `domain`, or None
+        (including on any API error — callers treat this as best-effort)."""
+        domain = (domain or "").strip().lower()
+        if not domain:
+            return None
+        try:
+            results, _, _ = self.search_page(
+                "companies",
+                filters=[{"propertyName": "domain", "operator": "EQ", "value": domain}],
+                properties=["domain"], limit=2)
+        except HubSpotError:
+            return None
+        return str(results[0]["id"]) if results else None
+
+    def update_company(self, company_id, properties):
+        """PATCH properties onto one company."""
+        return self._request("PATCH", f"/crm/v3/objects/companies/{company_id}",
+                             body={"properties": dict(properties)})
+
+    def ensure_company_property(self, name, label, field_type="textarea",
+                                group_name="companyinformation"):
+        """Idempotently make sure a custom company property exists. Reads it
+        first; on 404 creates it (409/duplicate from a concurrent create counts
+        as success). Other errors — e.g. a token missing the schema scopes —
+        propagate as HubSpotError for the caller to handle."""
+        try:
+            self._request("GET", f"/crm/v3/properties/companies/{name}")
+            return False  # already there
+        except HubSpotError as exc:
+            if "HTTP 404" not in str(exc):
+                raise
+        try:
+            self._request("POST", "/crm/v3/properties/companies", body={
+                "name": name, "label": label, "type": "string",
+                "fieldType": field_type, "groupName": group_name,
+            })
+        except HubSpotError as exc:
+            msg = str(exc)
+            if "HTTP 409" not in msg and "already exists" not in msg.lower():
+                raise
+        return True
+
     # ---- contacts -------------------------------------------------------
     def batch_read_contacts(self, ids, properties):
         """Read properties for up to many contact ids (chunks of 100)."""

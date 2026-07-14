@@ -94,14 +94,19 @@
 ### 6b · Hiring signals  *(cite the job posting/source)*
 - {{label ≤24}} — {{detail ≤100}} [n]
 
-### 6c · Technographic signals  *(from the technographic-signals skill on the target domain)*
-<!-- Run: cd skills/technographic-signals && .venv/bin/python -m src.cli detect-one "<target-domain>"
-     Paste the formatted technographic_signals line and pick the most relevant entry. -->
+### 6c · Technographic signals  *(TARGET: inferred from public evidence · PROSPECT: detector line in your input)*
+<!-- The input contact profile carries a "Detected tech stack (prospect; …)" line produced by
+     .claude/skills/sdr-pipeline/scripts/tech_signals.py (deterministic website/DNS scan —
+     trust it verbatim). Use it for prospect-side context (offering, ICP, outreach angles).
+     For the TARGET, infer tech here from public evidence (job postings, site markup, docs,
+     partner pages); after this file is produced, the pipeline appends a verified
+     "6c-verified · Technographic scan (TARGET)" block — deck-data prefers that over
+     inferences when both exist. -->
 - {{label e.g. "Technographic · <Tool>" ≤24}} — {{detail ≤100, tie the tool to the prospect's wedge}}
 
-> Raw detector output:
+> Prospect detector output (copy the input line):
 > ```
-> {{paste the "Formatted technographic_signals" line here}}
+> {{the provided "Detected tech stack" line, or "unavailable"}}
 > ```
 
 **Signal stack for the deck (3–5 total, mix of the above), each tagged with a kind
