@@ -57,6 +57,15 @@ RESEARCH_BLOCK = """\
 # Today's date
 Today is {today}. The current year is {year}. Judge recency strictly against this date.
 
+# Step 0 — the email domain is ground truth for WHO the company is
+The contact block gives the company name from our CRM and the contact's email domain. CRM
+names go stale (acquisitions, rebrands, mergers, junk values), but the domain is where the
+email actually lands — trust it. If the stated name does not match the company operating that
+domain today, research and write for the DOMAIN's company, using its current name (mention the
+legacy brand only where it genuinely helps, e.g. "VictorOps, now Splunk On-Call"). Exception:
+a personal/free email domain (gmail.com and the like) says nothing about the employer — keep
+the stated company then.
+
 # Step 1 — find a RECENT signal (be efficient, do not waste searches)
 Search the web for ONE recent signal about the contact's company, in this PRIORITY ORDER:
 1. A funding round the company RAISED in {year} (the more recent the better, within the last month
@@ -148,6 +157,7 @@ Return ONLY a single JSON object, no prose, no markdown code fences, matching EX
 (use \\n\\n for paragraph breaks inside bodies):
 
 {
+  "company": "<the company name you verified for the email domain (echo the given company if you did not research)>",
   "signal": "<the recent signal with its month/date, or 'no recent signal - <anchor>'>",
   "email": {
     "subject1": "...", "body1": "...",
@@ -182,6 +192,11 @@ after it as the company's product / ICP / GTM anchor and personalize around that
 RESEARCH_ONLY_TASK = """\
 Today is {today}. The current year is {year}. Judge recency strictly against this date.
 
+The company name we have may be stale — the DOMAIN is ground truth. If the given name does not
+match the company operating the domain today (acquisition, rebrand, merger, junk CRM data),
+research the domain's company instead and use ITS current name. (Personal/free email domains
+are the exception — keep the given name.)
+
 Find ONE recent signal for the company, in priority order: (1) a {year} funding round the company raised,
 (2) a {year} key leadership hire, (3) a {year} product launch / partnership / new market entry. A signal
 qualifies ONLY if it happened in {year}; verify the date; ignore anything from {prev_year} or earlier. Use
@@ -189,7 +204,8 @@ at most 3 web searches. If none qualifies, set has_recent_signal=false and put a
 anchor in `signal`, prefixed with "no recent signal - ".
 
 Return ONLY this JSON, no prose:
-{{"signal": "<signal with its month/date, or 'no recent signal - <anchor>'>", "has_recent_signal": true|false}}
+{{"company": "<the company name you verified for the domain>",
+  "signal": "<signal with its month/date, or 'no recent signal - <anchor>'>", "has_recent_signal": true|false}}
 """
 
 
@@ -219,12 +235,14 @@ def build_system(knowledge, variant=DEFAULT_VARIANT, mode="research"):
 def build_user(contact, cached_signal=None, prior_issues=None, tech_signals=None):
     persona = contact.get("persona", "sales-leadership")
     framing = PERSONA_FRAMING.get(persona, PERSONA_FRAMING["sales-leadership"])
+    domain = contact.get("domain") or db.email_domain(contact.get("email"))
     base = (
         f"Contact:\n"
         f"- name: {contact.get('first_name','')} {contact.get('last_name','')}\n"
         f"- title: {contact.get('title','')}\n"
         f"- company: {contact.get('company','')}\n"
-        f"- persona: {persona}\n"
+        + (f"- email domain: {domain}\n" if domain else "")
+        + f"- persona: {persona}\n"
         f"- linkedin: {contact.get('linkedin_url','')}\n\n"
         f"Persona framing: {framing}\n\n"
     )
@@ -360,6 +378,7 @@ def generate_contact(contact, knowledge, client, write=True, cached_signal=None,
     linter = LINTERS.get(variant, lint_email)
     issues, last_asset, web_searches = ["no output"], None, 0
     cache_read = cache_write = 0
+    verified_company = ""  # the model's domain-verified company name (research mode)
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
@@ -383,6 +402,7 @@ def generate_contact(contact, knowledge, client, write=True, cached_signal=None,
             issues = ["model did not return valid JSON"]
             continue
 
+        verified_company = (data.get("company") or "").strip() or verified_company
         last_asset = {
             "contact_id": cid,
             "persona": persona,
@@ -397,6 +417,7 @@ def generate_contact(contact, knowledge, client, write=True, cached_signal=None,
             if write:
                 _atomic_write(cid, last_asset)
             return {"status": "linted", "signal": last_asset["signal"], "asset": last_asset,
+                    "company": verified_company,
                     "web_searches": web_searches, "attempts": attempt, "issues": [],
                     "cache_read": cache_read, "cache_write": cache_write}
 
@@ -405,6 +426,7 @@ def generate_contact(contact, knowledge, client, write=True, cached_signal=None,
         _atomic_write(cid, last_asset)
     return {"status": "failed", "asset": last_asset,
             "signal": (last_asset or {}).get("signal", ""),
+            "company": verified_company,
             "web_searches": web_searches, "attempts": MAX_ATTEMPTS, "issues": issues,
             "cache_read": cache_read, "cache_write": cache_write}
 
@@ -504,7 +526,10 @@ def generate_one(contact, knowledge, client, write=True, variant=DEFAULT_VARIANT
             has_recent = not sig.lower().startswith("no recent signal")
             conn = db.connect()
             try:
-                db.upsert_signal(conn, domain, contact.get("company", ""), sig, has_recent, client.model)
+                # prefer the model's domain-verified company name over the (possibly
+                # stale) CRM value so the cache row can't say "VictorOps" for splunk.com
+                db.upsert_signal(conn, domain, r.get("company") or contact.get("company", ""),
+                                 sig, has_recent, client.model)
             finally:
                 conn.close()
         return r
@@ -523,14 +548,16 @@ def research_signal(domain, company, client=None):
     data = extract_json(res["text"])
     signal = (data.get("signal") or "").strip()
     has_recent = bool(data.get("has_recent_signal")) and not signal.lower().startswith("no recent signal")
+    # the model reconciles the CRM name against the domain; its verified name wins
+    company_out = (data.get("company") or "").strip() or (company or "")
     conn = db.connect()
     try:
-        db.upsert_signal(conn, domain, company or "", signal, has_recent, client.model)
+        db.upsert_signal(conn, domain, company_out, signal, has_recent, client.model)
     finally:
         conn.close()
     # a signal refresh also freshens the tech scan (skip-if-fresh keeps it cheap)
-    _maybe_detect_tech(domain, company)
-    return {"domain": domain, "company_name": company, "signal": signal,
+    _maybe_detect_tech(domain, company_out)
+    return {"domain": domain, "company_name": company_out, "signal": signal,
             "has_recent": 1 if has_recent else 0, "web_searches": res.get("web_search_count", 0)}
 
 
@@ -647,7 +674,9 @@ def process_batch_result(custom_id, result, manifest):
         has_recent = not asset["signal"].lower().startswith("no recent signal")
         conn = db.connect()
         try:
-            db.upsert_signal(conn, domain, contact.get("company", ""), asset["signal"], has_recent)
+            db.upsert_signal(conn, domain,
+                             (data.get("company") or "").strip() or contact.get("company", ""),
+                             asset["signal"], has_recent)
         finally:
             conn.close()
 

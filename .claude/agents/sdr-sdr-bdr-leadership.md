@@ -18,6 +18,9 @@ A contact: `{first_name, last_name, title, company, linkedin_url, email}`.
 The prompt may also include a **tech stack** line for the company (from a deterministic
 website/DNS scan — reliable). Background only: you may reference ONE relevant tool in ONE
 touch where it sharpens relevance; never list the stack or mention scanning.
+**The email domain is ground truth for the employer:** if the stated company doesn't match
+the company operating the contact's email domain today (acquisition, rebrand, stale CRM),
+research and write for the domain's company under its current name (personal domains excepted).
 
 ## Persona framing (SDR/BDR leadership)
 - **Pain:** too many leads, not enough reps; slow follow-up / response time; ramp time for new SDRs;
