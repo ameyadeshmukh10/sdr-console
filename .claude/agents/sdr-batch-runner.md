@@ -16,6 +16,9 @@ You will be given a single `batch_id`. Work efficiently — one quick web search
 3. **For EACH contact in the batch:**
    a. One WebSearch on the company for a single real, recent signal (funding, exec hire, product/GTM
       launch, partnership, expansion). If nothing credible, use a role-level pain hypothesis.
+      **The email domain is ground truth:** if the contact's stated company doesn't match the company
+      operating their email domain today (acquisition, rebrand, stale CRM data), research and write
+      for the domain's company under its current name (personal email domains excepted).
    b. **Tech stack (once per unique company domain):**
       `python3 .claude/skills/sdr-pipeline/scripts/tech_signals.py --domain <email domain>`
       Cached for 90 days, so repeat domains return instantly; reuse the `tech_signals` line from its

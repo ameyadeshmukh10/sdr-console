@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { Stat, Spinner, ErrorBanner, num } from '../components/ui.jsx'
+import SignalDetail from '../components/SignalDetail.jsx'
 
 // Signal cache — per-company research reused for 90 days so a company is searched
 // once instead of once per contact / per re-run. Force-refresh re-searches one.
@@ -14,6 +15,7 @@ export default function SignalsPage() {
   const [refreshing, setRefreshing] = useState(null)
   const [detecting, setDetecting] = useState(null)
   const [bulkJob, setBulkJob] = useState(null)
+  const [openDomain, setOpenDomain] = useState(null)
 
   function load() {
     api.signals().then((d) => { setData(d); setError(null) }).catch((e) => setError(e.message))
@@ -108,19 +110,33 @@ export default function SignalsPage() {
         <div className="empty">No cached signals yet. They populate as you generate batches.</div>
       ) : (
         <div className="panel" style={{ padding: 0 }}>
-          <table>
-            <thead><tr><th>Domain</th><th>Company</th><th>Type</th><th>Signal</th><th>Tech</th><th>Age</th><th></th></tr></thead>
+          <table className="dense">
+            <thead><tr>
+              <th style={{ width: '13%' }}>Domain</th>
+              <th style={{ width: '12%' }}>Company</th>
+              <th style={{ width: '7%' }}>Type</th>
+              <th style={{ width: '32%' }}>Signal</th>
+              <th style={{ width: '24%' }}>Tech</th>
+              <th style={{ width: '5%' }}>Age</th>
+              <th></th>
+            </tr></thead>
             <tbody>
               {signals.map((s) => (
-                <tr key={s.domain}>
-                  <td className="mono">{s.domain}</td>
-                  <td>{s.company_name || <span className="muted">—</span>}</td>
+                <tr key={s.domain} className="clickable" onClick={() => setOpenDomain(s.domain)}>
+                  <td className="mono" style={{ whiteSpace: 'nowrap' }}>{s.domain}</td>
+                  <td>
+                    {s.company_name
+                      ? <span title={s.company_name} style={{ display: 'inline-block', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>{s.company_name}</span>
+                      : <span className="muted">—</span>}
+                  </td>
                   <td>
                     {s.has_recent
                       ? <span className="badge" style={{ color: 'var(--green)', borderColor: 'var(--green)' }}>recent</span>
                       : <span className="badge" style={{ color: 'var(--amber)', borderColor: 'var(--amber)' }}>fallback</span>}
                   </td>
-                  <td className="muted" style={{ maxWidth: 320 }}>{s.signal}</td>
+                  <td className="muted" style={{ maxWidth: 340 }}>
+                    <span className="clamp2" title={s.signal}>{s.signal}</span>
+                  </td>
                   <td style={{ maxWidth: 260 }}>
                     {s.tech_signals && s.tech_signals !== NO_TECH ? (
                       <span className="muted" title={`${s.tech_signals}${s.tech_age_days != null ? ` (scanned ${s.tech_age_days}d ago)` : ''}`}
@@ -140,7 +156,7 @@ export default function SignalsPage() {
                       {s.age_days == null ? '—' : `${s.age_days}d`}
                     </span>
                   </td>
-                  <td style={{ whiteSpace: 'nowrap' }}>
+                  <td style={{ whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
                     <button className="ghost sm" disabled={refreshing === s.domain} onClick={() => refresh(s.domain)}>
                       {refreshing === s.domain ? <Spinner /> : '↻ Refresh'}
                     </button>{' '}
@@ -154,6 +170,14 @@ export default function SignalsPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {openDomain && (
+        <SignalDetail
+          domain={openDomain}
+          onClose={() => setOpenDomain(null)}
+          onChanged={(d) => setData(d)}
+        />
       )}
     </div>
   )

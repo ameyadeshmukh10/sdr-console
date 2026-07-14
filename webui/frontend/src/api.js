@@ -121,6 +121,7 @@ export const api = {
     return URL.createObjectURL(await res.blob())
   },
   signals: () => get('/api/signals'),
+  signalDetail: (domain) => get('/api/signals/detail?domain=' + encodeURIComponent(domain)),
   refreshSignal: (domain) => post('/api/signals/refresh', { domain }),
   detectTech: (domain, force) => post('/api/signals/tech/detect', { domain, force: !!force }),
   techBackfill: (opts) => post('/api/signals/tech/backfill', opts || {}),

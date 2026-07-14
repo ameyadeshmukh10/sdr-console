@@ -4,6 +4,8 @@
 data/outreach/clay_oauth.json
 # Transient Clay sourcing job candidate files:
 data/outreach/source-jobs/
+# Autosync health status (runtime state; written by the server on every sync tick)
+data/interested-replies/.autosync_status.json
 
 # Transient SQLite WAL/SHM sidecar files (the .db itself IS committed)
 *.db-wal
