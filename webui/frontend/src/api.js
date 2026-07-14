@@ -121,6 +121,9 @@ export const api = {
   },
   signals: () => get('/api/signals'),
   refreshSignal: (domain) => post('/api/signals/refresh', { domain }),
+  detectTech: (domain, force) => post('/api/signals/tech/detect', { domain, force: !!force }),
+  techBackfill: (opts) => post('/api/signals/tech/backfill', opts || {}),
+  techBackfillStatus: (jobId) => get('/api/signals/tech/status/' + jobId),
   variants: () => get('/api/variants'),
   samples: (body) => post('/api/samples', body),
 }

@@ -1876,6 +1876,22 @@ def _poll_batch_job(job_id):
             job["summary"] = {"linted": gen, "failed": failed}
             job["counts"] = batch.get("request_counts", {})
             _write_batch_job(job)
+            # Fire-and-forget technographic scans for this batch's companies —
+            # cache-aware and best-effort, so the batch's "done" status is never
+            # delayed and a detector failure only logs. (Detection is deliberately
+            # NOT done inside process_batch_result: that loop is serial over
+            # potentially hundreds of results.)
+            if (os.environ.get("TECH_DETECT_ENABLED") or "1").strip().lower() not in ("0", "false", "no", "off"):
+                tech_domains = sorted({(m.get("domain") or "") for m in manifest.values()} - {""})
+                if tech_domains:
+                    def _tech_tail():
+                        try:
+                            import tech_signals as T  # noqa: E402
+                            s = T.backfill(domains=tech_domains, workers=3)
+                            sys.stderr.write(f"[webui] tech backfill for batch job {job_id}: {s}\n")
+                        except Exception as e:  # noqa: BLE001
+                            sys.stderr.write(f"[webui] tech backfill skipped ({job_id}): {e}\n")
+                    threading.Thread(target=_tech_tail, daemon=True).start()
             return
     except Exception as e:  # noqa: BLE001
         job = _read_batch_job(job_id)
@@ -2641,6 +2657,17 @@ def _age_days(researched_at):
     return int((time.time() - time.mktime(ts) + time.timezone) // 86400)
 
 
+def _tech_status():
+    """(available, reason) for technographic detection. Mirrors the Mongo
+    'configured' degrade: import lazily, never raise, never block boot — the
+    server must come up without dnspython installed."""
+    try:
+        import tech_signals as T  # noqa: E402  (PIPELINE_SCRIPTS is on sys.path)
+        return T.tech_available()
+    except Exception as e:  # noqa: BLE001
+        return False, f"tech_signals unavailable: {e}"
+
+
 def signals_payload():
     with db_connect() as conn:
         try:
@@ -2651,7 +2678,12 @@ def signals_payload():
     for r in rows:
         r["age_days"] = _age_days(r.get("researched_at"))
         r["fresh"] = r["age_days"] is not None and r["age_days"] < 90
-    return {"signals": rows, "count": len(rows)}
+        r.pop("tech_detail", None)  # structured detections stay in the DB — heavy for a list
+        r["tech_age_days"] = _age_days(r.get("tech_checked_at"))
+        r["has_tech"] = bool(r.get("tech_signals"))
+    available, reason = _tech_status()
+    return {"signals": rows, "count": len(rows),
+            "tech_available": available, "tech_reason": reason}
 
 
 def do_refresh_signal(domain, company=None):
@@ -2671,6 +2703,90 @@ def do_refresh_signal(domain, company=None):
     payload["ok"] = True
     payload["refreshed"] = res
     return payload
+
+
+def do_detect_tech(domain, force=False):
+    """Technographic scan for one domain (per-row UI button). In-process like
+    do_refresh_signal — tech_signals writes via batch_db's own read-write
+    connection. Returns (payload, status)."""
+    domain = (domain or "").strip().lower()
+    if not domain:
+        return {"ok": False, "error": "domain required"}, 400
+    available, reason = _tech_status()
+    if not available:
+        return {"ok": False, "error": f"technographic detection unavailable: {reason}"}, 501
+    company = None
+    with db_connect() as conn:
+        try:
+            row = conn.execute(
+                "SELECT company FROM contacts WHERE domain=? AND company IS NOT NULL AND company!='' LIMIT 1",
+                (domain,)).fetchone()
+            company = row["company"] if row else None
+        except sqlite3.Error:
+            company = None
+    import tech_signals as T  # noqa: E402
+    try:
+        res = T.detect_and_store(domain, company=company, force=force)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": str(e)[:300]}, 502
+    payload = signals_payload()
+    payload["ok"] = True
+    payload["detected"] = res
+    return payload, 200
+
+
+# ---- bulk technographic backfill (async in-process job; one at a time) ----------
+TECH_JOBS = {}
+TECH_LOCK = threading.Lock()   # guards the one-running-job check-then-insert
+_TECH_SEQ = [0]
+
+
+def start_tech_backfill(limit=None, stale_days=None, force=False):
+    """Scan every account_signals domain with no tech scan yet (the UI 'Detect
+    missing' button / prod backfill). Returns (payload, status)."""
+    available, reason = _tech_status()
+    if not available:
+        return {"ok": False, "error": f"technographic detection unavailable: {reason}"}, 501
+    import tech_signals as T  # noqa: E402
+    with TECH_LOCK:
+        if any(j["status"] == "running" for j in TECH_JOBS.values()):
+            return {"ok": False, "error": "a tech backfill is already running"}, 409
+        _TECH_SEQ[0] += 1
+        job_id = f"tech-{_TECH_SEQ[0]}"
+        job = {"job_id": job_id, "status": "running", "total": 0, "done": 0,
+               "detected": 0, "skipped": 0, "errors": 0, "hubspot_ok": 0,
+               "hubspot_missing": 0, "current": None, "log": [], "error": None,
+               "started_at": now_iso(), "finished_at": None}
+        TECH_JOBS[job_id] = job
+    # queue size up front so the UI can show progress before the first result
+    with db_connect() as conn:
+        try:
+            job["total"] = conn.execute(
+                "SELECT COUNT(*) FROM account_signals WHERE tech_checked_at IS NULL").fetchone()[0]
+        except sqlite3.Error:
+            pass
+
+    def _progress(done, total, domain, res):
+        job["done"], job["total"], job["current"] = done, total, domain
+        status = ("error" if (res.get("error_exc") or res.get("tech_error"))
+                  else "skip" if res.get("skipped") else "ok")
+        job["log"] = (job["log"] + [f"{domain}: {status}"])[-40:]
+
+    def _run():
+        try:
+            summary = T.backfill(stale_days=stale_days, limit=limit, force=force,
+                                 workers=3, progress=_progress)
+            job.update(summary)  # total/detected/skipped/errors/hubspot_ok/hubspot_missing
+            job["status"] = "done"
+        except Exception as e:  # noqa: BLE001
+            job["status"] = "error"
+            job["error"] = str(e)[:300]
+        finally:
+            job["current"] = None
+            job["finished_at"] = now_iso()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"ok": True, "job_id": job_id, "total": job["total"]}, 200
 
 
 # ----------------------------------------------------------------------------
@@ -2882,6 +2998,12 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/signals":
                 return self._json(signals_payload())
+            if path.startswith("/api/signals/tech/status/"):
+                job_id = path[len("/api/signals/tech/status/"):]
+                job = TECH_JOBS.get(job_id)
+                if not job:
+                    return self._error(404, f"no tech job {job_id}")
+                return self._json(dict(job))
             if path == "/api/variants":
                 return self._json(variant_breakdown())
             if path.startswith("/api/generate/status/"):
@@ -3051,6 +3173,16 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/signals/refresh":
                 body = self._read_body()
                 return self._json(do_refresh_signal(body.get("domain"), body.get("company")))
+            if path == "/api/signals/tech/detect":
+                body = self._read_body()
+                payload, code = do_detect_tech(body.get("domain"), force=bool(body.get("force")))
+                return self._json(payload, code)
+            if path == "/api/signals/tech/backfill":
+                body = self._read_body()
+                payload, code = start_tech_backfill(
+                    limit=body.get("limit"), stale_days=body.get("stale_days"),
+                    force=bool(body.get("force")))
+                return self._json(payload, code)
             if path == "/api/replies/scan":
                 body = self._read_body()
                 return self._json(do_scan_replies(
