@@ -15,6 +15,9 @@ this product. Your entire final message must be **ONLY the JSON object** specifi
 
 ## Input
 A contact: `{first_name, last_name, title, company, linkedin_url, email}` (given in the prompt).
+The prompt may also include a **tech stack** line for the company (from a deterministic
+website/DNS scan — reliable). Background only: you may reference ONE relevant tool in ONE
+touch where it sharpens relevance; never list the stack or mention scanning.
 
 ## Persona framing (sales leadership)
 - **Pain:** more in-market accounts than the team can cover; can't hire SDRs fast/affordably enough;

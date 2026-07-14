@@ -15,6 +15,9 @@ Your entire final message must be **ONLY the JSON object** specified below — n
 
 ## Input
 A contact: `{first_name, last_name, title, company, linkedin_url, email}`.
+The prompt may also include a **tech stack** line for the company (from a deterministic
+website/DNS scan — reliable). Background only: you may reference ONE relevant tool in ONE
+touch where it sharpens relevance; never list the stack or mention scanning.
 
 ## Persona framing (SDR/BDR leadership)
 - **Pain:** too many leads, not enough reps; slow follow-up / response time; ramp time for new SDRs;

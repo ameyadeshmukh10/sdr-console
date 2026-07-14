@@ -18,9 +18,9 @@ HubSpot, and reports on results — including nightly AI SDR **deal attribution*
   the JSON API and the built React SPA via `ThreadingHTTPServer`. Routing is a manual
   `if path == "/api/...":` dispatch in `do_GET` / `do_POST`. Every `/api/*` route is
   auth-gated (Bearer token from `/api/login`) unless listed in `_EXEMPT_GET`/`_EXEMPT_POST`.
-- **Backend deps:** stdlib only, EXCEPT `requirements.txt` (`pymongo`, for the attribution
-  store). Anything importing pymongo must do it lazily (see `mongo_store.py`) so the
-  server still boots without it.
+- **Backend deps:** stdlib only, EXCEPT `requirements.txt` (`pymongo` for the attribution
+  store, `dnspython` for technographic detection). Anything importing either must do it
+  lazily (see `mongo_store.py`, `tech_signals.py`) so the server still boots without them.
 - **Frontend:** React 18 + Vite 5 + Recharts in `webui/frontend/`. API wrappers live in
   `src/api.js`; shared stat tiles / spinners in `src/components/ui.jsx`.
 - **Convention:** heavy/write work shells out via `run_script()` to
@@ -52,7 +52,7 @@ HubSpot, and reports on results — including nightly AI SDR **deal attribution*
 
 | Store | Where | What |
 |---|---|---|
-| SQLite `data/outreach/pipeline.db` | volume | contacts, batches, signals cache, `hubspot_activity_log` (engagement-logging ledger), `bison_lead_map`, `heyreach_events` inbox. Schema: `scripts/batch_db.py`. The web server opens it READ-ONLY; writes go through pipeline scripts. |
+| SQLite `data/outreach/pipeline.db` | volume | contacts, batches, signals cache (`account_signals`, incl. the technographic `tech_signals/tech_detail/tech_checked_at/tech_error` columns), `hubspot_activity_log` (engagement-logging ledger), `bison_lead_map`, `heyreach_events` inbox. Schema: `scripts/batch_db.py`. The web server opens it READ-ONLY; writes go through pipeline scripts (and their in-process module calls, e.g. signal refresh / tech detect). |
 | JSONL under `data/` | volume | campaign stats, generated outreach copy, interested-reply threads/analysis. |
 | MongoDB db `aisdr` | Railway MongoDB service | AI SDR deal attribution: `emails`, `contacts`, `deals`, `sync_state` (see below). Accessed only through `scripts/mongo_store.py`. |
 
@@ -93,6 +93,39 @@ Nightly job answering "which HubSpot deals did the AI SDR create, and what are t
   `hs_timestamp GT` filter (do the same in any new search-based code). `amount` is
   portal-currency, assumed single-currency (USD formatting).
 
+## Technographic detection (added 2026-07)
+
+Deterministic scan of which GTM tech an account runs (CRM / ad pixels / martech /
+salestech) — no LLM, no third-party API.
+
+- **Engine:** vendored at root `technographics/` (from the `technographic-signals` repo —
+  provenance + re-sync in `technographics/VENDORED.md`). DNS fingerprinting (dnspython,
+  resolvers 1.1.1.1/8.8.8.8: MX/TXT/NS/A/SOA + CNAME subdomain probes) + static-HTML
+  fingerprinting, matched against a Wappalyzer-derived catalogue (7.5k vendors), scoped by
+  `TECH_SELECTION_FILE` (default: curated ~65 marketing/sales vendors).
+- **Runner:** `.claude/skills/sdr-pipeline/scripts/tech_signals.py` (module + CLI). Fetcher
+  is stdlib urllib (NO requests/bs4); **NO Playwright in the Railway image** — `--rendered`
+  exists for Claude sessions only (Chromium preinstalled there).
+- **When it runs:** (1) inline in `generate_batch.py` on a research cache miss (under the
+  per-domain lock, before copy is written) and after a UI signal refresh; (2) Signals view
+  per-row "Detect" + bulk "Detect missing" (`POST /api/signals/tech/detect`,
+  `POST /api/signals/tech/backfill` + `GET /api/signals/tech/status/<id>`); (3) a
+  fire-and-forget tail after a Message-Batches job completes; (4) `build_play.py` scans the
+  prospect pre-research and the play TARGET post-research (appended as a
+  "6c-verified" block in research.md).
+- **Storage:** `account_signals.tech_signals` (formatted line, or the literal
+  `"No signals detected"`; NULL = scan itself failed), `tech_detail` (detections JSON),
+  `tech_checked_at` (reused for `TECH_REFRESH_DAYS`, default 90), `tech_error`.
+- **Consumers:** generation prompts get the line as background-only context (reference ONE
+  relevant tool max, never list the stack); persona/batch-runner agents carry matching
+  instructions; HubSpot write-back PATCHes the `technographic_signals` company property
+  (best-effort — company matched by `domain`; `TECH_HUBSPOT_WRITEBACK=0` kills it; needs
+  company read/write + schema scopes on the token, otherwise it logs and moves on).
+- **Gotchas:** every import of `tech_signals`/dnspython must stay lazy (boot rule above).
+  A scan only counts as failed when BOTH channels died (fetch error AND zero DNS records) —
+  never store a network-dead run as "No signals detected". `--self-test` runs offline
+  against vendored fixtures (works without dnspython/network).
+
 ## Background jobs (daemon threads started in `app.py main()`)
 
 1. `_activity_autosync_loop` — hourly: logs new email/LinkedIn activity to HubSpot.
@@ -118,8 +151,9 @@ Nightly job answering "which HubSpot deals did the AI SDR create, and what are t
 
 ```bash
 python3 -m py_compile webui/server/app.py .claude/skills/sdr-pipeline/scripts/*.py
-env -u PORT python3 webui/server/app.py --port 8787   # boots WITHOUT pymongo/MONGO_URL
+env -u PORT python3 webui/server/app.py --port 8787   # boots WITHOUT pymongo/MONGO_URL/dnspython
 cd webui/frontend && npm ci && npm run build           # SPA build (Dockerfile stage 1)
+python3 .claude/skills/sdr-pipeline/scripts/tech_signals.py --self-test   # offline detector check
 ```
 The server must always boot with `MONGO_URL` unset (aisdr endpoints return
 `{"configured": false}`, nightly loop self-disables) — preserve that when touching
