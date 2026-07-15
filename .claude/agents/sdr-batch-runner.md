@@ -19,11 +19,12 @@ You will be given a single `batch_id`. Work efficiently — one quick web search
       **The email domain is ground truth:** if the contact's stated company doesn't match the company
       operating their email domain today (acquisition, rebrand, stale CRM data), research and write
       for the domain's company under its current name (personal email domains excepted).
-   b. **Tech stack (once per unique company domain):**
+   b. **Tech stack + hiring signal (once per unique company domain):**
       `python3 .claude/skills/sdr-pipeline/scripts/tech_signals.py --domain <email domain>`
-      Cached for 90 days, so repeat domains return instantly; reuse the `tech_signals` line from its
-      JSON output for every contact at that company. If it errors, skip it and continue — never let
-      the scan block the batch.
+      `python3 .claude/skills/sdr-pipeline/scripts/hiring_signals.py --domain <email domain>`
+      Both are cached for 90 days, so repeat domains return instantly; reuse the `tech_signals` and
+      `hiring_signals` lines from their JSON output for every contact at that company. If either
+      errors (e.g. no PROSPEO_API_KEY), skip it and continue — never let a scan block the batch.
    c. Write a 4-touch email + LinkedIn copy following ALL rules below, using the persona framing.
    d. Save it with the **Write tool** to `data/outreach/generated/<contact_id>.json` in this exact schema:
    ```json
@@ -48,6 +49,11 @@ You will be given a single `batch_id`. Work efficiently — one quick web search
 - **Tech stack (from step 3b) is background only:** if the scan shows a relevant tool (their CRM,
   sales-engagement, or intent vendor), you may weave ONE natural reference into ONE touch where it
   sharpens relevance. Never list the stack, never mention scanning, never present it as news.
+- **Hiring signal (from step 3b) goes in EMAIL 2 only:** when the scan shows open sales/GTM roles,
+  open email 2 on it (open-role count + 1-2 roles) and tie it to covering more pipeline while the
+  new reps ramp. Skip it if step 1's signal already covers hiring. Never mention the data source,
+  never dump the title list, and do not claim the postings are new. Open-roles counts with NO
+  sales roles are not a hook — ignore them.
 
 ## Persona framing (route by the contact's `persona`)
 - **sales-leadership** (CRO/VP/Head Sales): pain = coverage/quota, more pipeline per rep without

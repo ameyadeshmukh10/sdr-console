@@ -171,6 +171,31 @@ for JS-heavy sites (Claude sessions only — the Railway image has no browser).
 
 ---
 
+## 7. Hiring signals (is the account hiring sales/GTM roles?)
+
+Prospeo job-postings lookup (needs `PROSPEO_API_KEY`; ONE credit per non-cached scan)
+producing a line like `14 open roles · 4 sales: SDR; AE; VP Sales`. Runs automatically
+with account research and after batch generation; results live on the Signals view
+(Hiring column, drawer **⚑ Detect hiring**, bulk **Detect hiring**) and refresh the
+HubSpot company properties `open_roles_count` / `hiring_signals_job_titles` /
+`hiring_signals` (disable: `HIRING_HUBSPOT_WRITEBACK=0`). When open sales/GTM roles are
+found, generation opens **email 2** on the hiring signal (email 1 keeps the researched
+news signal). Manual runs:
+
+```bash
+P=.claude/skills/sdr-pipeline/scripts
+
+python3 $P/hiring_signals.py --domain acme.com           # scan one company (cached 90d; --force to re-scan)
+python3 $P/hiring_signals.py --missing --limit 50        # backfill accounts with no scan yet (credits!)
+python3 $P/hiring_signals.py --self-test                 # offline check (no network, no key needed)
+```
+
+Add `--no-hubspot` to skip the property write-back. A company Prospeo can't match is
+stored as "No open roles detected" with the error code in the drawer, and is not
+re-scanned (or re-billed) until the refresh window lapses.
+
+---
+
 ## Where things live
 
 ```
