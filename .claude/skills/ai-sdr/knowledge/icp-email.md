@@ -15,7 +15,7 @@ only** (verify with `scripts/buyer_group.py`).
 | Step | Job | CTA |
 |---|---|---|
 | 1 | Personalized opener + the strongest value-first give | Tier-A give (account list / drafts) |
-| 2 | New angle (de-anon visitors / teardown), not a nag | Tier-A or B give |
+| 2 | New angle, not a nag — when a hiring signal is provided, open email 2 on it (open-role count + 1-2 sales roles, tied to covering pipeline while the new reps ramp; skip if step 1's signal already covered hiring); else de-anon visitors / teardown | Tier-A or B give |
 | 3 | One proof point (Memgraph) + re-offer | benchmark / soft-permission |
 | 4 | Breakup + soft give | "Should I close your file? Happy to leave {give} either way." |
 

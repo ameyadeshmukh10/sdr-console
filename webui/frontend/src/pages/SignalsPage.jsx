@@ -7,7 +7,10 @@ import SignalDetail from '../components/SignalDetail.jsx'
 // once instead of once per contact / per re-run. Force-refresh re-searches one.
 // Tech = the technographic scan (website + DNS fingerprinting) stored alongside:
 // per-row Detect re-scans one company, "Detect missing" backfills the rest.
+// Hiring = the Prospeo job-postings scan (open roles + sales subset), same cache;
+// single-domain detect lives in the row drawer, "Detect hiring" backfills the rest.
 const NO_TECH = 'No signals detected'
+const NO_HIRING = 'No open roles detected'
 
 export default function SignalsPage() {
   const [data, setData] = useState(null)
@@ -15,6 +18,7 @@ export default function SignalsPage() {
   const [refreshing, setRefreshing] = useState(null)
   const [detecting, setDetecting] = useState(null)
   const [bulkJob, setBulkJob] = useState(null)
+  const [hiringJob, setHiringJob] = useState(null)
   const [openDomain, setOpenDomain] = useState(null)
 
   function load() {
@@ -50,6 +54,14 @@ export default function SignalsPage() {
     } catch (e) { setError(e.message) }
   }
 
+  async function startHiringBulk() {
+    setError(null)
+    try {
+      const d = await api.hiringBackfill({})
+      setHiringJob({ job_id: d.job_id, status: 'running', total: d.total, done: 0 })
+    } catch (e) { setError(e.message) }
+  }
+
   // Poll the bulk job while it runs; reload the table when it lands.
   useEffect(() => {
     if (!bulkJob || bulkJob.status !== 'running') return
@@ -63,6 +75,19 @@ export default function SignalsPage() {
     return () => clearInterval(t)
   }, [bulkJob?.job_id, bulkJob?.status])
 
+  // Same for the hiring backfill (independent job registry server-side).
+  useEffect(() => {
+    if (!hiringJob || hiringJob.status !== 'running') return
+    const t = setInterval(async () => {
+      try {
+        const j = await api.hiringBackfillStatus(hiringJob.job_id)
+        setHiringJob(j)
+        if (j.status !== 'running') load()
+      } catch (e) { setHiringJob(null); setError(e.message) }
+    }, 2500)
+    return () => clearInterval(t)
+  }, [hiringJob?.job_id, hiringJob?.status])
+
   const signals = data?.signals || []
   const fresh = signals.filter((s) => s.fresh).length
   const recent = signals.filter((s) => s.has_recent).length
@@ -71,11 +96,16 @@ export default function SignalsPage() {
   const missing = signals.filter((s) => s.tech_age_days == null).length
   const techOff = data ? data.tech_available === false : false
   const bulkRunning = bulkJob?.status === 'running'
+  const hiringScanned = signals.filter((s) => s.hiring_age_days != null).length
+  const withHiring = signals.filter((s) => s.hiring_signals && s.hiring_signals !== NO_HIRING).length
+  const missingHiring = signals.filter((s) => s.hiring_age_days == null).length
+  const hiringOff = data ? data.hiring_available === false : false
+  const hiringRunning = hiringJob?.status === 'running'
 
   return (
     <div>
       <h1 className="page-title">Signals</h1>
-      <p className="page-sub">Per-company research cache. Fresh entries (&lt;90 days) are reused, so the AI SDR skips the web search. Tech = detected stack from a website + DNS scan.</p>
+      <p className="page-sub">Per-company research cache. Fresh entries (&lt;90 days) are reused, so the AI SDR skips the web search. Tech = detected stack from a website + DNS scan. Hiring = open roles from a live job-postings lookup (sales roles feed email 2).</p>
 
       <ErrorBanner error={error} />
 
@@ -87,20 +117,36 @@ export default function SignalsPage() {
         <Stat label="Tech scanned" value={techOff ? '—' : num(scanned)}
           sub={techOff ? (data?.tech_reason || 'detection unavailable') : `${num(withTech)} with detections`}
           tone={techOff ? 'warn' : undefined} />
+        <Stat label="Hiring scanned" value={hiringOff ? '—' : num(hiringScanned)}
+          sub={hiringOff ? (data?.hiring_reason || 'detection unavailable') : `${num(withHiring)} with open roles`}
+          tone={hiringOff ? 'warn' : undefined} />
       </div>
 
-      {!techOff && data && (missing > 0 || bulkJob) && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
-          {missing > 0 && !bulkRunning && (
+      {data && ((!techOff && (missing > 0 || bulkJob)) || (!hiringOff && (missingHiring > 0 || hiringJob))) && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
+          {!techOff && missing > 0 && !bulkRunning && (
             <button className="ghost sm" onClick={startBulk}>Detect missing ({num(missing)})</button>
           )}
-          {bulkJob && (
+          {!techOff && bulkJob && (
             <span className="muted" style={{ fontSize: 13 }}>
               {bulkRunning
                 ? <>Detecting tech… {bulkJob.done}/{bulkJob.total}{bulkJob.current ? ` (${bulkJob.current})` : ''}{bulkJob.errors ? ` · ${bulkJob.errors} errors` : ''}</>
                 : bulkJob.status === 'done'
                   ? <>Tech backfill done: {bulkJob.detected} detected, {bulkJob.skipped} skipped{bulkJob.errors ? `, ${bulkJob.errors} errors` : ''}</>
                   : <>Tech backfill failed: {bulkJob.error || 'unknown error'}</>}
+            </span>
+          )}
+          {!hiringOff && missingHiring > 0 && !hiringRunning && (
+            <button className="ghost sm" onClick={startHiringBulk}
+              title="One Prospeo credit per company scanned">Detect hiring ({num(missingHiring)})</button>
+          )}
+          {!hiringOff && hiringJob && (
+            <span className="muted" style={{ fontSize: 13 }}>
+              {hiringRunning
+                ? <>Detecting hiring… {hiringJob.done}/{hiringJob.total}{hiringJob.current ? ` (${hiringJob.current})` : ''}{hiringJob.errors ? ` · ${hiringJob.errors} errors` : ''}</>
+                : hiringJob.status === 'done'
+                  ? <>Hiring backfill done: {hiringJob.detected} detected, {hiringJob.skipped} skipped{hiringJob.errors ? `, ${hiringJob.errors} errors` : ''}</>
+                  : <>Hiring backfill failed: {hiringJob.error || 'unknown error'}</>}
             </span>
           )}
         </div>
@@ -110,19 +156,21 @@ export default function SignalsPage() {
         <div className="empty">No cached signals yet. They populate as you generate batches.</div>
       ) : (
         <div className="panel" style={{ padding: 0, overflowX: 'auto' }}>
-          {/* table-layout:fixed makes these 7 widths (summing to 100%) authoritative,
+          {/* table-layout:fixed makes these 8 widths (summing to 100%) authoritative,
               so the actions column keeps room for both buttons and the long
-              signal/tech text truncates instead of blowing the table wide. minWidth
-              floors it so buttons never clip; the panel scrolls on a narrow window. */}
-          <table className="dense" style={{ tableLayout: 'fixed', width: '100%', minWidth: 945 }}>
+              signal/tech/hiring text truncates instead of blowing the table wide.
+              minWidth floors it so buttons never clip; the panel scrolls on a
+              narrow window. */}
+          <table className="dense" style={{ tableLayout: 'fixed', width: '100%', minWidth: 1080 }}>
             <thead><tr>
-              <th style={{ width: '14%' }}>Domain</th>
-              <th style={{ width: '11%' }}>Company</th>
+              <th style={{ width: '13%' }}>Domain</th>
+              <th style={{ width: '10%' }}>Company</th>
               <th style={{ width: '6%' }}>Type</th>
-              <th style={{ width: '24%' }}>Signal</th>
-              <th style={{ width: '21%' }}>Tech</th>
+              <th style={{ width: '19%' }}>Signal</th>
+              <th style={{ width: '15%' }}>Tech</th>
+              <th style={{ width: '16%' }}>Hiring</th>
               <th style={{ width: '4%' }}>Age</th>
-              <th style={{ width: '20%' }}></th>
+              <th style={{ width: '17%' }}></th>
             </tr></thead>
             <tbody>
               {signals.map((s) => (
@@ -153,6 +201,20 @@ export default function SignalsPage() {
                       <span className="muted" title={s.tech_age_days != null ? `scanned ${s.tech_age_days}d ago` : undefined}>none detected</span>
                     ) : s.tech_error ? (
                       <span className="badge" style={{ color: 'var(--red)', borderColor: 'var(--red)' }} title={s.tech_error}>scan failed</span>
+                    ) : (
+                      <span className="muted">—</span>
+                    )}
+                  </td>
+                  <td>
+                    {s.hiring_signals && s.hiring_signals !== NO_HIRING ? (
+                      <span className="muted" title={`${s.hiring_signals}${s.hiring_age_days != null ? ` (checked ${s.hiring_age_days}d ago)` : ''}`}
+                        style={{ display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>
+                        {s.hiring_signals}
+                      </span>
+                    ) : s.hiring_signals === NO_HIRING ? (
+                      <span className="muted" title={s.hiring_age_days != null ? `checked ${s.hiring_age_days}d ago` : undefined}>none detected</span>
+                    ) : s.hiring_error ? (
+                      <span className="badge" style={{ color: 'var(--red)', borderColor: 'var(--red)' }} title={s.hiring_error}>scan failed</span>
                     ) : (
                       <span className="muted">—</span>
                     )}

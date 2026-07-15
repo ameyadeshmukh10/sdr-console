@@ -42,7 +42,8 @@ way to get it.
 
 ## Cadence placement (4-touch email)
 - **Step 1 (opener):** Tier-A give + meeting ask — signal play or pipeline gap.
-- **Step 2:** a new give + meeting ask — teardown or 3 drafts.
+- **Step 2:** a new give + meeting ask — teardown or 3 drafts. (When a hiring signal is provided,
+  open email 2 on it: open-role count + 1-2 sales roles, tied to coverage while the new reps ramp.)
 - **Step 3:** proof point (Memgraph) + benchmark give + meeting ask.
 - **Step 4 (breakup):** *"Before I close your file, worth 15 minutes to walk through the playbook?"*
 

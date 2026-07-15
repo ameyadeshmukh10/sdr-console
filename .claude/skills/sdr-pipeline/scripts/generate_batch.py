@@ -119,7 +119,8 @@ meeting.
 - Touch 1 opens on the signal (or company anchor), then makes ONE specific, true observation about
   THEIR situation (their motion, stage, or the tension the signal implies), and ends with a SINGLE
   soft, open question. No meeting ask, no "give", no product pitch in touch 1.
-- Touch 2: one new specific angle. At most ONE proof point in the WHOLE sequence, told as a one-line
+- Touch 2: one new specific angle (if a hiring-signal line is provided in the contact block, that IS
+  the angle for email 2: open on it). At most ONE proof point in the WHOLE sequence, told as a one-line
   human story (never a stack of numbers). End on a soft question or a light, low-friction offer.
 - Touch 3: now you may ask for a short conversation, framed as the easy way to go deeper on THEIR
   situation. Keep it light (a quick chat / short call), not "worth 15 minutes to walk you through it".
@@ -136,7 +137,8 @@ Same as the "earn the reply" style, with ONE addition: this email is a live demo
 TOUCH 2, make a concrete, low-friction, ASYNC offer that proves the product without a meeting: offer
 to send a small real sample our AI would produce for THEM, e.g. "I had our AI draft 3 opening lines
 (or 3 short emails) to {company}'s top 3 accounts, want me to send them over? No call." Delivered by
-email, no meeting required.
+email, no meeting required. If a hiring-signal line is provided in the contact block, open email 2 on
+it before making the sample offer.
 
 - 45-75 words per email. One or two short paragraphs. ONE idea per email.
 - Touch 1: open on the signal (or anchor) + ONE specific observation about their situation + a SINGLE
@@ -232,7 +234,8 @@ def build_system(knowledge, variant=DEFAULT_VARIANT, mode="research"):
     )
 
 
-def build_user(contact, cached_signal=None, prior_issues=None, tech_signals=None):
+def build_user(contact, cached_signal=None, prior_issues=None, tech_signals=None,
+               hiring_signals=None):
     persona = contact.get("persona", "sales-leadership")
     framing = PERSONA_FRAMING.get(persona, PERSONA_FRAMING["sales-leadership"])
     domain = contact.get("domain") or db.email_domain(contact.get("email"))
@@ -252,6 +255,16 @@ def build_user(contact, cached_signal=None, prior_issues=None, tech_signals=None
             "Background only: reference a specific tool ONLY when it sharpens one line's relevance "
             "(e.g. their CRM or sales-engagement tool). Never list the stack, never mention scanning, "
             "never present it as news.\n\n"
+        )
+    if hiring_signals:
+        base += (
+            f"Company hiring signal (live job-postings scan; reliable): {hiring_signals}\n"
+            "Use it in EMAIL 2 ONLY: open email 2 on the hiring signal (open-role count plus one or two "
+            "sales roles, e.g. 'hiring AEs and an SDR') and tie it to covering more pipeline while the "
+            "new reps ramp. Never use it in email 1. If email 1's signal already covers their hiring, "
+            "skip this angle entirely, do not double-hit. Never mention the data source, never list all "
+            "the titles, do not claim the postings are new, and do not reference hiring anywhere else "
+            "in the sequence.\n\n"
         )
     if cached_signal:
         base += (f"Company signal (use this, do NOT search the web): {cached_signal}\n\n"
@@ -361,13 +374,15 @@ def _atomic_write(contact_id, asset):
 
 
 def generate_contact(contact, knowledge, client, write=True, cached_signal=None,
-                     variant=DEFAULT_VARIANT, tech_signals=None):
+                     variant=DEFAULT_VARIANT, tech_signals=None, hiring_signals=None):
     """Generate + validate one contact. Returns a result dict.
 
     cached_signal (when provided): use it as the company signal and DO NOT search
     the web — much cheaper. Otherwise research the signal with web search.
     tech_signals (when provided): the company's detected tech-stack line, passed
     to the prompt as background-only context.
+    hiring_signals (when provided): the company's open-sales-roles line, passed
+    to the prompt with the email-2-only placement instruction.
     variant: which instruction set / linter to use (value-give | earn | show).
     write=False skips the file write (used by --contact-test); the asset is
     still returned under result["asset"].
@@ -386,7 +401,7 @@ def generate_contact(contact, knowledge, client, write=True, cached_signal=None,
                 build_system(knowledge, variant=variant, mode=mode),
                 build_user(contact, cached_signal=cached_signal,
                            prior_issues=None if attempt == 1 else issues,
-                           tech_signals=tech_signals),
+                           tech_signals=tech_signals, hiring_signals=hiring_signals),
                 use_web_search=use_search, max_web_searches=3, max_tokens=4096,
             )
             web_searches = res.get("web_search_count", 0)
@@ -488,6 +503,51 @@ def _cached_tech(domain):
     return tech
 
 
+def _maybe_detect_hiring(domain, company=None):
+    """Best-effort hiring scan alongside signal research (cache-aware, one
+    Prospeo credit per company per HIRING_REFRESH_DAYS; HIRING_DETECT_ENABLED=0
+    turns the inline hook off, and without PROSPEO_API_KEY it is a no-op).
+    Failures only log to stderr — generation must never break on the detector."""
+    if not domain:
+        return
+    if (os.environ.get("HIRING_DETECT_ENABLED") or "1").strip().lower() in ("0", "false", "no", "off"):
+        return
+    try:
+        import hiring_signals as _hiring  # lazy (stdlib-only, but mirror the boot rule)
+        if not _hiring.hiring_available()[0]:
+            return
+        _hiring.detect_and_store(domain, company=company)
+    except Exception as e:  # noqa: BLE001
+        sys.stderr.write(f"[generate] hiring detect skipped for {domain}: {e}\n")
+
+
+def _cached_hiring(domain):
+    """A compact hiring line for prompt use, or None. Fires ONLY when the scan
+    found open sales/GTM roles (from hiring_detail.sales_titles) — a plain
+    open-roles count with no sales roles is a weak angle for this pitch, and
+    the 'No open roles detected' literal means nothing to say."""
+    if not domain:
+        return None
+    conn = db.connect()
+    try:
+        row = db.get_signal(conn, domain)
+    finally:
+        conn.close()
+    line = (row or {}).get("hiring_signals")
+    if not line or line == "No open roles detected":
+        return None
+    try:
+        detail = json.loads(row.get("hiring_detail") or "{}")
+    except (ValueError, TypeError):
+        return None
+    sales = [t for t in (detail.get("sales_titles") or []) if t]
+    if not sales:
+        return None
+    count = detail.get("active_count") or len(sales)
+    return (f"{count} open roles, {len(sales)} in sales/GTM "
+            f"(e.g. {', '.join(sales[:2])})")
+
+
 def generate_one(contact, knowledge, client, write=True, variant=DEFAULT_VARIANT):
     """Cache-aware single-contact generation.
 
@@ -500,7 +560,7 @@ def generate_one(contact, knowledge, client, write=True, variant=DEFAULT_VARIANT
     cached = _fresh_cached_signal(domain)
     if cached:
         r = generate_contact(contact, knowledge, client, write=write, cached_signal=cached, variant=variant,
-                             tech_signals=_cached_tech(domain))
+                             tech_signals=_cached_tech(domain), hiring_signals=_cached_hiring(domain))
         r["used_cache"] = True
         return r
 
@@ -512,14 +572,15 @@ def generate_one(contact, knowledge, client, write=True, variant=DEFAULT_VARIANT
             cached = _fresh_cached_signal(domain)
             if cached:
                 r = generate_contact(contact, knowledge, client, write=write, cached_signal=cached, variant=variant,
-                                     tech_signals=_cached_tech(domain))
+                                     tech_signals=_cached_tech(domain), hiring_signals=_cached_hiring(domain))
                 r["used_cache"] = True
                 return r
-        # cache miss = this thread researches the company: scan its tech first
-        # (cache-aware, seconds) so this contact's copy can already use the line
+        # cache miss = this thread researches the company: scan its tech + hiring
+        # first (cache-aware, seconds) so this contact's copy can already use them
         _maybe_detect_tech(domain, contact.get("company", ""))
+        _maybe_detect_hiring(domain, contact.get("company", ""))
         r = generate_contact(contact, knowledge, client, write=write, variant=variant,  # search + write
-                             tech_signals=_cached_tech(domain))
+                             tech_signals=_cached_tech(domain), hiring_signals=_cached_hiring(domain))
         r["used_cache"] = False
         sig = (r.get("signal") or "").strip()
         if domain and sig:
@@ -555,8 +616,9 @@ def research_signal(domain, company, client=None):
         db.upsert_signal(conn, domain, company_out, signal, has_recent, client.model)
     finally:
         conn.close()
-    # a signal refresh also freshens the tech scan (skip-if-fresh keeps it cheap)
+    # a signal refresh also freshens the tech + hiring scans (skip-if-fresh keeps it cheap)
     _maybe_detect_tech(domain, company_out)
+    _maybe_detect_hiring(domain, company_out)
     return {"domain": domain, "company_name": company_out, "signal": signal,
             "has_recent": 1 if has_recent else 0, "web_searches": res.get("web_search_count", 0)}
 
@@ -613,13 +675,14 @@ def generate_samples(company, domain="", client=None):
 # and cache logic as the real-time path, just packaged for async batch submit.
 # ----------------------------------------------------------------------------
 def build_request_params(contact, knowledge, client, cached_signal=None, variant=DEFAULT_VARIANT,
-                         tech_signals=None):
+                         tech_signals=None, hiring_signals=None):
     """The Messages `params` for one contact (write-only if a cached signal is
     given, else a combined research+write request with web search). 1h cache."""
     mode = "write" if cached_signal else "research"
     return client.build_body(
         build_system(knowledge, variant=variant, mode=mode),
-        build_user(contact, cached_signal=cached_signal, tech_signals=tech_signals),
+        build_user(contact, cached_signal=cached_signal, tech_signals=tech_signals,
+                   hiring_signals=hiring_signals),
         use_web_search=cached_signal is None, max_web_searches=3,
         max_tokens=4096, cache_ttl="1h",
     )
@@ -637,7 +700,8 @@ def prepare_batch_requests(contacts, knowledge, client=None, variant=DEFAULT_VAR
         cvariant = c.get("variant") or variant  # per-contact split wins over run-level
         requests.append({"custom_id": cid,
                          "params": build_request_params(c, knowledge, client, cached_signal=cached,
-                                                        variant=cvariant, tech_signals=_cached_tech(domain))})
+                                                        variant=cvariant, tech_signals=_cached_tech(domain),
+                                                        hiring_signals=_cached_hiring(domain))})
         manifest[cid] = {"contact": c, "domain": domain, "variant": cvariant,
                          "was_combined": cached is None, "cached_signal": cached}
     return requests, manifest

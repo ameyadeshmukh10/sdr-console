@@ -52,7 +52,7 @@ HubSpot, and reports on results — including nightly AI SDR **deal attribution*
 
 | Store | Where | What |
 |---|---|---|
-| SQLite `data/outreach/pipeline.db` | volume | contacts, batches, signals cache (`account_signals`, incl. the technographic `tech_signals/tech_detail/tech_checked_at/tech_error` columns), `hubspot_activity_log` (engagement-logging ledger), `bison_lead_map`, `heyreach_events` inbox. Schema: `scripts/batch_db.py`. The web server opens it READ-ONLY; writes go through pipeline scripts (and their in-process module calls, e.g. signal refresh / tech detect). |
+| SQLite `data/outreach/pipeline.db` | volume | contacts, batches, signals cache (`account_signals`, incl. the technographic `tech_*` and hiring `hiring_signals/hiring_detail/hiring_checked_at/hiring_error` columns), `hubspot_activity_log` (engagement-logging ledger), `bison_lead_map`, `heyreach_events` inbox. Schema: `scripts/batch_db.py`. The web server opens it READ-ONLY; writes go through pipeline scripts (and their in-process module calls, e.g. signal refresh / tech + hiring detect). |
 | JSONL under `data/` | volume | campaign stats, generated outreach copy, interested-reply threads/analysis. |
 | MongoDB db `aisdr` | Railway MongoDB service | AI SDR deal attribution: `emails`, `contacts`, `deals`, `sync_state` (see below). Accessed only through `scripts/mongo_store.py`. |
 
@@ -126,6 +126,53 @@ salestech) — no LLM, no third-party API.
   never store a network-dead run as "No signals detected". `--self-test` runs offline
   against vendored fixtures (works without dnspython/network).
 
+## Hiring signals (added 2026-07)
+
+Per-account job-postings scan — is the company hiring, and specifically for sales/GTM
+roles? Ported from the `hubspot-hiring-signals` repo as a **stdlib rewrite** (urllib +
+hand-rolled retry; NO requests/tenacity/pyyaml — zero new pip deps).
+
+- **Engine:** `.claude/skills/sdr-pipeline/scripts/hiring_signals.py` (module + CLI).
+  One Prospeo `enrich-company` call per domain (`PROSPEO_API_KEY`, **one credit per
+  non-cached scan**) → `job_postings.active_count/active_titles`; the sales/GTM subset
+  comes from the regex taxonomy ported verbatim from that repo's `config.yaml`
+  (exclude beats include).
+- **Storage** (`account_signals.hiring_*`, semantics mirror tech): `hiring_signals` =
+  formatted line (`"14 open roles · 4 sales: SDR; AE; VP Sales"`) or the literal
+  `"No open roles detected"`; NULL + `hiring_error` = the scan itself failed (retries
+  next touch). Prospeo's definitive non-matches (NO_MATCH/NO_RESULT/NO_IDENTIFIER/
+  INVALID_DATAPOINT) store the literal + `error_code` in `hiring_detail` — a credit
+  guard so unmatchable domains aren't re-billed every touch. `hiring_checked_at` drives
+  `HIRING_REFRESH_DAYS` (default 90).
+- **Rate-limit gotcha (load-bearing):** Prospeo signals throttling as **HTTP 200 +
+  `{"error":true,"error_code":"Rate limit exceeded"}`** — `_prospeo_request` retries it
+  like a 429 (Retry-After honored, capped 16s; 5 attempts, expo backoff) and must never
+  store it as a result. Unknown error codes classify as transport failures (retry).
+- **When it runs:** same three hooks as tech — (1) inline in `generate_batch.py` on a
+  research cache miss + after a UI signal refresh; (2) Signals view (drawer "⚑ Detect
+  hiring", bulk "Detect hiring": `POST /api/signals/hiring/detect`,
+  `POST /api/signals/hiring/backfill` + `GET /api/signals/hiring/status/<id>`, separate
+  `HIRING_JOBS` registry); (3) fire-and-forget tail after Message-Batches (separate
+  thread from the tech tail).
+- **Copy consumer (the rule both engines carry):** when the sales subset is non-empty,
+  `_cached_hiring()` feeds a compact line into the prompt and **email 2 opens on it**
+  (count + 1-2 roles, tied to covering pipeline while the new reps ramp); email 1 keeps
+  the researched news signal; skip if email 1 already covers hiring; never name the data
+  source or claim postings are new. Matching wording lives in: `generate_batch.py`
+  (`build_user` + earn/show WRITE_RULES), `icp-email.md` 4-touch table, `cta-offers.md`
+  cadence, `sdr-batch-runner.md`, and the 4 persona agents — `grep -rn "email 2\|EMAIL 2"`
+  over those files is the drift checklist. Counts with NO sales roles are not a hook.
+- **HubSpot write-back:** refreshes the SAME three company properties the
+  hubspot-hiring-signals job maintains — `open_roles_count` (str int),
+  `hiring_signals_job_titles` (`<br>`-joined HTML, ALL titles), `hiring_signals`
+  (`"; "`-joined **sales subset** — NOT the display line). Matched-with-0-postings
+  clears stale values; non-matches skip. Best-effort by domain;
+  `HIRING_HUBSPOT_WRITEBACK=0` kills it.
+- **Gotchas:** keep every `import hiring_signals` lazy (boot rule); the server must boot
+  with `PROSPEO_API_KEY` unset (endpoints return `hiring_available:false`, detect → 501).
+  Run a first bulk backfill with `--limit` — every non-skipped scan is a credit.
+  `--self-test` is offline (no key/network/DB).
+
 ## Background jobs (daemon threads started in `app.py main()`)
 
 1. `_activity_autosync_loop` — hourly: logs new email/LinkedIn activity to HubSpot.
@@ -154,6 +201,7 @@ python3 -m py_compile webui/server/app.py .claude/skills/sdr-pipeline/scripts/*.
 env -u PORT python3 webui/server/app.py --port 8787   # boots WITHOUT pymongo/MONGO_URL/dnspython
 cd webui/frontend && npm ci && npm run build           # SPA build (Dockerfile stage 1)
 python3 .claude/skills/sdr-pipeline/scripts/tech_signals.py --self-test   # offline detector check
+python3 .claude/skills/sdr-pipeline/scripts/hiring_signals.py --self-test # offline hiring-classifier check
 ```
 The server must always boot with `MONGO_URL` unset (aisdr endpoints return
 `{"configured": false}`, nightly loop self-disables) — preserve that when touching

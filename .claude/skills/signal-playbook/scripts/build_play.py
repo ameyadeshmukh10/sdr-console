@@ -235,6 +235,35 @@ def augment_target_tech(research_md):
         return research_md
 
 
+def augment_target_hiring(research_md):
+    """Post-research: run the Prospeo hiring scan on the TARGET's domain (pure
+    detect, no store — targets are not outreach accounts) and append a verified
+    block next to the researched 6b hiring section. Skips silently without
+    PROSPEO_API_KEY. Best-effort; returns the file unchanged on any failure."""
+    try:
+        m = re.search(r"\*\*Domain:\*\*\s*([A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,})", research_md)
+        if not m:
+            return research_md
+        target_domain = m.group(1).strip().rstrip(".")
+        import hiring_signals  # noqa: E402  (stdlib-only; lazy per the boot rule)
+        if not hiring_signals.hiring_available()[0]:
+            return research_md
+        res = hiring_signals.detect_domain(target_domain)
+        line = res.get("formatted") or f"unavailable ({res.get('error') or 'scan failed'})"
+        sales = res.get("sales_titles") or []
+        if sales:
+            line += f" (sales/GTM: {'; '.join(sales[:8])})"
+        log(f"target hiring scan ({target_domain}): {line[:120]}")
+        return (research_md.rstrip() + "\n\n"
+                "### 6b-verified · Hiring signals (TARGET)\n"
+                f"Live Prospeo job-postings scan of {target_domain} run by the pipeline — "
+                "trust verbatim over inferred hiring above:\n"
+                "```\n" + line + "\n```\n")
+    except Exception as e:  # noqa: BLE001
+        log(f"target hiring scan skipped: {e}")
+        return research_md
+
+
 def stage_research(client, contact):
     log("stage: research")
     template = TEMPLATE.read_text()
@@ -722,6 +751,7 @@ def main():
     try:
         research_md = stage_research(client, contact)
         research_md = augment_target_tech(research_md)
+        research_md = augment_target_hiring(research_md)
         (out_dir / "research.md").write_text(research_md)
         deck_data = stage_deck_data(client, research_md, out_dir)
         html_out = stage_render(out_dir / "deck-data.json",

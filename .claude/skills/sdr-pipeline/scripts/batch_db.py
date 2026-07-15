@@ -57,18 +57,23 @@ def init_schema(conn):
     -- company is searched once instead of once per contact / per re-run.
     -- tech_* columns hold the technographic scan (tech_signals.py): the formatted
     -- summary string, the structured detections JSON, when it ran, and any error.
+    -- hiring_* columns hold the job-postings scan (hiring_signals.py), same shape.
     CREATE TABLE IF NOT EXISTS account_signals (
-        domain          TEXT PRIMARY KEY,
-        company_name    TEXT,
-        signal          TEXT,
-        has_recent      INTEGER,
-        researched_at   TEXT,
-        model           TEXT,
-        updated_at      TEXT,
-        tech_signals    TEXT,
-        tech_detail     TEXT,
-        tech_checked_at TEXT,
-        tech_error      TEXT
+        domain            TEXT PRIMARY KEY,
+        company_name      TEXT,
+        signal            TEXT,
+        has_recent        INTEGER,
+        researched_at     TEXT,
+        model             TEXT,
+        updated_at        TEXT,
+        tech_signals      TEXT,
+        tech_detail       TEXT,
+        tech_checked_at   TEXT,
+        tech_error        TEXT,
+        hiring_signals    TEXT,
+        hiring_detail     TEXT,
+        hiring_checked_at TEXT,
+        hiring_error      TEXT
     );
     -- Idempotency ledger for HubSpot activity logging (hubspot_activity_sync.py).
     -- One row per logged email engagement; the dedup_key makes re-runs no-ops.
@@ -133,9 +138,10 @@ def init_schema(conn):
                  "WHERE (domain IS NULL OR domain='') AND email LIKE '%@%'")
     # index after the column is guaranteed to exist
     conn.execute("CREATE INDEX IF NOT EXISTS idx_contacts_domain ON contacts(domain)")
-    # migrate older DBs: additive technographic columns on the signal cache
+    # migrate older DBs: additive technographic + hiring columns on the signal cache
     sig_cols = [r["name"] for r in conn.execute("PRAGMA table_info(account_signals)")]
-    for col in ("tech_signals", "tech_detail", "tech_checked_at", "tech_error"):
+    for col in ("tech_signals", "tech_detail", "tech_checked_at", "tech_error",
+                "hiring_signals", "hiring_detail", "hiring_checked_at", "hiring_error"):
         if col not in sig_cols:
             conn.execute(f"ALTER TABLE account_signals ADD COLUMN {col} TEXT")
     conn.commit()
@@ -296,6 +302,59 @@ def domains_missing_tech(conn, stale_days=None, limit=None):
     if stale_days is not None:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=int(stale_days))).strftime("%Y-%m-%dT%H:%M:%SZ")
         where += " OR tech_checked_at < ?"
+        params.append(cutoff)
+    sql = f"SELECT domain, company_name FROM account_signals WHERE {where} ORDER BY updated_at DESC"
+    if limit:
+        sql += " LIMIT ?"
+        params.append(int(limit))
+    return [dict(r) for r in conn.execute(sql, params)]
+
+
+# ---- per-company hiring scan (hiring_signals.py) ---------------------------
+def hiring_age_days(row):
+    """Whole days since the hiring scan ran, or None if it never has."""
+    if not row or not row.get("hiring_checked_at"):
+        return None
+    try:
+        ts = datetime.strptime(row["hiring_checked_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return None
+    return (datetime.now(timezone.utc) - ts).days
+
+
+def hiring_fresh(row, days=90):
+    age = hiring_age_days(row)
+    return age is not None and age < days
+
+
+def upsert_hiring_signals(conn, domain, hiring_signals, hiring_detail=None, hiring_error=None,
+                          company_name=None):
+    """Store one domain's hiring scan. Touches ONLY the hiring_* columns (plus
+    updated_at, so a fresh scan surfaces atop the Signals list) — the research signal
+    and tech fields, and their freshness clocks, are never affected. company_name only
+    fills a blank; an existing name wins."""
+    conn.execute("""
+        INSERT INTO account_signals
+          (domain, company_name, hiring_signals, hiring_detail, hiring_checked_at, hiring_error, updated_at)
+        VALUES (?,?,?,?,?,?,?)
+        ON CONFLICT(domain) DO UPDATE SET
+          company_name=COALESCE(NULLIF(account_signals.company_name,''), excluded.company_name),
+          hiring_signals=excluded.hiring_signals, hiring_detail=excluded.hiring_detail,
+          hiring_checked_at=excluded.hiring_checked_at, hiring_error=excluded.hiring_error,
+          updated_at=excluded.updated_at
+    """, (domain, company_name, hiring_signals, hiring_detail, now(), hiring_error, now()))
+    conn.commit()
+
+
+def domains_missing_hiring(conn, stale_days=None, limit=None):
+    """Domains with no hiring scan yet (plus, when stale_days is given, scans older
+    than the cutoff). Newest research first, so backfills hit active accounts before
+    dormant ones. Returns [{domain, company_name}, ...]."""
+    where = "hiring_checked_at IS NULL"
+    params = []
+    if stale_days is not None:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=int(stale_days))).strftime("%Y-%m-%dT%H:%M:%SZ")
+        where += " OR hiring_checked_at < ?"
         params.append(cutoff)
     sql = f"SELECT domain, company_name FROM account_signals WHERE {where} ORDER BY updated_at DESC"
     if limit:

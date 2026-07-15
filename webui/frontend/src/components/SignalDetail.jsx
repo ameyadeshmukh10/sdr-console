@@ -4,17 +4,20 @@ import { Badge, Spinner, ErrorBanner } from './ui.jsx'
 
 // Slide-over drawer for one cached account: the full research signal, the
 // technographic detection breakdown (per-vendor source/confidence/evidence +
-// scan metadata + HubSpot write-back), and the contacts reusing this row.
+// scan metadata + HubSpot write-back), the hiring scan (open roles + the
+// sales/GTM subset that feeds email 2), and the contacts reusing this row.
 // onChanged(payload) hands the parent the fresh signals payload after an action
 // so the list updates in place (refresh/detect both return the full payload).
 const NO_TECH = 'No signals detected'
+const NO_HIRING = 'No open roles detected'
 
 function pct(x) { return x == null ? '—' : `${Math.round(x * 100)}%` }
 
-function hubspotLine(hs) {
+function hubspotLine(hs, envVar = 'TECH_HUBSPOT_WRITEBACK') {
   if (!hs) return 'not attempted'
   if (hs.ok) return `updated company ${hs.company_id}`
-  if (hs.reason === 'disabled') return 'disabled (TECH_HUBSPOT_WRITEBACK=0)'
+  if (hs.reason === 'disabled') return `disabled (${envVar}=0)`
+  if (hs.reason === 'not_matched') return 'skipped (company not matched by Prospeo)'
   if (hs.reason === 'no_company') return 'no matching company in HubSpot'
   if (hs.reason === 'no_token') return 'no HubSpot token configured'
   return hs.error ? `error: ${hs.error}` : 'not written'
@@ -23,7 +26,7 @@ function hubspotLine(hs) {
 export default function SignalDetail({ domain, onClose, onChanged }) {
   const [d, setD] = useState(null)
   const [error, setError] = useState(null)
-  const [busy, setBusy] = useState(null) // 'refresh' | 'detect'
+  const [busy, setBusy] = useState(null) // 'refresh' | 'detect' | 'hiring'
 
   function load() {
     setError(null)
@@ -36,10 +39,12 @@ export default function SignalDetail({ domain, onClose, onChanged }) {
     try {
       const payload = kind === 'refresh'
         ? await api.refreshSignal(domain)
-        : await api.detectTech(domain, true)
+        : kind === 'hiring'
+          ? await api.detectHiring(domain, true)
+          : await api.detectTech(domain, true)
       if (payload && payload.ok === false) setError(payload.error || `${kind} failed`)
       else if (onChanged && payload?.signals) onChanged(payload)
-      load() // re-pull this drawer's detail (tech_detail, contacts)
+      load() // re-pull this drawer's detail (tech_detail, hiring_detail, contacts)
     } catch (e) { setError(e.message) }
     finally { setBusy(null) }
   }
@@ -47,8 +52,12 @@ export default function SignalDetail({ domain, onClose, onChanged }) {
   const s = d?.signal
   const td = s?.tech_detail
   const dets = td?.detections || []
+  const hd = s?.hiring_detail
+  const salesTitles = hd?.sales_titles || []
+  const allTitles = hd?.active_titles || []
   const contacts = d?.contacts || []
   const techOff = d ? d.tech_available === false : false
+  const hiringOff = d ? d.hiring_available === false : false
 
   return (
     <>
@@ -80,6 +89,15 @@ export default function SignalDetail({ domain, onClose, onChanged }) {
                   : s.tech_error
                     ? <span className="badge" style={{ color: 'var(--red)', borderColor: 'var(--red)' }}>scan failed</span>
                     : <span className="badge muted">not scanned</span>}
+              {s.hiring_signals && s.hiring_signals !== NO_HIRING
+                ? <span className="badge" style={{ color: 'var(--jade)', borderColor: 'var(--jade)' }}>
+                    {salesTitles.length ? `${salesTitles.length} sales roles open` : 'open roles'}
+                  </span>
+                : s.hiring_signals === NO_HIRING
+                  ? <span className="badge muted">no open roles</span>
+                  : s.hiring_error
+                    ? <span className="badge" style={{ color: 'var(--red)', borderColor: 'var(--red)' }}>hiring scan failed</span>
+                    : <span className="badge muted">hiring not scanned</span>}
             </div>
 
             <div className="row" style={{ gap: 8, marginTop: 14 }}>
@@ -89,6 +107,10 @@ export default function SignalDetail({ domain, onClose, onChanged }) {
               <button className="ghost sm" disabled={techOff || busy === 'detect'} onClick={() => act('detect')}
                 title={techOff ? (d.tech_reason || 'detection unavailable') : 'Re-scan website + DNS'}>
                 {busy === 'detect' ? <Spinner /> : '⌁ Detect tech'}
+              </button>
+              <button className="ghost sm" disabled={hiringOff || busy === 'hiring'} onClick={() => act('hiring')}
+                title={hiringOff ? (d.hiring_reason || 'detection unavailable') : 'Check live job postings (one Prospeo credit)'}>
+                {busy === 'hiring' ? <Spinner /> : '⚑ Detect hiring'}
               </button>
             </div>
 
@@ -140,6 +162,45 @@ export default function SignalDetail({ domain, onClose, onChanged }) {
                 {td.fetch_error && (<><span className="k">Fetch</span><span style={{ color: 'var(--amber)' }}>{td.fetch_error}</span></>)}
                 {td.dns_error && (<><span className="k">DNS</span><span style={{ color: 'var(--amber)' }}>{td.dns_error}</span></>)}
                 <span className="k">HubSpot</span><span>{hubspotLine(td.hubspot)}</span>
+              </div>
+            )}
+
+            <div className="section-h">Hiring</div>
+            {s.hiring_signals && s.hiring_signals !== NO_HIRING ? (
+              <>
+                <div className="touch"><div className="body">{s.hiring_signals}</div></div>
+                {salesTitles.length > 0 && (
+                  <p className="muted" style={{ marginBottom: 10 }}>
+                    <span style={{ color: 'var(--jade)' }}>Sales/GTM roles ({salesTitles.length}):</span>{' '}
+                    {salesTitles.join('; ')}
+                  </p>
+                )}
+                {allTitles.length > 0 && (
+                  <p className="muted" style={{ marginBottom: 12, fontSize: 12 }}>
+                    All open roles ({allTitles.length}): {allTitles.slice(0, 40).join('; ')}
+                    {allTitles.length > 40 ? ` (+${allTitles.length - 40} more)` : ''}
+                  </p>
+                )}
+              </>
+            ) : s.hiring_signals === NO_HIRING ? (
+              <p className="muted" style={{ marginBottom: 12 }}>
+                {hd?.error_code
+                  ? `Not matched by Prospeo (${hd.error_code}) — treated as no data.`
+                  : 'Scan ran, no open job postings found.'}
+              </p>
+            ) : s.hiring_error ? (
+              <div className="touch"><div className="body" style={{ color: 'var(--red)' }}>Scan failed: {s.hiring_error}</div></div>
+            ) : (
+              <p className="muted" style={{ marginBottom: 12 }}>Not scanned yet. Use Detect hiring above.</p>
+            )}
+            {hd && (
+              <div className="kv">
+                {s.hiring_checked_at && (<><span className="k">Checked</span><span>{s.hiring_checked_at}{s.hiring_age_days != null ? ` (${s.hiring_age_days}d ago)` : ''}</span></>)}
+                <span className="k">Active roles</span><span>{hd.active_count ?? '—'}</span>
+                <span className="k">Sales matches</span><span>{salesTitles.length}</span>
+                {hd.error_code && (<><span className="k">Error code</span><span className="mono">{hd.error_code}</span></>)}
+                <span className="k">Duration</span><span>{hd.duration_ms != null ? `${hd.duration_ms} ms` : '—'}</span>
+                <span className="k">HubSpot</span><span>{hubspotLine(hd.hubspot, 'HIRING_HUBSPOT_WRITEBACK')}</span>
               </div>
             )}
 
