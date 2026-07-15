@@ -109,24 +109,30 @@ export default function SignalsPage() {
       {!data ? <Spinner label="Loading…" /> : signals.length === 0 ? (
         <div className="empty">No cached signals yet. They populate as you generate batches.</div>
       ) : (
-        <div className="panel" style={{ padding: 0 }}>
-          <table className="dense">
+        <div className="panel" style={{ padding: 0, overflowX: 'auto' }}>
+          {/* table-layout:fixed makes these 7 widths (summing to 100%) authoritative,
+              so the actions column keeps room for both buttons and the long
+              signal/tech text truncates instead of blowing the table wide. minWidth
+              floors it so buttons never clip; the panel scrolls on a narrow window. */}
+          <table className="dense" style={{ tableLayout: 'fixed', width: '100%', minWidth: 945 }}>
             <thead><tr>
-              <th style={{ width: '13%' }}>Domain</th>
-              <th style={{ width: '12%' }}>Company</th>
-              <th style={{ width: '7%' }}>Type</th>
-              <th style={{ width: '32%' }}>Signal</th>
-              <th style={{ width: '24%' }}>Tech</th>
-              <th style={{ width: '5%' }}>Age</th>
-              <th></th>
+              <th style={{ width: '14%' }}>Domain</th>
+              <th style={{ width: '11%' }}>Company</th>
+              <th style={{ width: '6%' }}>Type</th>
+              <th style={{ width: '24%' }}>Signal</th>
+              <th style={{ width: '21%' }}>Tech</th>
+              <th style={{ width: '4%' }}>Age</th>
+              <th style={{ width: '20%' }}></th>
             </tr></thead>
             <tbody>
               {signals.map((s) => (
                 <tr key={s.domain} className="clickable" onClick={() => setOpenDomain(s.domain)}>
-                  <td className="mono" style={{ whiteSpace: 'nowrap' }}>{s.domain}</td>
+                  <td className="mono">
+                    <span title={s.domain} style={{ display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>{s.domain}</span>
+                  </td>
                   <td>
                     {s.company_name
-                      ? <span title={s.company_name} style={{ display: 'inline-block', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>{s.company_name}</span>
+                      ? <span title={s.company_name} style={{ display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>{s.company_name}</span>
                       : <span className="muted">—</span>}
                   </td>
                   <td>
@@ -134,13 +140,13 @@ export default function SignalsPage() {
                       ? <span className="badge" style={{ color: 'var(--green)', borderColor: 'var(--green)' }}>recent</span>
                       : <span className="badge" style={{ color: 'var(--amber)', borderColor: 'var(--amber)' }}>fallback</span>}
                   </td>
-                  <td className="muted" style={{ maxWidth: 340 }}>
+                  <td className="muted">
                     <span className="clamp2" title={s.signal}>{s.signal}</span>
                   </td>
-                  <td style={{ maxWidth: 260 }}>
+                  <td>
                     {s.tech_signals && s.tech_signals !== NO_TECH ? (
                       <span className="muted" title={`${s.tech_signals}${s.tech_age_days != null ? ` (scanned ${s.tech_age_days}d ago)` : ''}`}
-                        style={{ display: 'inline-block', maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>
+                        style={{ display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>
                         {s.tech_signals}
                       </span>
                     ) : s.tech_signals === NO_TECH ? (
