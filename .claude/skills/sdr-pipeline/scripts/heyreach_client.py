@@ -102,13 +102,13 @@ class HeyReachClient:
 
     def get_campaigns_for_lead(self, profile_url=None, email=None, linkedin_id=None,
                                offset=0, limit=100):
-        """POST /lead/GetCampaignsForLead — every campaign that contains a lead,
+        """POST /campaign/GetCampaignsForLead — every campaign that contains a lead,
         identified by profile URL, email, or LinkedIn member id (provide at least
         one). Returns {totalCount, items:[campaign]}.
 
-        NOTE: request-body field names are from HeyReach's public API docs but have
-        not been exercised against the live API yet (key pending) — verify on first
-        live use; HeyReachError carries the response detail for fast correction."""
+        Path + body cross-checked against a working client implementation
+        (bcharleson/heyreach-cli) after the first live run 404'd on the
+        /lead/-prefixed path the public docs research suggested."""
         if not (profile_url or email or linkedin_id):
             raise ValueError("get_campaigns_for_lead needs profile_url, email or linkedin_id")
         body = {"offset": int(offset), "limit": int(limit)}
@@ -118,13 +118,11 @@ class HeyReachClient:
             body["email"] = email
         if linkedin_id:
             body["linkedinId"] = linkedin_id
-        return self._request("POST", "/lead/GetCampaignsForLead", body)
+        return self._request("POST", "/campaign/GetCampaignsForLead", body)
 
     def get_leads_from_campaign(self, campaign_id, offset=0, limit=100):
         """POST /campaign/GetLeadsFromCampaign — paginated leads in a campaign with
-        their campaign-level status (PENDING, IN_PROGRESS, FINISHED, …).
-
-        NOTE: body schema unverified against the live API — see get_campaigns_for_lead."""
+        their campaign-level status (PENDING, IN_PROGRESS, FINISHED, …)."""
         return self._request("POST", "/campaign/GetLeadsFromCampaign",
                              {"campaignId": int(campaign_id),
                               "offset": int(offset), "limit": int(limit)})
@@ -132,9 +130,7 @@ class HeyReachClient:
     def stop_lead_in_campaign(self, campaign_id, lead_member_id=None, lead_url=None):
         """POST /campaign/StopLeadInCampaign — stop a lead mid-sequence so no further
         LinkedIn steps execute for them in this campaign. The lead must already be in
-        the campaign. Identify by leadMemberId or leadUrl (profile URL).
-
-        NOTE: body schema unverified against the live API — see get_campaigns_for_lead."""
+        the campaign. Identify by leadMemberId or leadUrl (profile URL)."""
         if not (lead_member_id or lead_url):
             raise ValueError("stop_lead_in_campaign needs lead_member_id or lead_url")
         body = {"campaignId": int(campaign_id)}
