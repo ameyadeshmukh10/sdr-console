@@ -60,8 +60,10 @@ def main():
         return 1
 
     linkedin_prop = os.environ.get("HUBSPOT_LINKEDIN_PROPERTY", "hs_linkedin_url")
+    tag_prop = os.environ.get("HUBSPOT_EVERWORKER_TAG_PROPERTY", "everworker_tag")
     props = ["firstname", "lastname", "email", "jobtitle", "company",
-             "country", "hs_country_region_code", "industry", "website", "domain", linkedin_prop]
+             "country", "hs_country_region_code", "industry", "website", "domain",
+             linkedin_prop, tag_prop]
 
     try:
         client = HubSpotClient()
@@ -73,12 +75,17 @@ def main():
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     rows = []
-    skipped = {"non_icp": 0, "non_us": 0, "non_tech": 0, "no_email": 0}
+    skipped = {"non_icp": 0, "non_us": 0, "non_tech": 0, "no_email": 0, "suppressed": 0}
     kept_unknown_country = 0
     has_industry = any((c.get("properties", {}).get("industry")) for c in contacts)
 
     for c in contacts:
         p = c.get("properties", {})
+        # Suppression: RevOps tagged this contact do-not-contact — never enters the
+        # pipeline. (The enroll gate re-checks live; this just avoids wasted copy.)
+        if str(p.get(tag_prop) or "").strip().lower() == "false":
+            skipped["suppressed"] += 1
+            continue
         title = p.get("jobtitle") or ""
         persona = persona_for_title(title)
         if not persona:

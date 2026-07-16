@@ -407,6 +407,31 @@ class HubSpotClient:
             "PUT",
             f"/crm/v4/objects/communications/{comm_id}/associations/default/contacts/{contact_id}")
 
+    # ---- Notes (generic timeline entries) --------------------------------
+    def log_note(self, contact_id, *, timestamp, body):
+        """Create one CRM v3 `notes` object and associate it to a contact — a plain
+        timeline entry for events that aren't an email or a LinkedIn message (e.g.
+        "AI SDR stopped outreach"). Mirrors log_communication's contract: returns the
+        new note id (str), raises HubSpotError on failure, and best-effort deletes the
+        note if the association step fails so no orphan is left behind."""
+        ms = to_ms_epoch(timestamp)
+        if ms is None:  # required by HubSpot — fail clearly rather than POST "None"
+            raise HubSpotError(f"missing/unparseable hs_timestamp: {timestamp!r}")
+        payload = self._request("POST", "/crm/v3/objects/notes", body={
+            "properties": {"hs_timestamp": str(ms), "hs_note_body": body}})
+        note_id = str(payload.get("id"))
+        try:
+            self._request(
+                "PUT",
+                f"/crm/v4/objects/notes/{note_id}/associations/default/contacts/{contact_id}")
+        except HubSpotError:
+            try:
+                self._request("DELETE", f"/crm/v3/objects/notes/{note_id}")
+            except HubSpotError:
+                pass
+            raise
+        return note_id
+
     def find_contact_by_linkedin(self, url):
         """Contact id whose LinkedIn-URL property matches `url`, else None. Searches the
         configured property (HUBSPOT_LINKEDIN_PROPERTY, default hs_linkedin_url) by the

@@ -52,7 +52,7 @@ HubSpot, and reports on results — including nightly AI SDR **deal attribution*
 
 | Store | Where | What |
 |---|---|---|
-| SQLite `data/outreach/pipeline.db` | volume | contacts, batches, signals cache (`account_signals`, incl. the technographic `tech_*` and hiring `hiring_signals/hiring_detail/hiring_checked_at/hiring_error` columns), `hubspot_activity_log` (engagement-logging ledger), `bison_lead_map`, `heyreach_events` inbox. Schema: `scripts/batch_db.py`. The web server opens it READ-ONLY; writes go through pipeline scripts (and their in-process module calls, e.g. signal refresh / tech + hiring detect). |
+| SQLite `data/outreach/pipeline.db` | volume | contacts, batches, signals cache (`account_signals`, incl. the technographic `tech_*` and hiring `hiring_signals/hiring_detail/hiring_checked_at/hiring_error` columns), `hubspot_activity_log` (engagement-logging ledger), `bison_lead_map`, `heyreach_events` inbox, `unenrollment_log` (suppression ledger). Schema: `scripts/batch_db.py`. The web server opens it READ-ONLY; writes go through pipeline scripts (and their in-process module calls, e.g. signal refresh / tech + hiring detect). |
 | JSONL under `data/` | volume | campaign stats, generated outreach copy, interested-reply threads/analysis. |
 | MongoDB db `aisdr` | Railway MongoDB service | AI SDR deal attribution: `emails`, `contacts`, `deals`, `sync_state` (see below). Accessed only through `scripts/mongo_store.py`. |
 
@@ -173,11 +173,48 @@ hand-rolled retry; NO requests/tenacity/pyyaml — zero new pip deps).
   Run a first bulk backfill with `--limit` — every non-skipped scan is a credit.
   `--self-test` is offline (no key/network/DB).
 
+## Unenrollment checker (added 2026-07)
+
+Suppression sweeps: contacts RevOps tagged with the HubSpot contact property
+`everworker_tag = "false"` (enumeration, values `"true"`/`"false"`) must never be touched
+by the AI SDR again — they booked a meeting, became an opportunity, etc.
+
+- **Engine:** `.claude/skills/sdr-pipeline/scripts/unenrollment_check.py` (module + CLI:
+  `--json --dry-run --limit --force --contact-id`). Per sweep: search contacts where
+  `everworker_tag EQ "false"` (10k re-window via `hs_object_id GT`), then per contact —
+  **Bison**: email → lead (`bison_lead_map`, live fallback) → `lead_scheduled_emails` →
+  `stop_future_emails` in each campaign with steps still queued (`scheduled`/`sending
+  paused`); **HeyReach**: linkedin url → `get_campaigns_for_lead` → `stop_lead_in_campaign`
+  per non-finished campaign. One HubSpot timeline note per actually-stopped contact
+  (`UNENROLL_HUBSPOT_NOTE=0` kills it; never for never-enrolled contacts).
+- **Ledger:** `unenrollment_log` in pipeline.db, dedup key `<rule>:<channel>:<contact_id>`
+  — sweeps are idempotent; `failed` retries every sweep; `skipped_unconfigured` re-arms
+  automatically once the channel's API key lands; `done` rows re-verify after
+  `UNENROLL_RECHECK_HOURS` (default 24) so a contact re-enrolled while still flagged is
+  re-stopped within a day; `--force` re-checks everything now.
+  **One-way**: flipping the tag back to `"true"` only re-permits future enrollment (the
+  gate's live check wins over the ledger) — stopped sequences stay stopped.
+- **Gates:** `hubspot_pull.py` drops flagged contacts at pull time (`skipped.suppressed`);
+  `sdr_batches.py cmd_enroll` + `enroll.py main()` call
+  `unenrollment_check.suppressed_set()` (live tag check, ledger fallback, fail-open —
+  the sweeper is the backstop) and skip suppressed contacts with a `suppressed` count.
+- **Server:** `_unenrollment_loop()` every `UNENROLL_CHECK_MINUTES` (default 30,
+  `UNENROLL_CHECK_ENABLED=0` disables); `GET /api/unenroll/status` (rules[]-shaped —
+  future suppression rules append entries), `POST /api/unenroll/run` (`{dry_run?}`,
+  409 if running). UI: Orchestration view — a dashed "safety gate" bar in the diagram +
+  an "Unenrollment & suppression rules" card section (Run now / Dry run buttons).
+- **Gotchas:** the HeyReach request bodies (`GetCampaignsForLead`/`StopLeadInCampaign`)
+  are from public API docs and are NOT yet verified against the live API (key blank in
+  prod; Bison-only sweeps are still correct) — verify on first live use and fix from the
+  HeyReachError detail. Keep `import unenrollment_check` cheap (its module imports are
+  stdlib + batch_db only; clients import lazily inside functions — boot rule).
+
 ## Background jobs (daemon threads started in `app.py main()`)
 
 1. `_activity_autosync_loop` — hourly: logs new email/LinkedIn activity to HubSpot.
 2. `_aisdr_sync_loop` — nightly midnight ET: deal attribution (above).
 3. HeyReach webhook drain — near-real-time LinkedIn activity logging.
+4. `_unenrollment_loop` — every 30 min: everworker_tag suppression sweeps (above).
 
 ## HubSpot notes
 
@@ -189,7 +226,9 @@ hand-rolled retry; NO requests/tenacity/pyyaml — zero new pip deps).
   work.
 - Custom properties in the portal: deals `ai_sdr_deal_created` (bool); contacts
   `ai_sdr_deal_created`, `ai_sdr_meeting_booked`, `ai_sdr_reply_generated` (+
-  `ai_sdr_status`, `ai_sdr_errors`). Contact LinkedIn URL property =
+  `ai_sdr_status`, `ai_sdr_errors`), and `everworker_tag` (RevOps-maintained
+  enumeration `"true"`/`"false"`; `"false"` = do-not-contact, drives the
+  unenrollment checker). Contact LinkedIn URL property =
   `HUBSPOT_LINKEDIN_PROPERTY` (default `hs_linkedin_url`). Owner/created-by id→name maps
   come free from the `hubspot_owner_id` / `hs_created_by_user_id` property definitions'
   enum options — no extra scope needed.

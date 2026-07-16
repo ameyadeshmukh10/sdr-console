@@ -64,6 +64,8 @@ HUBSPOT_ACTIVITY_SYNC = SCRIPTS / "sdr-pipeline" / "scripts" / "hubspot_activity
 HEYREACH_ACTIVITY = SCRIPTS / "sdr-pipeline" / "scripts" / "heyreach_activity.py"
 AISDR_SYNC = SCRIPTS / "sdr-pipeline" / "scripts" / "aisdr_attribution_sync.py"
 HUBSPOT_ACTIVITY_AUDIT = SCRIPTS / "sdr-pipeline" / "scripts" / "hubspot_activity_audit.py"
+UNENROLL_CHECK = SCRIPTS / "sdr-pipeline" / "scripts" / "unenrollment_check.py"
+UNENROLL_STATUS_PATH = DATA / "outreach" / ".unenroll_status.json"
 MAX_WEBHOOK_BODY = 1_048_576  # 1 MB cap on a webhook body (LinkedIn events are tiny) — DoS guard
 SOURCE_CONTACTS = SCRIPTS / "sdr-pipeline" / "scripts" / "source_contacts.py"
 CLAY_ENRICH = SCRIPTS / "sdr-pipeline" / "scripts" / "clay_enrich.py"
@@ -1074,6 +1076,130 @@ def do_aisdr_sync(full=False, dry_run=False):
         _AISDR_SYNC_LOCK.release()
         return ({"ok": False, "error": f"could not start sync thread: {e}"}, 500)
     return ({"ok": True, "started": True, "full": full, "dry_run": dry_run}, 202)
+
+
+# ----------------------------------------------------------------------------
+# Unenrollment checker (everworker_tag suppression). A 30-minute daemon loop and
+# POST /api/unenroll/run share do_unenrollment_check(); the sweep itself lives in
+# unenrollment_check.py (shelled out). Status = lock state + the unenrollment_log
+# ledger (read-only) + the last run's summary (file-mirrored across restarts).
+# ----------------------------------------------------------------------------
+_UNENROLL_LOCK = threading.Lock()
+_UNENROLL_STATE = {"started_at": None, "last_result": None}
+UNENROLL_STATUS = {}
+
+
+def _unenroll_status():
+    """Last unenrollment-run outcome — memory first, file mirror after a restart."""
+    return UNENROLL_STATUS or (_read_json(UNENROLL_STATUS_PATH) or {})
+
+
+def _record_unenroll(ok, summary):
+    # Reassign (never mutate in place): request threads read this concurrently.
+    global UNENROLL_STATUS
+    status = {"ok": bool(ok), "at": now_iso(), "summary": summary}
+    UNENROLL_STATUS = status
+    try:
+        UNENROLL_STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = UNENROLL_STATUS_PATH.with_name(UNENROLL_STATUS_PATH.name + ".tmp")
+        tmp.write_text(json.dumps(status, indent=2))
+        os.replace(tmp, UNENROLL_STATUS_PATH)
+    except OSError:
+        pass
+
+
+def unenrollment_status_payload():
+    """Status for the Orchestration view. rules[] is the extensibility contract —
+    each suppression rule the console runs appends one entry (everworker_tag is
+    the first). Read-only; safe before the first run (table may not exist)."""
+    env = read_env()
+    enabled = (env.get("UNENROLL_CHECK_ENABLED", "1") or "1").strip().lower() \
+        not in ("0", "false", "no")
+    try:
+        interval = max(5, int(env.get("UNENROLL_CHECK_MINUTES", "30") or 30))
+    except ValueError:
+        interval = 30
+    counts = {"available": False}
+    try:
+        conn = db_connect()
+        try:
+            counts = pipeline_db.unenrollment_counts(conn, rule="everworker_tag")
+            counts["available"] = True
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        pass
+    last = _unenroll_status()
+    return {
+        "enabled": enabled,
+        "interval_minutes": interval,
+        "running": _UNENROLL_LOCK.locked(),
+        "started_at": _UNENROLL_STATE["started_at"],
+        # Most recent run's parsed summary INCLUDING dry runs (which deliberately
+        # never touch last_run) — this is how the UI shows dry-run results.
+        "last_result": _UNENROLL_STATE["last_result"],
+        "rules": [{
+            "id": "everworker_tag",
+            "name": "EverWorker tag suppression",
+            "description": "everworker_tag=false in HubSpot: never enroll; stop "
+                           "active Email Bison + HeyReach sequences.",
+            "enabled": enabled,
+            "channels": {
+                "bison": {"configured": bool(env.get("EMAILBISON_API_KEY"))},
+                "heyreach": {"configured": bool(env.get("HEYREACH_API_KEY"))},
+            },
+            "last_run": last or None,
+            "counts": counts,
+        }],
+    }
+
+
+def do_unenrollment_check(dry_run=False):
+    """Kick one unenrollment sweep in a background thread. 409 when one is already
+    running (the 30-min loop and the UI button share this). Returns (payload, code)."""
+    if not read_env().get("HUBSPOT_ACCESS_TOKEN"):
+        return ({"ok": False, "error": "HUBSPOT_ACCESS_TOKEN is not set — the checker "
+                                       "needs HubSpot to find flagged contacts"}, 400)
+    if not _UNENROLL_LOCK.acquire(blocking=False):
+        return ({"ok": False, "error": "an unenrollment check is already running",
+                 "started_at": _UNENROLL_STATE["started_at"]}, 409)
+
+    args = [str(UNENROLL_CHECK), "--json"]
+    if dry_run:
+        args.append("--dry-run")
+
+    def _run():
+        # dry_run comes from the closure, not the parsed output — a dry run must
+        # never overwrite the persisted real-run status, even when it crashes or
+        # its output is unparseable.
+        try:
+            res = run_script(args, timeout=3600)
+            lines = [ln for ln in (res.get("stdout") or "").splitlines() if ln.strip()]
+            summary = lines[-1] if lines else (res.get("stderr") or "")[:300]
+            try:
+                parsed = json.loads(summary)
+            except (json.JSONDecodeError, TypeError):
+                parsed = summary[:500]
+            _UNENROLL_STATE["last_result"] = parsed
+            ok = parsed.get("ok") if isinstance(parsed, dict) else res["returncode"] == 0
+            if not dry_run:
+                _record_unenroll(ok, parsed)
+            print(f"[unenroll] done: {str(summary)[:300]}", flush=True)
+        except Exception as e:  # noqa: BLE001 — never leak into the server
+            _UNENROLL_STATE["last_result"] = f"{type(e).__name__}: {e}"[:500]
+            if not dry_run:
+                _record_unenroll(False, f"{type(e).__name__}: {e}"[:300])
+            print(f"[unenroll] error: {type(e).__name__}: {e}", flush=True)
+        finally:
+            _UNENROLL_LOCK.release()
+
+    _UNENROLL_STATE["started_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    try:
+        threading.Thread(target=_run, daemon=True).start()
+    except Exception as e:  # noqa: BLE001 — don't leak the lock if the thread can't start
+        _UNENROLL_LOCK.release()
+        return ({"ok": False, "error": f"could not start unenrollment thread: {e}"}, 500)
+    return ({"ok": True, "started": True, "dry_run": dry_run}, 202)
 
 
 def heyreach_activity_status_payload():
@@ -3341,6 +3467,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(aisdr_analytics_payload())
             if path == "/api/hubspot/aisdr/status":
                 return self._json(aisdr_sync_status_payload())
+            if path == "/api/unenroll/status":
+                return self._json(unenrollment_status_payload())
             if path == "/api/progress":
                 return self._json(progress_payload())
             if path == "/api/trends":
@@ -3661,6 +3789,10 @@ class Handler(BaseHTTPRequestHandler):
                 payload, code = do_aisdr_sync(full=bool(body.get("full")),
                                               dry_run=bool(body.get("dry_run")))
                 return self._json(payload, code=code)
+            if path == "/api/unenroll/run":
+                body = self._read_body()
+                payload, code = do_unenrollment_check(dry_run=bool(body.get("dry_run")))
+                return self._json(payload, code=code)
             if path == "/api/heyreach/webhook":
                 return self._heyreach_webhook(parsed)
             if path == "/api/reindex":
@@ -3873,6 +4005,35 @@ def _activity_autosync_loop():
         time.sleep(interval)
 
 
+def _unenrollment_loop():
+    """Unenrollment sweeps every UNENROLL_CHECK_MINUTES (default 30): stop Bison +
+    HeyReach outreach for contacts RevOps tagged everworker_tag=false in HubSpot.
+    Shares do_unenrollment_check() with POST /api/unenroll/run — a 409 here just
+    means a manual run is already in flight, which counts as this cycle's sweep.
+    Best-effort and isolated: it can never raise into the request path. Disable
+    with UNENROLL_CHECK_ENABLED=0 (the manual endpoint keeps working)."""
+    env = read_env()  # .env + process env, same source as the status endpoint
+    if (env.get("UNENROLL_CHECK_ENABLED", "1") or "1").strip().lower() in ("0", "false", "no"):
+        print("[unenroll] sweeper disabled (UNENROLL_CHECK_ENABLED=0)", flush=True)
+        return
+    if not env.get("HUBSPOT_ACCESS_TOKEN"):
+        print("[unenroll] HUBSPOT_ACCESS_TOKEN not set — sweeper disabled", flush=True)
+        return
+    try:
+        interval = max(5, int(env.get("UNENROLL_CHECK_MINUTES", "30") or 30)) * 60
+    except ValueError:
+        interval = 30 * 60
+    print(f"[unenroll] sweeper enabled every {interval // 60} min", flush=True)
+    time.sleep(120)  # let the server settle before the first sweep
+    while True:
+        try:
+            payload, code = do_unenrollment_check()
+            print(f"[unenroll] sweep trigger -> {code} {payload}", flush=True)
+        except Exception as e:  # noqa: BLE001 - the sweeper must never crash the server
+            print(f"[unenroll] sweep error: {type(e).__name__}: {e}", flush=True)
+        time.sleep(interval)
+
+
 def _aisdr_sync_loop():
     """Nightly AI SDR deal-attribution sync at AISDR_SYNC_HOUR (default 0 = midnight)
     US Eastern time. DST-safe: each iteration recomputes the next wall-clock target
@@ -3938,6 +4099,7 @@ def main():
         print(f"[webui] resumed {resumed} in-flight batch job(s)")
     threading.Thread(target=_activity_autosync_loop, daemon=True).start()
     threading.Thread(target=_aisdr_sync_loop, daemon=True).start()
+    threading.Thread(target=_unenrollment_loop, daemon=True).start()
     if Handler.static_dir:
         print(f"[webui] serving frontend from {Handler.static_dir}")
     else:

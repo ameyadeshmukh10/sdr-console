@@ -7,6 +7,7 @@ data/outreach/generated/<contact_id>.json (the DB tracks status + batching).
 Statuses: contacts = pending|generated|enrolled|failed ; batches = pending|in_progress|done
 """
 
+import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -117,6 +118,26 @@ def init_schema(conn):
         received_at  TEXT,
         processed_at TEXT
     );
+    -- Unenrollment/suppression ledger (unenrollment_check.py). One row per
+    -- (rule, channel, contact); dedup_key makes the 30-min sweeps idempotent.
+    -- A 'failed' row is retried next sweep and flips to 'done' (same contract
+    -- as hubspot_activity_log). rule is the checker id ('everworker_tag' is
+    -- the first of several planned suppression rules).
+    CREATE TABLE IF NOT EXISTS unenrollment_log (
+        dedup_key    TEXT PRIMARY KEY,  -- "<rule>:<channel>:<contact_id>"
+        rule         TEXT NOT NULL,     -- 'everworker_tag' | future rule ids
+        contact_id   TEXT NOT NULL,
+        email        TEXT,
+        linkedin_url TEXT,
+        channel      TEXT NOT NULL,     -- bison | heyreach
+        campaign_ids TEXT,              -- JSON list of campaigns stopped in (NULL if none)
+        action       TEXT NOT NULL,     -- stopped | not_active | not_found | no_identifier | skipped_unconfigured
+        status       TEXT NOT NULL,     -- done | failed
+        error        TEXT,
+        created_at   TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_unenroll_contact ON unenrollment_log(contact_id);
+    CREATE INDEX IF NOT EXISTS idx_unenroll_rule    ON unenrollment_log(rule, status);
     CREATE INDEX IF NOT EXISTS idx_contacts_batch  ON contacts(batch_id);
     CREATE INDEX IF NOT EXISTS idx_contacts_status ON contacts(status);
     CREATE INDEX IF NOT EXISTS idx_hsact_contact   ON hubspot_activity_log(contact_id);
@@ -424,6 +445,64 @@ def mark_lead_fetched(conn, email, last_sent_at):
 
 def lead_map_rows(conn):
     return [dict(r) for r in conn.execute("SELECT * FROM bison_lead_map")]
+
+
+# ---- Unenrollment/suppression ledger --------------------------------------
+def unenrollment_done(conn, dedup_key):
+    """True if this (rule, channel, contact) was already handled successfully."""
+    row = conn.execute(
+        "SELECT 1 FROM unenrollment_log WHERE dedup_key=? AND status='done'",
+        (dedup_key,)).fetchone()
+    return row is not None
+
+
+def record_unenrollment(conn, dedup_key, rule, channel, contact_id, action, status,
+                        email=None, linkedin_url=None, campaign_ids=None, error=None):
+    """Upsert a ledger row. A prior 'failed' row is retried on the next sweep and
+    flips to 'done' once it succeeds; successes are never re-processed.
+    campaign_ids: list of campaign ids stopped in (stored as JSON), or None."""
+    cids = json.dumps(campaign_ids) if campaign_ids else None
+    conn.execute("""
+        INSERT INTO unenrollment_log
+          (dedup_key, rule, contact_id, email, linkedin_url, channel, campaign_ids,
+           action, status, error, created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(dedup_key) DO UPDATE SET
+          rule=excluded.rule, contact_id=excluded.contact_id, email=excluded.email,
+          linkedin_url=excluded.linkedin_url, channel=excluded.channel,
+          campaign_ids=excluded.campaign_ids, action=excluded.action,
+          status=excluded.status, error=excluded.error, created_at=excluded.created_at
+    """, (dedup_key, rule, contact_id, email, linkedin_url, channel, cids,
+          action, status, error, now()))
+    conn.commit()
+
+
+def unenrollment_counts(conn, rule=None):
+    """Summary of the unenrollment ledger for status reporting (per rule when given)."""
+    where, params = ("WHERE rule=?", [rule]) if rule else ("", [])
+    by_status = {r["status"]: r["n"] for r in conn.execute(
+        f"SELECT status, COUNT(*) n FROM unenrollment_log {where} GROUP BY status", params)}
+    by_channel_action = {}
+    for r in conn.execute(
+            f"SELECT channel, action, COUNT(*) n FROM unenrollment_log {where} "
+            "GROUP BY channel, action", params):
+        by_channel_action.setdefault(r["channel"], {})[r["action"]] = r["n"]
+    contacts = conn.execute(
+        f"SELECT COUNT(DISTINCT contact_id) FROM unenrollment_log {where}", params).fetchone()[0]
+    last = conn.execute(
+        f"SELECT MAX(created_at) FROM unenrollment_log {where}", params).fetchone()[0]
+    return {"by_status": by_status, "by_channel_action": by_channel_action,
+            "contacts": contacts, "failed": by_status.get("failed", 0),
+            "last_action_at": last}
+
+
+def suppressed_contact_ids(conn, rule=None):
+    """Contact ids with at least one successful unenrollment row — the enroll gate's
+    offline fallback when the live HubSpot tag check is unavailable."""
+    where, params = ("AND rule=?", [rule]) if rule else ("", [])
+    return {r["contact_id"] for r in conn.execute(
+        f"SELECT DISTINCT contact_id FROM unenrollment_log WHERE status='done' {where}",
+        params)}
 
 
 # ---- HeyReach (LinkedIn) webhook inbox -----------------------------------

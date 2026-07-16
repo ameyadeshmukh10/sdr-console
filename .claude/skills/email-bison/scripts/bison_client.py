@@ -228,6 +228,18 @@ class BisonClient:
         return self.delete(f"/api/campaigns/{campaign_id}/leads",
                           {"lead_ids": [int(x) for x in lead_ids]})
 
+    def stop_future_emails(self, campaign_id, lead_ids):
+        """Stop all future emails for leads within one campaign — the lead and its
+        history stay in the campaign, only unsent steps are cancelled."""
+        return self.post(f"/api/campaigns/{campaign_id}/leads/stop-future-emails",
+                         {"lead_ids": [int(x) for x in lead_ids]})
+
+    def lead_scheduled_emails(self, lead_id):
+        """All scheduled emails for a lead across campaigns. Each row carries
+        campaign_id and status ('scheduled', 'sending paused', 'stopped',
+        'bounced', 'unsubscribed', 'replied', 'sent')."""
+        return self.get_paginated(f"/api/leads/{lead_id}/scheduled-emails")
+
     def push_reply_to_followup_campaign(self, reply_id, campaign_id, force_add_reply=True):
         """Move a reply + its lead into a reply-followup campaign."""
         return self.post(f"/api/replies/{reply_id}/followup-campaign/push",

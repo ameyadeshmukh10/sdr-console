@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api.js'
-import { Spinner, ErrorBanner, num, pct, EmailIcon, LinkedInIcon, LINKEDIN_BLUE } from '../components/ui.jsx'
+import { Stat, Spinner, ErrorBanner, num, pct, EmailIcon, LinkedInIcon, LINKEDIN_BLUE } from '../components/ui.jsx'
 import { BRAND, PERSONA_COLORS } from '../theme.js'
 
 // Pillar 2 — See: orchestration topology. HubSpot list -> persona routing ->
@@ -26,9 +26,14 @@ export default function DiagramPage() {
   const [rollup, setRollup] = useState(null)
   const [error, setError] = useState(null)
   const [hover, setHover] = useState(null)   // {type:'persona'|'campaign', id}
+  const [unenroll, setUnenroll] = useState(null)  // unenrollment checker status
+  const [runBusy, setRunBusy] = useState(false)   // one global run at a time
+  const [runMsg, setRunMsg] = useState(null)
 
   useEffect(() => {
     api.rollup().then(setRollup).catch((e) => setError(e.message))
+    // Non-fatal: the diagram renders fine without it (e.g. an older backend).
+    api.unenrollStatus().then(setUnenroll).catch(() => {})
   }, [])
 
   const personas = rollup?.personas || []
@@ -42,7 +47,9 @@ export default function DiagramPage() {
   const rowUnit = 122
   const rows = Math.max(personas.length, campaigns.length, 1)
   const contentH = rows * rowUnit
-  const H = contentTop + contentH + 28
+  const gateH = 64
+  const gateY = contentTop + contentH + 20
+  const H = contentTop + contentH + 28 + (unenroll ? gateH + 24 : 0)
 
   const personaH = 82, campH = 104, hubH = 84
   const xHub = 24, wHub = 128
@@ -74,12 +81,72 @@ export default function DiagramPage() {
   const campDim = (cid) => hover && !(hover.type === 'campaign' && hover.id === String(cid))
     && !edges.some((e) => String(e.campaign_id) === String(cid) && hover.type === 'persona' && hover.id === e.persona)
 
+  // ---- unenrollment gate (safety bar under both outbound channels) ---------
+  const gateRule = unenroll?.rules?.[0]
+  const gateCounts = gateRule?.counts?.available ? gateRule.counts : null
+  const gateStopped = gateCounts
+    ? Object.values(gateCounts.by_channel_action || {}).reduce((a, c) => a + (c?.stopped || 0), 0)
+    : null
+  const gateSub = unenroll
+    ? [gateRule?.description?.replace(/\.\s*$/, ''), `every ${unenroll.interval_minutes}m`]
+        .filter(Boolean).join(' · ') + (unenroll.enabled === false ? ' · sweeper disabled' : '')
+    : ''
+
+  // Kick a sweep (or dry run), then poll until the global run flag clears and
+  // refresh the rule cards — same pattern as the Analytics attribution sync.
+  async function runCheck(dryRun) {
+    setRunBusy(true)
+    setRunMsg(dryRun ? 'Starting dry run…' : 'Starting unenrollment check…')
+    try {
+      await api.unenrollRun({ dry_run: !!dryRun })
+    } catch (e) {
+      // 409 = a check is already running (e.g. the background sweeper) — keep polling it.
+      if (e.status !== 409) {
+        setRunMsg(`Unenrollment check failed to start: ${e.message}`)
+        setRunBusy(false)
+        return
+      }
+    }
+    setRunMsg('Unenrollment check running — sweeping flagged contacts across both channels…')
+    for (let i = 0; i < 120; i++) {          // up to ~10 min
+      await new Promise((r) => setTimeout(r, 5000))
+      try {
+        const s = await api.unenrollStatus()
+        if (!s.running) {
+          setUnenroll(s)
+          if (dryRun) {
+            // Dry runs never touch last_run — their summary comes via last_result.
+            const d = s.last_result
+            setRunMsg(d && typeof d === 'object' && d.dry_run
+              ? (d.ok === false
+                  ? `Dry run failed: ${d.error || (d.errors || []).join('; ') || 'unknown'}`
+                  : `Dry run complete — ${num(d.checked || 0)} checked, `
+                    + `${num((d.bison?.stopped || 0) + (d.heyreach?.stopped || 0))} would be stopped. No changes made.`)
+              : 'Dry run complete — no changes made.')
+          } else {
+            const lr = s.rules?.[0]?.last_run
+            const sum = lr?.summary
+            setRunMsg(lr?.ok === false
+              ? `Unenrollment check finished with an error: ${typeof sum === 'string' ? sum : (sum?.errors?.length ? sum.errors.join('; ') : (sum?.error || 'unknown'))}`
+              : 'Check complete.')
+          }
+          setRunBusy(false)
+          return
+        }
+      } catch { /* transient — keep polling */ }
+    }
+    setRunMsg('Unenrollment check is still running — refresh the page later.')
+    setRunBusy(false)
+  }
+
   return (
     <div>
       <h1 className="page-title">Orchestration</h1>
       <p className="page-sub">
         How contacts route from a HubSpot list through persona sub-agents into the email campaigns
         they actually enroll in (variant campaign first, persona campaign as fallback) and LinkedIn.
+        The unenrollment checker below sweeps both channels and stops anyone RevOps has tagged
+        do-not-contact.
       </p>
       <ErrorBanner error={error} />
       {!rollup ? <Spinner label="Loading…" /> : (
@@ -210,6 +277,25 @@ export default function DiagramPage() {
                 </g>
               )
             })}
+
+            {/* safety gate — the unenrollment checker sits under both outbound channels */}
+            {unenroll && (
+              <g opacity={hover ? 0.6 : 1} style={{ transition: 'opacity .15s' }}>
+                <path d={`M${xCamp + wCamp / 2},${gateY} L${xCamp + wCamp / 2},${gateY - 14}`}
+                  fill="none" stroke={BRAND.red} strokeWidth="1.5" strokeDasharray="4 3" opacity="0.5" />
+                <path d={`M${xLink + wLink / 2},${gateY} L${xLink + wLink / 2},${gateY - 14}`}
+                  fill="none" stroke={BRAND.red} strokeWidth="1.5" strokeDasharray="4 3" opacity="0.5" />
+                <rect x={xCamp} y={gateY} width={xLink + wLink - xCamp} height={gateH} rx="12"
+                  fill="#fffdf7" stroke={BRAND.red} strokeWidth="1.5" strokeDasharray="6 3" />
+                <text x={xCamp + 16} y={gateY + 26} fill={BRAND.ink} fontSize="13" fontWeight="700">Unenrollment checker</text>
+                <text x={xCamp + 16} y={gateY + 45} fill={BRAND.muted} fontSize="10.5">{gateSub}</text>
+                {gateCounts && (
+                  <text x={xLink + wLink - 16} y={gateY + 26} textAnchor="end" fill={BRAND.red} fontSize="12" fontWeight="700">
+                    {num(gateStopped)} stopped · {num(gateCounts.contacts)} flagged
+                  </text>
+                )}
+              </g>
+            )}
           </svg>
 
           <div className="row" style={{ gap: 18, marginTop: 10, fontSize: 12, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -227,6 +313,80 @@ export default function DiagramPage() {
           </div>
         </div>
       )}
+
+      {/* Suppression rules — one data-driven card per rule the checker enforces. */}
+      {unenroll && (
+        <>
+          <div className="section-h" style={{ marginTop: 18 }}>Unenrollment & suppression rules</div>
+          {(unenroll.rules || []).map((r) => (
+            <RuleCard key={r.id} rule={r} busy={runBusy} msg={runMsg} onRun={runCheck} />
+          ))}
+        </>
+      )}
+    </div>
+  )
+}
+
+// Human line for a rule's last sweep — `last_run` may be null/{} (never ran) and
+// `summary` may be a raw string when the script output couldn't be parsed.
+function lastRunLine(lastRun) {
+  if (!lastRun || !lastRun.at) return 'No run yet — first sweep runs ~2 min after deploy.'
+  const when = new Date(lastRun.at).toLocaleString()
+  const s = lastRun.summary
+  if (typeof s === 'string') return `Last run ${when} — ${lastRun.ok === false ? 'error' : 'ok'} · ${s}`
+  if (lastRun.ok === false) {
+    // A fatal sweep has {error} (singular); a completed-with-failures one has {errors}.
+    const why = s?.errors?.length ? s.errors.join('; ') : (s?.error || 'sweep failed')
+    return `Last run ${when} — error · ${why}`
+  }
+  const stopped = (s?.bison?.stopped || 0) + (s?.heyreach?.stopped || 0)
+  const detail = s ? ` · ${num(s.checked || 0)} checked, ${num(stopped)} stopped` : ''
+  return `Last run ${when} — ok${detail}`
+}
+
+// One suppression rule. Fully data-driven from the payload — more rules will
+// exist over time and must render here without code changes.
+function RuleCard({ rule, busy, msg, onRun }) {
+  const counts = rule.counts?.available ? rule.counts : null
+  const byChan = counts?.by_channel_action || {}
+  const chips = [
+    { label: 'Email', configured: !!rule.channels?.bison?.configured },
+    { label: 'LinkedIn', configured: !!rule.channels?.heyreach?.configured },
+  ]
+  return (
+    <div className="panel" style={{ marginBottom: 16 }}>
+      <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ fontWeight: 700, fontSize: 15 }}>{rule.name}</span>
+        <span className="badge" style={rule.enabled
+          ? { color: 'var(--green)', borderColor: 'var(--green)', background: 'rgba(28, 130, 110, 0.08)' }
+          : { color: 'var(--muted)' }}>
+          {rule.enabled ? 'enabled' : 'disabled'}
+        </span>
+        {chips.map((c) => (
+          <span key={c.label} className="badge" style={c.configured ? undefined : { color: 'var(--muted)' }}>
+            {c.label} {c.configured ? '✓ configured' : '— not configured'}
+          </span>
+        ))}
+      </div>
+      <p className="muted" style={{ fontSize: 12.5, margin: '8px 0 14px' }}>{rule.description}</p>
+      {counts ? (
+        <div className="grid stat-grid" style={{ marginBottom: 14 }}>
+          <Stat label="Contacts flagged" value={num(counts.contacts)} />
+          <Stat label="Stopped — email" value={num(byChan.bison?.stopped || 0)} />
+          <Stat label="Stopped — LinkedIn" value={num(byChan.heyreach?.stopped || 0)} />
+          <Stat label="Failed" value={num(counts.failed || 0)} tone={(counts.failed || 0) > 0 ? 'bad' : 'good'} />
+        </div>
+      ) : (
+        <p className="muted" style={{ fontSize: 12, margin: '0 0 14px' }}>No sweep results recorded yet.</p>
+      )}
+      <p className="muted" style={{ fontSize: 12, margin: '0 0 14px' }}>{lastRunLine(rule.last_run)}</p>
+      <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button className="sm" onClick={() => onRun(false)} disabled={busy}>
+          {busy ? <Spinner label="Running…" /> : 'Run now'}
+        </button>
+        <button className="ghost sm" onClick={() => onRun(true)} disabled={busy}>Dry run</button>
+      </div>
+      {msg && <p className="muted" style={{ fontSize: 12, margin: '10px 0 0' }}>{msg}</p>}
     </div>
   )
 }

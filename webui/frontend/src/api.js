@@ -36,7 +36,9 @@ async function get(path) {
   if (!res.ok) {
     let detail = ''
     try { detail = (await res.json()).error || '' } catch { /* ignore */ }
-    throw new Error(`${res.status} ${detail}`.trim())
+    // .status lets callers branch on the HTTP code (the message may be the
+    // server's error text, e.g. "a sync is already running" on a 409).
+    throw Object.assign(new Error(`${res.status} ${detail}`.trim()), { status: res.status })
   }
   return res.json()
 }
@@ -49,7 +51,7 @@ async function post(path, body) {
   })
   if (res.status === 401) handleUnauthorized(path)
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error || `${res.status}`)
+  if (!res.ok) throw Object.assign(new Error(data.error || `${res.status}`), { status: res.status })
   return data
 }
 
@@ -69,6 +71,9 @@ export const api = {
   aisdrAnalytics: () => get('/api/analytics/aisdr'),
   aisdrSyncStatus: () => get('/api/hubspot/aisdr/status'),
   aisdrSync: (opts) => post('/api/hubspot/aisdr/sync', opts || {}),
+  // Unenrollment checker — suppression rules status + manual sweep ({dry_run?}).
+  unenrollStatus: () => get('/api/unenroll/status'),
+  unenrollRun: (opts) => post('/api/unenroll/run', opts || {}),
   outreach: (params) => get('/api/outreach?' + new URLSearchParams(params).toString()),
   outreachDetail: (id) => get('/api/outreach/' + encodeURIComponent(id)),
   ingest: (listId) => post('/api/ingest', { list_id: listId }),

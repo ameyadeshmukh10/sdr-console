@@ -159,7 +159,7 @@ def main():
     if not dry:
         from bison_client import BisonClient  # noqa: E402
         bison = BisonClient()
-        if hr_campaign and hr_account:
+        if hr_campaign and hr_accounts:
             heyreach = HeyReachClient()
 
     state = load_state()
@@ -168,7 +168,34 @@ def main():
         print(f"No generated assets in {GEN_DIR}. Generate copy first (see SKILL.md).")
         return 1
 
-    counts = {"email": 0, "linkedin": 0, "skipped_lint": 0, "skipped_done": 0, "no_li": 0}
+    counts = {"email": 0, "linkedin": 0, "skipped_lint": 0, "skipped_done": 0,
+              "suppressed": 0, "no_li": 0}
+
+    # Suppression gate: contacts RevOps tagged everworker_tag=false must never
+    # enroll. Live HubSpot check first, local unenrollment ledger as fallback.
+    import unenrollment_check as U  # noqa: E402 (stdlib-only module import)
+    gen_cids = []
+    for gf in gen_files:
+        try:
+            cid = json.loads(gf.read_text()).get("contact_id")
+        except (json.JSONDecodeError, OSError):
+            cid = None  # malformed file — leave it for the worker's handling
+        gen_cids.append(str(cid) if cid is not None else None)
+    suppressed, _live_ok = U.suppressed_set([c for c in gen_cids if c])
+    if suppressed:
+        kept = []
+        for gf, cid in zip(gen_files, gen_cids):
+            if cid in suppressed:
+                counts["suppressed"] += 1
+                c = contacts.get(cid) or {}
+                print(f"  [suppressed] {c.get('email') or cid} — everworker_tag=false, "
+                      "will not enroll")
+            else:
+                kept.append(gf)
+        gen_files = kept
+        if not gen_files:
+            print(f"All generated contacts are suppressed. {counts}")
+            return 0
 
     # Phase 1 — per-contact lint (local) + the lead create/update (network) run
     # concurrently. The Bison/HeyReach clients are stateless per call (and already
