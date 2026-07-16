@@ -42,9 +42,11 @@ HubSpot, and reports on results — including nightly AI SDR **deal attribution*
 - **MongoDB** is wired via `MONGO_URL=${{MongoDB.MONGO_URL}}` (reference variable on the
   sdr-console service, private networking, same project/environment). Database `aisdr`.
 - The **Railway CLI is NOT available in cloud Claude sessions** (it's on the user's local
-  machine). For Railway dashboard changes (variables, services), either give the user
-  click-by-click instructions or ask for a project token. Code changes ship via GitHub →
-  merge to `main` → Railway auto-deploys.
+  machine). Use the **`railway` skill** (`.claude/skills/railway/`) instead — a stdlib
+  GraphQL client for deploy status, build/runtime logs, variables, and redeploys; it
+  needs `RAILWAY_PROJECT_TOKEN` (or `RAILWAY_API_TOKEN`) set. Without a token, give the
+  user click-by-click dashboard instructions or ask them to mint a project token. Code
+  changes ship via GitHub → merge to `main` → Railway auto-deploys.
 - Env vars live in Railway service variables in prod, `.env` locally. `.env.example`
   documents all of them.
 
