@@ -100,6 +100,50 @@ class HeyReachClient:
         return self._request("POST", "/campaign/AddLeadsToCampaignV2",
                              {"campaignId": int(campaign_id), "accountLeadPairs": account_lead_pairs})
 
+    def get_campaigns_for_lead(self, profile_url=None, email=None, linkedin_id=None,
+                               offset=0, limit=100):
+        """POST /lead/GetCampaignsForLead — every campaign that contains a lead,
+        identified by profile URL, email, or LinkedIn member id (provide at least
+        one). Returns {totalCount, items:[campaign]}.
+
+        NOTE: request-body field names are from HeyReach's public API docs but have
+        not been exercised against the live API yet (key pending) — verify on first
+        live use; HeyReachError carries the response detail for fast correction."""
+        if not (profile_url or email or linkedin_id):
+            raise ValueError("get_campaigns_for_lead needs profile_url, email or linkedin_id")
+        body = {"offset": int(offset), "limit": int(limit)}
+        if profile_url:
+            body["profileUrl"] = profile_url
+        if email:
+            body["email"] = email
+        if linkedin_id:
+            body["linkedinId"] = linkedin_id
+        return self._request("POST", "/lead/GetCampaignsForLead", body)
+
+    def get_leads_from_campaign(self, campaign_id, offset=0, limit=100):
+        """POST /campaign/GetLeadsFromCampaign — paginated leads in a campaign with
+        their campaign-level status (PENDING, IN_PROGRESS, FINISHED, …).
+
+        NOTE: body schema unverified against the live API — see get_campaigns_for_lead."""
+        return self._request("POST", "/campaign/GetLeadsFromCampaign",
+                             {"campaignId": int(campaign_id),
+                              "offset": int(offset), "limit": int(limit)})
+
+    def stop_lead_in_campaign(self, campaign_id, lead_member_id=None, lead_url=None):
+        """POST /campaign/StopLeadInCampaign — stop a lead mid-sequence so no further
+        LinkedIn steps execute for them in this campaign. The lead must already be in
+        the campaign. Identify by leadMemberId or leadUrl (profile URL).
+
+        NOTE: body schema unverified against the live API — see get_campaigns_for_lead."""
+        if not (lead_member_id or lead_url):
+            raise ValueError("stop_lead_in_campaign needs lead_member_id or lead_url")
+        body = {"campaignId": int(campaign_id)}
+        if lead_member_id:
+            body["leadMemberId"] = lead_member_id
+        if lead_url:
+            body["leadUrl"] = lead_url
+        return self._request("POST", "/campaign/StopLeadInCampaign", body)
+
     # ---- LinkedIn sender accounts ---------------------------------------
     def list_accounts(self, offset=0, limit=100):
         """POST /li_account/GetAll — the LinkedIn sender accounts on the workspace.

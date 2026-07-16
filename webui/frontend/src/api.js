@@ -69,6 +69,9 @@ export const api = {
   aisdrAnalytics: () => get('/api/analytics/aisdr'),
   aisdrSyncStatus: () => get('/api/hubspot/aisdr/status'),
   aisdrSync: (opts) => post('/api/hubspot/aisdr/sync', opts || {}),
+  // Unenrollment checker — suppression rules status + manual sweep ({dry_run?}).
+  unenrollStatus: () => get('/api/unenroll/status'),
+  unenrollRun: (opts) => post('/api/unenroll/run', opts || {}),
   outreach: (params) => get('/api/outreach?' + new URLSearchParams(params).toString()),
   outreachDetail: (id) => get('/api/outreach/' + encodeURIComponent(id)),
   ingest: (listId) => post('/api/ingest', { list_id: listId }),

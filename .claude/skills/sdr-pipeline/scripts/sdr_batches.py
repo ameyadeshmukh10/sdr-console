@@ -181,7 +181,29 @@ def cmd_enroll(args):
         if hr_enabled:
             heyreach = E.HeyReachClient()
     counts = {"enrolled": 0, "no_campaign": 0, "missing_file": 0, "skipped": 0,
-              "linkedin": 0, "no_li": 0, "heyreach_failed": 0}
+              "suppressed": 0, "linkedin": 0, "no_li": 0, "heyreach_failed": 0}
+
+    # Suppression gate: contacts RevOps tagged everworker_tag=false must never
+    # enroll. Live HubSpot check first, local unenrollment ledger as fallback.
+    import unenrollment_check as U  # noqa: E402 (stdlib-only module import)
+    suppressed, _live_ok = U.suppressed_set([r["contact_id"] for r in rows], conn=conn)
+    if suppressed:
+        kept = []
+        for r in rows:
+            if str(r["contact_id"]) in suppressed:
+                counts["suppressed"] += 1
+                if args.dry_run:
+                    print(f"  [suppressed] {r['email']} — everworker_tag=false, will not enroll")
+                else:
+                    db.set_contact_status(conn, r["contact_id"], "skipped",
+                                          error="suppressed: everworker_tag=false")
+                    print(f"  [suppressed] {r['email']} — everworker_tag=false, skipped")
+            else:
+                kept.append(r)
+        rows = kept
+        if not rows:
+            print(f"enroll: all contacts suppressed. {counts}")
+            return 0
 
     # Resolve campaign + copy per contact (local, fast). Skip missing-file /
     # no-campaign here so the network phase only sees real work. Build the
