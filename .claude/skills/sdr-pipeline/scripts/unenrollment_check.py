@@ -27,8 +27,10 @@ by enroll.py / sdr_batches.py: live HubSpot tag check first, ledger fallback whe
 HubSpot is unreachable (fail-open — the 30-min sweep is the backstop).
 
 The web server runs this every UNENROLL_CHECK_MINUTES (default 30) and from
-POST /api/unenroll/run. Progress goes to stdout; the LAST stdout line is the JSON
-summary (with --json), same contract as every other pipeline script.
+POST /api/unenroll/run. Sweep progress goes to STDERR (the server streams it
+live into Railway logs + /api/unenroll/status); the LAST stdout line is the
+JSON summary (with --json) — same summary contract as the other pipeline
+scripts, streamed like the tech/hiring detectors.
 
   python3 unenrollment_check.py [--json] [--dry-run] [--limit N] [--force]
       [--contact-id ID]
@@ -169,7 +171,7 @@ def fetch_flagged_contacts(client, *, limit=None):
             return out
         if new_start <= window_start:  # no progress — bail rather than loop
             print(f"[unenroll] window restart made no progress at {window_start} — stopping",
-                  flush=True)
+                  file=sys.stderr, flush=True)
             return out
         window_start = new_start
 
@@ -323,11 +325,11 @@ def run_check(*, dry_run=False, limit=None, force=False, contact_id=None):
             why = (f"{tag}={((skipped[0].get('properties') or {}).get(tag))!r}"
                    if skipped else "contact not found")
             print(f"[unenroll] contact {contact_id} not eligible ({why}) — nothing to do",
-                  flush=True)
+                  file=sys.stderr, flush=True)
     else:
         contacts = fetch_flagged_contacts(client, limit=limit)
     print(f"[unenroll] {len(contacts)} contact(s) flagged {tag}=false"
-          + (" (dry-run)" if dry_run else ""), flush=True)
+          + (" (dry-run)" if dry_run else ""), file=sys.stderr, flush=True)
 
     conn = db.connect()
     db.init_schema(conn)
@@ -395,7 +397,7 @@ def run_check(*, dry_run=False, limit=None, force=False, contact_id=None):
                 errors.append(f"note {email or cid}: {type(e).__name__}: {str(e)[:200]}")
         line = " ".join(f"{ch}={r[0]}" + (f"{r[1]}" if r[1] else "")
                         for ch, r in results.items())
-        print(f"[unenroll] {email or cid}: {line}", flush=True)
+        print(f"[unenroll] {email or cid}: {line}", file=sys.stderr, flush=True)
 
     conn.close()
     failed_total = sum(counts[ch]["failed"] for ch in CHANNELS)

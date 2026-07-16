@@ -1085,7 +1085,7 @@ def do_aisdr_sync(full=False, dry_run=False):
 # ledger (read-only) + the last run's summary (file-mirrored across restarts).
 # ----------------------------------------------------------------------------
 _UNENROLL_LOCK = threading.Lock()
-_UNENROLL_STATE = {"started_at": None, "last_result": None}
+_UNENROLL_STATE = {"started_at": None, "last_result": None, "progress": None}
 UNENROLL_STATUS = {}
 
 
@@ -1138,6 +1138,9 @@ def unenrollment_status_payload():
         # Most recent run's parsed summary INCLUDING dry runs (which deliberately
         # never touch last_run) — this is how the UI shows dry-run results.
         "last_result": _UNENROLL_STATE["last_result"],
+        # Latest progress line from an in-flight sweep (None when idle) — the UI
+        # shows this instead of a silent spinner during long runs.
+        "progress": _UNENROLL_STATE.get("progress"),
         "rules": [{
             "id": "everworker_tag",
             "name": "EverWorker tag suppression",
@@ -1168,12 +1171,18 @@ def do_unenrollment_check(dry_run=False):
     if dry_run:
         args.append("--dry-run")
 
+    def _progress(line):
+        # The script's stderr progress lines, live: into Railway logs AND the
+        # status payload, so a long sweep is never a silent spinner.
+        _UNENROLL_STATE["progress"] = line[:300]
+        print(line, flush=True)
+
     def _run():
         # dry_run comes from the closure, not the parsed output — a dry run must
         # never overwrite the persisted real-run status, even when it crashes or
         # its output is unparseable.
         try:
-            res = run_script(args, timeout=3600)
+            res = run_script_streaming(args, on_stderr_line=_progress, timeout=3600)
             lines = [ln for ln in (res.get("stdout") or "").splitlines() if ln.strip()]
             summary = lines[-1] if lines else (res.get("stderr") or "")[:300]
             try:
@@ -1191,6 +1200,7 @@ def do_unenrollment_check(dry_run=False):
                 _record_unenroll(False, f"{type(e).__name__}: {e}"[:300])
             print(f"[unenroll] error: {type(e).__name__}: {e}", flush=True)
         finally:
+            _UNENROLL_STATE["progress"] = None
             _UNENROLL_LOCK.release()
 
     _UNENROLL_STATE["started_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

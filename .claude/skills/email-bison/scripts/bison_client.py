@@ -88,16 +88,24 @@ class BisonClient:
         if last_err:
             raise last_err
 
-    def get_paginated(self, path, params=None):
-        """Yield every item in `data` across all pages (Laravel pagination)."""
+    def get_paginated(self, path, params=None, max_pages=None):
+        """Yield every item in `data` across all pages (Laravel pagination).
+
+        max_pages caps the crawl (None = unbounded) so one misbehaving endpoint
+        can't stall a caller for minutes; the meta fallback also bails when the
+        API ignores the page param (no forward progress = would loop forever)."""
         params = dict(params or {})
         params.setdefault("page", 1)
+        pages = 0
         while True:
             payload = self.get(path, params)
+            pages += 1
             data = payload.get("data", [])
             for item in data:
                 yield item
 
+            if max_pages and pages >= max_pages:
+                return
             links = payload.get("links") or {}
             meta = payload.get("meta") or {}
             next_link = links.get("next")
@@ -106,6 +114,8 @@ class BisonClient:
                 current = meta.get("current_page")
                 last = meta.get("last_page")
                 if current and last and current < last:
+                    if current + 1 <= params["page"]:  # page param ignored — stuck
+                        return
                     params["page"] = current + 1
                     continue
                 return
@@ -237,8 +247,9 @@ class BisonClient:
     def lead_scheduled_emails(self, lead_id):
         """All scheduled emails for a lead across campaigns. Each row carries
         campaign_id and status ('scheduled', 'sending paused', 'stopped',
-        'bounced', 'unsubscribed', 'replied', 'sent')."""
-        return self.get_paginated(f"/api/leads/{lead_id}/scheduled-emails")
+        'bounced', 'unsubscribed', 'replied', 'sent'). Capped generously — one
+        lead never has hundreds of pages of scheduled sends."""
+        return self.get_paginated(f"/api/leads/{lead_id}/scheduled-emails", max_pages=20)
 
     def push_reply_to_followup_campaign(self, reply_id, campaign_id, force_add_reply=True):
         """Move a reply + its lead into a reply-followup campaign."""
@@ -292,8 +303,10 @@ class BisonClient:
 
     # ---- enrollment (use case 5) ----------------------------------------
     def find_lead_by_email(self, email):
-        """Return an existing lead dict by email, or None."""
-        for lead in self.get_paginated("/api/leads", {"search": email}):
+        """Return an existing lead dict by email, or None. The search is capped at
+        a few pages: an exact-email match lands on page 1, and an uncapped crawl
+        would walk the entire lead base if the search param ever matched loosely."""
+        for lead in self.get_paginated("/api/leads", {"search": email}, max_pages=5):
             if (lead.get("email") or "").lower() == email.lower():
                 return lead
         return None
