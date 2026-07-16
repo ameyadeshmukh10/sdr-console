@@ -44,6 +44,7 @@ from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(SCRIPTS.parents[1] / "email-bison" / "scripts"))  # bison_client
 
 import batch_db as db  # noqa: E402  (stdlib-only — keeps module import cheap)
 
