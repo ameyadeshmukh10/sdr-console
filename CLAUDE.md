@@ -203,11 +203,11 @@ by the AI SDR again — they booked a meeting, became an opportunity, etc.
   future suppression rules append entries), `POST /api/unenroll/run` (`{dry_run?}`,
   409 if running). UI: Orchestration view — a dashed "safety gate" bar in the diagram +
   an "Unenrollment & suppression rules" card section (Run now / Dry run buttons).
-- **Gotchas:** the HeyReach request bodies (`GetCampaignsForLead`/`StopLeadInCampaign`)
-  are from public API docs and are NOT yet verified against the live API (key blank in
-  prod; Bison-only sweeps are still correct) — verify on first live use and fix from the
-  HeyReachError detail. Keep `import unenrollment_check` cheap (its module imports are
-  stdlib + batch_db only; clients import lazily inside functions — boot rule).
+- **Gotchas:** HeyReach lead/campaign endpoints all live under the `/campaign/`
+  controller (`/campaign/GetCampaignsForLead`, NOT `/lead/…` — the first live run
+  404'd on that; paths are cross-checked against the bcharleson/heyreach-cli client).
+  Keep `import unenrollment_check` cheap (its module imports are stdlib + batch_db
+  only; clients import lazily inside functions — boot rule).
 
 ## Background jobs (daemon threads started in `app.py main()`)
 
