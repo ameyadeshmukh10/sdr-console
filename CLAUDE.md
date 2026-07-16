@@ -189,7 +189,9 @@ by the AI SDR again — they booked a meeting, became an opportunity, etc.
   (`UNENROLL_HUBSPOT_NOTE=0` kills it; never for never-enrolled contacts).
 - **Ledger:** `unenrollment_log` in pipeline.db, dedup key `<rule>:<channel>:<contact_id>`
   — sweeps are idempotent; `failed` retries every sweep; `skipped_unconfigured` re-arms
-  automatically once the channel's API key lands; `--force` re-checks everything.
+  automatically once the channel's API key lands; `done` rows re-verify after
+  `UNENROLL_RECHECK_HOURS` (default 24) so a contact re-enrolled while still flagged is
+  re-stopped within a day; `--force` re-checks everything now.
   **One-way**: flipping the tag back to `"true"` only re-permits future enrollment (the
   gate's live check wins over the ledger) — stopped sequences stay stopped.
 - **Gates:** `hubspot_pull.py` drops flagged contacts at pull time (`skipped.suppressed`);

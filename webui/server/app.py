@@ -1135,6 +1135,9 @@ def unenrollment_status_payload():
         "interval_minutes": interval,
         "running": _UNENROLL_LOCK.locked(),
         "started_at": _UNENROLL_STATE["started_at"],
+        # Most recent run's parsed summary INCLUDING dry runs (which deliberately
+        # never touch last_run) — this is how the UI shows dry-run results.
+        "last_result": _UNENROLL_STATE["last_result"],
         "rules": [{
             "id": "everworker_tag",
             "name": "EverWorker tag suppression",
@@ -1166,6 +1169,9 @@ def do_unenrollment_check(dry_run=False):
         args.append("--dry-run")
 
     def _run():
+        # dry_run comes from the closure, not the parsed output — a dry run must
+        # never overwrite the persisted real-run status, even when it crashes or
+        # its output is unparseable.
         try:
             res = run_script(args, timeout=3600)
             lines = [ln for ln in (res.get("stdout") or "").splitlines() if ln.strip()]
@@ -1176,12 +1182,13 @@ def do_unenrollment_check(dry_run=False):
                 parsed = summary[:500]
             _UNENROLL_STATE["last_result"] = parsed
             ok = parsed.get("ok") if isinstance(parsed, dict) else res["returncode"] == 0
-            if not (isinstance(parsed, dict) and parsed.get("dry_run")):
-                _record_unenroll(ok, parsed)  # dry runs don't overwrite the real status
+            if not dry_run:
+                _record_unenroll(ok, parsed)
             print(f"[unenroll] done: {str(summary)[:300]}", flush=True)
         except Exception as e:  # noqa: BLE001 — never leak into the server
             _UNENROLL_STATE["last_result"] = f"{type(e).__name__}: {e}"[:500]
-            _record_unenroll(False, f"{type(e).__name__}: {e}"[:300])
+            if not dry_run:
+                _record_unenroll(False, f"{type(e).__name__}: {e}"[:300])
             print(f"[unenroll] error: {type(e).__name__}: {e}", flush=True)
         finally:
             _UNENROLL_LOCK.release()
@@ -4005,15 +4012,15 @@ def _unenrollment_loop():
     means a manual run is already in flight, which counts as this cycle's sweep.
     Best-effort and isolated: it can never raise into the request path. Disable
     with UNENROLL_CHECK_ENABLED=0 (the manual endpoint keeps working)."""
-    import os
-    if (os.environ.get("UNENROLL_CHECK_ENABLED", "1") or "1").strip().lower() in ("0", "false", "no"):
+    env = read_env()  # .env + process env, same source as the status endpoint
+    if (env.get("UNENROLL_CHECK_ENABLED", "1") or "1").strip().lower() in ("0", "false", "no"):
         print("[unenroll] sweeper disabled (UNENROLL_CHECK_ENABLED=0)", flush=True)
         return
-    if not read_env().get("HUBSPOT_ACCESS_TOKEN"):
+    if not env.get("HUBSPOT_ACCESS_TOKEN"):
         print("[unenroll] HUBSPOT_ACCESS_TOKEN not set — sweeper disabled", flush=True)
         return
     try:
-        interval = max(5, int(os.environ.get("UNENROLL_CHECK_MINUTES", "30") or 30)) * 60
+        interval = max(5, int(env.get("UNENROLL_CHECK_MINUTES", "30") or 30)) * 60
     except ValueError:
         interval = 30 * 60
     print(f"[unenroll] sweeper enabled every {interval // 60} min", flush=True)

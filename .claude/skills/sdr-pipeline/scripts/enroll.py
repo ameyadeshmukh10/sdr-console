@@ -177,9 +177,10 @@ def main():
     gen_cids = []
     for gf in gen_files:
         try:
-            gen_cids.append(str(json.loads(gf.read_text()).get("contact_id")))
+            cid = json.loads(gf.read_text()).get("contact_id")
         except (json.JSONDecodeError, OSError):
-            gen_cids.append(None)  # malformed file — leave it for the worker's handling
+            cid = None  # malformed file — leave it for the worker's handling
+        gen_cids.append(str(cid) if cid is not None else None)
     suppressed, _live_ok = U.suppressed_set([c for c in gen_cids if c])
     if suppressed:
         kept = []

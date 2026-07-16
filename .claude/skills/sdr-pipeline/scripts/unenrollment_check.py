@@ -14,9 +14,11 @@ opportunity, or must otherwise be left alone — the AI SDR stops touching them:
   4. log one HubSpot timeline note per contact actually stopped (best-effort,
      UNENROLL_HUBSPOT_NOTE=0 disables),
   5. record every outcome in the unenrollment_log ledger (pipeline.db) — the
-     sweeps are idempotent: a 'done' row is never re-processed (except
-     'skipped_unconfigured' rows, which re-arm automatically once the channel's
-     API key lands); a 'failed' row retries every sweep; --force re-checks all.
+     sweeps are idempotent: a 'done' row is skipped until it is older than
+     UNENROLL_RECHECK_HOURS (default 24 — so a contact re-enrolled while still
+     flagged is re-stopped within a day), 'skipped_unconfigured' rows re-arm
+     automatically once the channel's API key lands, a 'failed' row retries
+     every sweep, and --force re-checks everything now.
 
 The ledger is one-way: flipping the tag back to "true" only re-permits FUTURE
 enrollment (the enroll gate's live check wins) — already-stopped sequences stay
@@ -97,7 +99,9 @@ def suppressed_set(contact_ids, conn=None):
     unenrollment ledger is the fallback (live_ok=False); if that fails too the
     gate is open (fail-open — the 30-minute sweep is the backstop).
     """
-    ids = [str(c) for c in contact_ids if c]
+    # Digits only: one malformed id would 400 the whole HubSpot batch read and
+    # needlessly degrade every other contact's live check to the ledger.
+    ids = [str(c) for c in contact_ids if c and str(c).isdigit()]
     if not ids:
         return set(), True
     tag = tag_property()
@@ -173,7 +177,7 @@ def fetch_flagged_contacts(client, *, limit=None):
 # Channel stops
 # --------------------------------------------------------------------------
 
-def _bison_lead_id(conn, bison, email, contact_id):
+def _bison_lead_id(conn, bison, email, contact_id, *, dry_run=False):
     """email -> Bison lead id via the local cache, live lookup as fallback."""
     row = conn.execute("SELECT lead_id FROM bison_lead_map WHERE email=?",
                        (email,)).fetchone()
@@ -181,8 +185,9 @@ def _bison_lead_id(conn, bison, email, contact_id):
         return int(row["lead_id"])
     lead = bison.find_lead_by_email(email)
     if lead and lead.get("id") is not None:
-        db.upsert_lead_map(conn, email, lead["id"], contact_id)
-        conn.commit()
+        if not dry_run:  # dry runs write nothing, not even the benign cache
+            db.upsert_lead_map(conn, email, lead["id"], contact_id)
+            conn.commit()
         return int(lead["id"])
     return None
 
@@ -192,7 +197,7 @@ def stop_bison(conn, bison, contact_id, email, *, dry_run):
     Returns (action, campaign_ids | None)."""
     if not email:
         return "not_found", None
-    lead_id = _bison_lead_id(conn, bison, email, contact_id)
+    lead_id = _bison_lead_id(conn, bison, email, contact_id, dry_run=dry_run)
     if lead_id is None:
         return "not_found", None
     rows = bison.lead_scheduled_emails(lead_id)
@@ -215,7 +220,9 @@ def stop_heyreach(heyreach, linkedin_url, email, *, dry_run):
     payload = heyreach.get_campaigns_for_lead(
         profile_url=linkedin_url or None, email=None if linkedin_url else email) or {}
     items = payload.get("items") or []
-    stopped = []
+    if not items:
+        return "not_found", None
+    stopped, unidentifiable = [], False
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -225,30 +232,57 @@ def stop_heyreach(heyreach, linkedin_url, email, *, dry_run):
         state = str(item.get("leadStatus") or item.get("status") or "").upper()
         if state in HEYREACH_INERT:
             continue
+        # StopLeadInCampaign needs a lead identifier. With no LinkedIn URL (email
+        # lookup) the campaign item may not carry one — that's terminal for this
+        # contact, not a retryable failure (never raise into the failed/retry loop).
+        member_id = item.get("leadMemberId")
+        lead_url = linkedin_url or item.get("profileUrl") \
+            or (item.get("lead") or {}).get("profileUrl")
+        if not (member_id or lead_url):
+            unidentifiable = True
+            continue
         if not dry_run:
-            heyreach.stop_lead_in_campaign(campaign_id,
-                                           lead_member_id=item.get("leadMemberId"),
-                                           lead_url=linkedin_url or None)
+            heyreach.stop_lead_in_campaign(campaign_id, lead_member_id=member_id,
+                                           lead_url=lead_url)
         stopped.append(campaign_id)
-    if not items:
-        return "not_found", None
-    return ("stopped", stopped) if stopped else ("not_active", None)
+    if stopped:
+        return "stopped", stopped
+    return ("no_identifier", None) if unidentifiable else ("not_active", None)
 
 
 # --------------------------------------------------------------------------
 # The sweep itself
 # --------------------------------------------------------------------------
 
+def _recheck_hours():
+    try:
+        return max(0, float(os.environ.get("UNENROLL_RECHECK_HOURS", "24") or 24))
+    except ValueError:
+        return 24.0
+
+
 def _handled(conn, dedup_key, configured):
     """True if this (rule, channel, contact) needs no work this sweep. A 'done'
-    row is final — except action='skipped_unconfigured', which re-arms
-    automatically once the channel's API key is configured."""
-    row = conn.execute("SELECT action, status FROM unenrollment_log WHERE dedup_key=?",
-                       (dedup_key,)).fetchone()
+    row is skipped — except action='skipped_unconfigured', which re-arms once the
+    channel's API key is configured, and any row older than UNENROLL_RECHECK_HOURS
+    (default 24), which is re-verified so a contact re-enrolled while still
+    flagged (tag flip-flop, manual enrollment outside the console) is re-stopped
+    within a day instead of never. 0 = re-verify every sweep."""
+    row = conn.execute(
+        "SELECT action, status, created_at FROM unenrollment_log WHERE dedup_key=?",
+        (dedup_key,)).fetchone()
     if not row or row["status"] != "done":
         return False
     if configured and row["action"] == "skipped_unconfigured":
         return False
+    hours = _recheck_hours()
+    try:
+        age = datetime.now(timezone.utc) - datetime.strptime(
+            row["created_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        if age.total_seconds() >= hours * 3600:
+            return False
+    except (TypeError, ValueError):
+        return False  # unparseable timestamp — re-verify rather than trust it
     return True
 
 
@@ -297,7 +331,7 @@ def run_check(*, dry_run=False, limit=None, force=False, contact_id=None):
     conn = db.connect()
     db.init_schema(conn)
 
-    counts = {ch: {"stopped": 0, "not_active": 0, "not_found": 0,
+    counts = {ch: {"stopped": 0, "not_active": 0, "not_found": 0, "no_identifier": 0,
                    "failed": 0, "skipped_unconfigured": 0} for ch in CHANNELS}
     checked = skipped_ledger = notes_logged = 0
     errors = []

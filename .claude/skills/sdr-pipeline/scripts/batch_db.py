@@ -131,7 +131,7 @@ def init_schema(conn):
         linkedin_url TEXT,
         channel      TEXT NOT NULL,     -- bison | heyreach
         campaign_ids TEXT,              -- JSON list of campaigns stopped in (NULL if none)
-        action       TEXT NOT NULL,     -- stopped | not_active | not_found | skipped_unconfigured
+        action       TEXT NOT NULL,     -- stopped | not_active | not_found | no_identifier | skipped_unconfigured
         status       TEXT NOT NULL,     -- done | failed
         error        TEXT,
         created_at   TEXT

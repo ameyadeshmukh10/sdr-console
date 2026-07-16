@@ -101,7 +101,7 @@ export default function DiagramPage() {
       await api.unenrollRun({ dry_run: !!dryRun })
     } catch (e) {
       // 409 = a check is already running (e.g. the background sweeper) — keep polling it.
-      if (e.message !== '409') {
+      if (e.status !== 409) {
         setRunMsg(`Unenrollment check failed to start: ${e.message}`)
         setRunBusy(false)
         return
@@ -114,10 +114,22 @@ export default function DiagramPage() {
         const s = await api.unenrollStatus()
         if (!s.running) {
           setUnenroll(s)
-          const lr = s.rules?.[0]?.last_run
-          setRunMsg(lr?.ok === false
-            ? `Unenrollment check finished with an error: ${typeof lr.summary === 'string' ? lr.summary : (lr.summary?.errors?.join('; ') || 'unknown')}`
-            : dryRun ? 'Dry run complete — no changes made.' : 'Check complete.')
+          if (dryRun) {
+            // Dry runs never touch last_run — their summary comes via last_result.
+            const d = s.last_result
+            setRunMsg(d && typeof d === 'object' && d.dry_run
+              ? (d.ok === false
+                  ? `Dry run failed: ${d.error || (d.errors || []).join('; ') || 'unknown'}`
+                  : `Dry run complete — ${num(d.checked || 0)} checked, `
+                    + `${num((d.bison?.stopped || 0) + (d.heyreach?.stopped || 0))} would be stopped. No changes made.`)
+              : 'Dry run complete — no changes made.')
+          } else {
+            const lr = s.rules?.[0]?.last_run
+            const sum = lr?.summary
+            setRunMsg(lr?.ok === false
+              ? `Unenrollment check finished with an error: ${typeof sum === 'string' ? sum : (sum?.errors?.length ? sum.errors.join('; ') : (sum?.error || 'unknown'))}`
+              : 'Check complete.')
+          }
           setRunBusy(false)
           return
         }
@@ -323,7 +335,9 @@ function lastRunLine(lastRun) {
   const s = lastRun.summary
   if (typeof s === 'string') return `Last run ${when} — ${lastRun.ok === false ? 'error' : 'ok'} · ${s}`
   if (lastRun.ok === false) {
-    return `Last run ${when} — error · ${s?.errors?.length ? s.errors.join('; ') : 'sweep failed'}`
+    // A fatal sweep has {error} (singular); a completed-with-failures one has {errors}.
+    const why = s?.errors?.length ? s.errors.join('; ') : (s?.error || 'sweep failed')
+    return `Last run ${when} — error · ${why}`
   }
   const stopped = (s?.bison?.stopped || 0) + (s?.heyreach?.stopped || 0)
   const detail = s ? ` · ${num(s.checked || 0)} checked, ${num(stopped)} stopped` : ''
