@@ -112,6 +112,7 @@ export default function DiagramPage() {
       await new Promise((r) => setTimeout(r, 5000))
       try {
         const s = await api.unenrollStatus()
+        if (s.running && s.progress) setRunMsg(`Running — ${s.progress}`)
         if (!s.running) {
           setUnenroll(s)
           if (dryRun) {
@@ -319,7 +320,8 @@ export default function DiagramPage() {
         <>
           <div className="section-h" style={{ marginTop: 18 }}>Unenrollment & suppression rules</div>
           {(unenroll.rules || []).map((r) => (
-            <RuleCard key={r.id} rule={r} busy={runBusy} msg={runMsg} onRun={runCheck} />
+            <RuleCard key={r.id} rule={r} busy={runBusy} msg={runMsg} onRun={runCheck}
+              running={!!unenroll.running} progress={unenroll.progress} />
           ))}
         </>
       )}
@@ -346,7 +348,7 @@ function lastRunLine(lastRun) {
 
 // One suppression rule. Fully data-driven from the payload — more rules will
 // exist over time and must render here without code changes.
-function RuleCard({ rule, busy, msg, onRun }) {
+function RuleCard({ rule, busy, msg, onRun, running, progress }) {
   const counts = rule.counts?.available ? rule.counts : null
   const byChan = counts?.by_channel_action || {}
   const chips = [
@@ -387,6 +389,13 @@ function RuleCard({ rule, busy, msg, onRun }) {
         <button className="ghost sm" onClick={() => onRun(true)} disabled={busy}>Dry run</button>
       </div>
       {msg && <p className="muted" style={{ fontSize: 12, margin: '10px 0 0' }}>{msg}</p>}
+      {!msg && running && (
+        // The background sweeper is mid-run (nobody clicked anything here) —
+        // say so instead of looking idle. Clicking Run now attaches to it.
+        <p className="muted" style={{ fontSize: 12, margin: '10px 0 0' }}>
+          A sweep is running now{progress ? ` — ${progress}` : '…'}
+        </p>
+      )}
     </div>
   )
 }
