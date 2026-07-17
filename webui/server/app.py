@@ -2064,6 +2064,39 @@ def _batch_job_public(job):
     return {k: v for k, v in job.items() if k != "manifest"}
 
 
+def _annotate_enrollment(jobs):
+    """Add contact-status counts + `enrolled_live` to done jobs, in place.
+
+    A done job whose pipeline batches have no contacts left in `generated`
+    and at least one `enrolled`/`skipped` has been through a live enroll —
+    the UI collapses those rows. Best-effort: any DB problem leaves the
+    jobs unannotated (they stay visible)."""
+    done = [j for j in jobs if j and j.get("status") == "done"
+            and j.get("pipeline_batch_ids")]
+    if not done:
+        return
+    try:
+        ids = sorted({int(b) for j in done for b in j["pipeline_batch_ids"]})
+        marks = ",".join("?" * len(ids))
+        with db_connect() as conn:
+            rows = conn.execute(
+                f"SELECT batch_id, status, COUNT(*) n FROM contacts "
+                f"WHERE batch_id IN ({marks}) GROUP BY batch_id, status", ids).fetchall()
+        by_batch = {}
+        for r in rows:
+            by_batch.setdefault(r["batch_id"], {})[r["status"]] = r["n"]
+        for j in done:
+            counts = {}
+            for bid in j["pipeline_batch_ids"]:
+                for status, n in by_batch.get(int(bid), {}).items():
+                    counts[status] = counts.get(status, 0) + n
+            j["contact_counts"] = counts
+            j["enrolled_live"] = (counts.get("generated", 0) == 0
+                                  and counts.get("enrolled", 0) + counts.get("skipped", 0) > 0)
+    except Exception:
+        pass
+
+
 def batch_job_status(job_id):
     job = _read_batch_job(job_id)
     if not job:
@@ -2071,7 +2104,9 @@ def batch_job_status(job_id):
     # ensure a poller is running if it's still processing (e.g. after restart)
     if job.get("status") == "processing":
         _start_batch_poller(job_id)
-    return _batch_job_public(job)
+    pub = _batch_job_public(job)
+    _annotate_enrollment([pub])
+    return pub
 
 
 def batch_jobs_list():
@@ -2081,6 +2116,7 @@ def batch_jobs_list():
             j = _read_json(fp)
             if j:
                 jobs.append(_batch_job_public(j))
+    _annotate_enrollment(jobs)
     return {"jobs": jobs}
 
 
