@@ -11,9 +11,18 @@ const STATUS_COLOR = {
 export default function BatchJobPanel({ pendingBatches, variant, split, splitValid = true, onChanged }) {
   const [jobs, setJobs] = useState(null)
   const [limit, setLimit] = useState(1)
+  const [touched, setTouched] = useState(false)
+  const [showEnrolled, setShowEnrolled] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const timer = useRef(null)
+
+  // follow the pending count until the user edits the field; clamp manual
+  // values when the max drops (e.g. after a submit elsewhere)
+  useEffect(() => {
+    if (pendingBatches < 1) return
+    setLimit((prev) => (!touched || Number(prev) > pendingBatches) ? pendingBatches : prev)
+  }, [pendingBatches, touched])
 
   const load = useCallback(async () => {
     try { setJobs((await api.batchList()).jobs); setError(null) }
@@ -34,6 +43,7 @@ export default function BatchJobPanel({ pendingBatches, variant, split, splitVal
     try {
       const r = await api.submitBatch(Number(limit), variant, split || undefined)
       if (r.ok === false) setError(r.error || 'submit failed')
+      else setTouched(false) // re-sync the picker to the post-submit pending count
       await load(); onChanged?.()
     } catch (e) { setError(e.message) }
     finally { setBusy(false) }
@@ -44,11 +54,18 @@ export default function BatchJobPanel({ pendingBatches, variant, split, splitVal
     catch (e) { setError(e.message) }
   }
 
+  const enrolledCount = (jobs || []).filter((j) => j.enrolled_live).length
+  const visible = (jobs || []).filter((j) => showEnrolled || !j.enrolled_live)
+
   return (
     <div className="panel" style={{ marginTop: 20 }}>
       <div className="row between">
         <span className="section-h" style={{ margin: 0 }}>Batch API · 50% off · async</span>
-        <span className="muted" style={{ fontSize: 12 }}>{num(pendingBatches)} pending batches</span>
+        {enrolledCount > 0 && (
+          <button className="ghost sm" onClick={() => setShowEnrolled((s) => !s)}>
+            {showEnrolled ? 'Hide' : 'Show'} {num(enrolledCount)} enrolled
+          </button>
+        )}
       </div>
       <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>
         Submit pending batches to Anthropic's Message Batches API at half price. Results come back
@@ -60,7 +77,7 @@ export default function BatchJobPanel({ pendingBatches, variant, split, splitVal
       <div className="row" style={{ gap: 12, alignItems: 'flex-end', marginTop: 8 }}>
         <label className="field">Pending batches to submit
           <input type="number" min="1" max={Math.max(1, pendingBatches)} value={limit}
-            onChange={(e) => setLimit(e.target.value)} style={{ width: 110 }} />
+            onChange={(e) => { setTouched(true); setLimit(e.target.value) }} style={{ width: 110 }} />
         </label>
         <button onClick={submit} disabled={busy || pendingBatches === 0 || (split && !splitValid)}>
           {busy ? <Spinner label="Submitting…" /> : `Submit ${Number(limit) || 0} → Batch API`}
@@ -72,18 +89,21 @@ export default function BatchJobPanel({ pendingBatches, variant, split, splitVal
         )}
       </div>
 
-      {jobs && jobs.length > 0 && (
+      {visible.length > 0 && (
         <div className="panel" style={{ padding: 0, marginTop: 16, maxHeight: 320, overflow: 'auto' }}>
           <table>
             <thead><tr><th>Job</th><th>Status</th><th>Requests</th><th>Done</th><th>Errored</th><th>Result</th><th></th></tr></thead>
             <tbody>
-              {jobs.map((j) => {
+              {visible.map((j) => {
                 const c = j.counts || {}
                 return (
                   <tr key={j.job_id}>
                     <td>
                       <div className="mono">{j.job_id}</div>
-                      <div className="muted" style={{ fontSize: 11 }}>{j.write_only}/{j.request_count} cached</div>
+                      <div className="muted" style={{ fontSize: 11 }}
+                        title={`${num(j.write_only)} of ${num(j.request_count)} contacts had fresh (<90-day) company research in the signals cache; ${num(j.researched ?? (j.request_count - j.write_only))} required live research`}>
+                        {j.write_only}/{j.request_count} research-cached
+                      </div>
                     </td>
                     <td>
                       <span className="badge" style={{ color: STATUS_COLOR[j.status] || 'var(--muted)', borderColor: STATUS_COLOR[j.status] || 'var(--border)' }}>
@@ -94,7 +114,9 @@ export default function BatchJobPanel({ pendingBatches, variant, split, splitVal
                     <td>{num(c.succeeded || 0)}</td>
                     <td>{num((c.errored || 0) + (c.expired || 0))}</td>
                     <td className="muted">
-                      {j.status === 'done' ? `${num(j.summary?.linted || 0)} linted · ${num(j.summary?.failed || 0)} failed` : '—'}
+                      {j.status === 'done'
+                        ? `${num(j.summary?.linted || 0)} linted · ${num(j.summary?.failed || 0)} failed${j.enrolled_live ? ' · enrolled' : ''}`
+                        : '—'}
                     </td>
                     <td>
                       {j.status === 'processing' &&
@@ -106,6 +128,11 @@ export default function BatchJobPanel({ pendingBatches, variant, split, splitVal
             </tbody>
           </table>
         </div>
+      )}
+      {jobs && jobs.length > 0 && visible.length === 0 && (
+        <p className="muted" style={{ fontSize: 12, marginTop: 12 }}>
+          {num(enrolledCount)} past {enrolledCount === 1 ? 'job' : 'jobs'} enrolled live — nothing in flight.
+        </p>
       )}
     </div>
   )
