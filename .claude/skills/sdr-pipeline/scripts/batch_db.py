@@ -9,6 +9,7 @@ Statuses: contacts = pending|generated|enrolled|failed ; batches = pending|in_pr
 
 import json
 import sqlite3
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -32,8 +33,24 @@ def connect():
     conn = sqlite3.connect(str(DB_PATH), timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")       # safe concurrent reads/writes
+    conn.execute("PRAGMA synchronous=NORMAL")     # WAL pairing: fsync at checkpoint, not per commit
     conn.execute("PRAGMA busy_timeout=30000")
     return conn
+
+
+def retry_locked(fn, attempts=5, base_delay=1.0):
+    """Run fn() with bounded expo backoff on SQLite write-slot contention
+    ("database is locked" under WAL = another writer starved us past
+    busy_timeout). fn must be idempotent and open its OWN connection — a failed
+    attempt's connection is not reused. Non-lock errors propagate immediately."""
+    for attempt in range(attempts):
+        try:
+            return fn()
+        except sqlite3.OperationalError as e:
+            msg = str(e).lower()
+            if "locked" not in msg or attempt >= attempts - 1:
+                raise
+            time.sleep(min(base_delay * (2 ** attempt), 10))
 
 
 def init_schema(conn):
@@ -155,8 +172,16 @@ def init_schema(conn):
         conn.execute("ALTER TABLE contacts ADD COLUMN domain TEXT")
     if "variant" not in cols:
         conn.execute("ALTER TABLE contacts ADD COLUMN variant TEXT")
-    conn.execute("UPDATE contacts SET domain=lower(substr(email, instr(email,'@')+1)) "
-                 "WHERE (domain IS NULL OR domain='') AND email LIKE '%@%'")
+    # Gate the backfill behind a read: the UPDATE grabs the single WAL write
+    # slot even when it changes nothing, and init_schema runs from every
+    # subprocess entrypoint — unconditional, it starves against the server's
+    # detector/sweep writers (the prod "database is locked" crash). Steady
+    # state never matches (upsert_contacts computes domain on insert), so
+    # gated init_schema takes no write lock at all.
+    if conn.execute("SELECT 1 FROM contacts WHERE (domain IS NULL OR domain='') "
+                    "AND email LIKE '%@%' LIMIT 1").fetchone():
+        conn.execute("UPDATE contacts SET domain=lower(substr(email, instr(email,'@')+1)) "
+                     "WHERE (domain IS NULL OR domain='') AND email LIKE '%@%'")
     # index after the column is guaranteed to exist
     conn.execute("CREATE INDEX IF NOT EXISTS idx_contacts_domain ON contacts(domain)")
     # migrate older DBs: additive technographic + hiring columns on the signal cache
