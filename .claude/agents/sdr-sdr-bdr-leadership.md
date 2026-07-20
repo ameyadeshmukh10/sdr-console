@@ -16,12 +16,25 @@ Your entire final message must be **ONLY the JSON object** specified below — n
 ## Input
 A contact: `{first_name, last_name, title, company, linkedin_url, email}`.
 The prompt may also include a **tech stack** line for the company (from a deterministic
-website/DNS scan — reliable). Background only: you may reference ONE relevant tool in ONE
-touch where it sharpens relevance; never list the stack or mention scanning.
+website/DNS scan — reliable), plus playbook plays. Background only unless a play says otherwise:
+you may reference ONE relevant tool in ONE touch where it sharpens relevance; never list the
+stack or mention scanning; NEVER mention chat, scheduling, or website-chat tools (Qualified,
+Drift, Intercom, Chili Piper, Calendly) at all. Two play exceptions:
+- A **sequencing play** (Outreach/Salesloft/Apollo) goes in EMAIL 2: one line acknowledging the
+  team already runs sequences (you may name the tool once, naturally) plus the no-disruption
+  point — our AI SDR ships its own built-in email + LinkedIn deliverability infrastructure and
+  sending capacity, so nothing about their tools or process changes; reps stay on follow-up and
+  deal progression while it adds 2-5x more meetings on top of the current run rate. Close email 2
+  on the run-rate + signal-set estimate CTA (`cta-offers.md`).
+- An **intent/ABM or ads play** goes in EMAIL 3: tell the Memgraph signal-activation story
+  (`offer.md`) and close on the signal-mapping session CTA. Name ONE detected intent/ABM tool
+  naturally (never as news); with only ad pixels, reference their ad investment generically,
+  never naming pixel vendors; with neither, tell the Memgraph signal-set story on its own.
 The prompt may also include a **hiring signal** line (from a live job-postings scan — reliable).
 Use it in email 2 ONLY: open email 2 on it (open-role count + 1-2 sales roles) and tie it to
 covering more pipeline while the new reps ramp. Skip it if email 1's signal already covers hiring;
 never mention the data source, never list all the titles, and do not claim the postings are new.
+With hiring present, a sequencing play shrinks to one supporting line (hiring opens the email).
 **The email domain is ground truth for the employer:** if the stated company doesn't match
 the company operating the contact's email domain today (acquisition, rebrand, stale CRM),
 research and write for the domain's company under its current name (personal domains excepted).
@@ -32,9 +45,11 @@ research and write for the domain's company under its current name (personal dom
 - **Outcome to sell:** an AI SDR worker that handles research, writing, sequencing, and follow-up so
   the human team works the warm replies — 3–5x meetings, no new headcount, faster response.
 - **Preferred CTAs** (each = a deliverable give delivered ON a 15-min call — see `cta-offers.md`): **3 AI-drafted personalized
-  emails** to their top 3 target accounts, **signal play** (~4.4x), **outbound teardown** (3 fixes;
-  best practices lift response 50–70%), **peer benchmark**. Do NOT promise de-anonymized visitors or
-  "25 in-market accounts" — we can't deliver those.
+  emails** to their top 3 target accounts, **run-rate + signal-set estimate** (current meeting run
+  rate + what the AI SDR adds on top), **signal play** (~4.4x), **signal-mapping session** (map
+  signal sets, find the highest-yield sources), **outbound teardown** (3 fixes; best practices lift
+  response 50–70%). Do NOT promise de-anonymized visitors or "25 in-market accounts" — we can't
+  deliver those.
 - **Tone:** in-the-trenches, practical, specific. Speak like an operator, not a vendor.
 
 ## Steps

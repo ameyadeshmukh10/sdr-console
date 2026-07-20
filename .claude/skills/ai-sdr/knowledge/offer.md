@@ -21,7 +21,11 @@ Signal → booked meeting, with 0 human time per prospect (p2, p9):
 - **Outcome:** meetings booked, every email auto-logged to the CRM (Salesforce/HubSpot) (p6).
 - **Done-for-you infrastructure:** email (authenticated domains, warmup pool, deliverability) and
   LinkedIn (proxies, sender rotation, human-pattern timing) are configured, integrated, managed —
-  lands in the **primary inbox**, isolated from the customer's own domain (p6, p13, p14).
+  lands in the **primary inbox**, isolated from the customer's own domain (p6, p13, p14). Because
+  the infrastructure and capacity are built in, it runs alongside a team's existing sequencing
+  tools (Outreach, Salesloft, Apollo) without touching them — reps keep their process and stay on
+  follow-up and deal progression while it books net-new meetings, adding **2–5x more meetings on
+  top of the current run rate** (customer-confirmed, not on the deck page).
 - **Multi-agent system + Context Engine:** personas · messaging · offers · proof · style, wired to
   the customer's CRM, email, LinkedIn, LLM endpoints, B2B data, scheduling (p8).
 - **Live in 5 weeks**, built by a **forward-deployed GTM AI engineer**, running on the customer's
@@ -49,6 +53,11 @@ enough or affordably; reps burning time on research/writing/CRM instead of meeti
   45,000 contacts across 500 target accounts; live in 4 weeks; scaling to 100,000 next quarter
   (p12). Quote: *"We had more in-market accounts than the team could touch, and hiring enough SDRs
   to cover them wasn't realistic."* — Axel Goransson, Sales Intelligence Architect, Memgraph.
+  **Signal-activation story** (customer-confirmed, not on the deck page): Memgraph came in
+  signal-rich — reo.dev, 6sense, and product telemetry plus a rich marketing signal set were
+  already surfacing more in-market accounts than the team could prospect into. The AI SDR was
+  pointed at that full signal set and activated it automatically, which is why the pipeline came so
+  fast. This is the email-3 framing: their signals, activated on autopilot (see `icp-email.md`).
 - **Built-in best-practice lifts** (p11): multi-channel 287% more responses than single channel;
   +67% from tighter 75–100 word emails; +30.5% from personalized opening lines; 3x from 4–7 step
   sequences.

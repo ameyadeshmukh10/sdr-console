@@ -26,13 +26,19 @@ way to get it.
    model** and show exactly how many meetings {company} needs to hit target this quarter."*
 3. **Personalized drafts** — *"I had our AI SDR draft **3 personalized emails to your top 3
    accounts**. Want to **hop on a quick call** and I'll walk you through them?"*
+4. **Run-rate + signal-set estimate** — *"**Worth 15 minutes**? I'll calculate {company}'s current
+   meeting **run rate**, map the **signal set** you're already generating, and walk you through how
+   many **additional meetings** the AI SDR would add on top."* (the step-2 default)
+5. **Signal-mapping session** — *"Want to **grab 15 minutes**? We'll map {company}'s **signal
+   sets**, find the **highest-yield sources**, and I'll show you exactly where the AI SDR increases
+   output."* (the step-3 default, paired with the Memgraph signal-activation proof)
 
 ### Tier B — analysis / teardown gives
-4. **Outbound teardown** — *"**Worth 15 minutes?** I'll walk you through a **teardown of your current
+6. **Outbound teardown** — *"**Worth 15 minutes?** I'll walk you through a **teardown of your current
    outbound** — 3 things I'd change. Our best practices alone usually lift response rates 50–70%."*
-5. **Peer benchmark** — *"Want to **grab time** so I can walk you through how {company}'s reply rate
-   compares to other {seed/Series-A} startups?"*
-6. **Pilot playbook** — *"Before I close your file — **worth 15 minutes** to walk through a one-page
+7. **Peer benchmark** — *"Want to **grab time** so I can walk you through how {company}'s reply rate
+   compares to other {seed/Series-A} startups?"* (replies/LinkedIn only — retired from email step 3)
+8. **Pilot playbook** — *"Before I close your file — **worth 15 minutes** to walk through a one-page
    **playbook of 3 AI-SDR plays** for your {team/motion}?"* (the breakup-step meeting ask)
 
 ### Anti-patterns — DO NOT USE
@@ -42,9 +48,17 @@ way to get it.
 
 ## Cadence placement (4-touch email)
 - **Step 1 (opener):** Tier-A give + meeting ask — signal play or pipeline gap.
-- **Step 2:** a new give + meeting ask — teardown or 3 drafts. (When a hiring signal is provided,
-  open email 2 on it: open-role count + 1-2 sales roles, tied to coverage while the new reps ramp.)
-- **Step 3:** proof point (Memgraph) + benchmark give + meeting ask.
+- **Step 2:** the **run-rate + signal-set estimate** give + meeting ask. (When a hiring signal is
+  provided, open email 2 on it: open-role count + 1-2 sales roles, tied to coverage while the new
+  reps ramp. When a sequencing play is flagged, add the no-disruption line: the AI SDR ships its
+  own email + LinkedIn infrastructure and capacity, so nothing about their tools or process
+  changes — 2–5x more meetings on top of the current run rate; with hiring present that shrinks to
+  one supporting line.)
+- **Step 3:** the Memgraph **signal-activation** proof + the **signal-mapping session** give +
+  meeting ask. (Name ONE detected intent/ABM tool when flagged; when only ad pixels are flagged,
+  reference their ad investment generically — never name pixels; otherwise tell the Memgraph
+  signal-set story on its own: reo.dev, 6sense, product telemetry surfacing more in-market
+  accounts than the team could prospect, activated by the AI SDR.)
 - **Step 4 (breakup):** *"Before I close your file, worth 15 minutes to walk through the playbook?"*
 
 ## Iteration loop
