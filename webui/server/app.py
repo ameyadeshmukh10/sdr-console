@@ -9,7 +9,7 @@ frontend from a single process.
 Endpoints (all under /api, all JSON):
   GET  /api/status                 pipeline summary + persona rollup
   GET  /api/batches?status=&limit= batches with per-batch status counts
-  GET  /api/rollup                 persona -> campaign rollup for the diagram
+  GET  /api/orchestration/config   live pipeline config for the Orchestration view
   GET  /api/analytics              cached campaign stats (instant)
   POST /api/analytics/refresh      re-run fetch_campaign_stats.py (live Bison)
   GET  /api/outreach?...           paginated/filtered outreach index + facets
@@ -98,8 +98,8 @@ sys.path.insert(0, str(PIPELINE_SCRIPTS))
 import batch_db as pipeline_db        # noqa: E402
 import heyreach_activity              # noqa: E402
 import mongo_store                    # noqa: E402  (lazy pymongo — safe without it)
+import orchestration_config           # noqa: E402  (no I/O at import; parses on request)
 
-PERSONA_ORDER = ["sales-leadership", "revops", "partnerships", "sdr-bdr"]
 PERSONA_ENV = {
     "sales-leadership": "BISON_CAMPAIGN_SALES_LEADERSHIP",
     "revops": "BISON_CAMPAIGN_REVOPS",
@@ -291,16 +291,6 @@ def variant_campaign_map():
 def default_campaign_id():
     """The catch-all BISON_CAMPAIGN_ID — last fallback in enroll.py's routing."""
     return _campaign_int(read_env().get("BISON_CAMPAIGN_ID", ""))
-
-
-def route_campaign(persona, variant, pmap=None, vmap=None, default=None):
-    """The Bison campaign a contact actually enrolls into, mirroring enroll.py:
-    variant campaign first, then persona campaign, then the default. Returns an
-    int campaign id or None (unrouted)."""
-    pmap = persona_campaign_map() if pmap is None else pmap
-    vmap = variant_campaign_map() if vmap is None else vmap
-    default = default_campaign_id() if default is None else default
-    return vmap.get(variant) or pmap.get(persona) or default
 
 
 # ----------------------------------------------------------------------------
@@ -627,190 +617,6 @@ def analytics_payload():
             "overall_interested_rate_pct": rate(total_interested, total_replies),
         },
         "errors": last_run.get("errors", []),
-    }
-
-
-# cid -> {"name": str|None, "leads": int|None}. The name is cached after the first
-# success (it rarely changes); the lead count is refreshed live each call but the
-# last-good value is retained so a transient HeyReach hiccup doesn't drop the diagram
-# to 0.
-_HEYREACH_CAMPAIGN_CACHE = {}
-
-
-def linkedin_channel():
-    """The HeyReach (LinkedIn) channel all personas feed into: campaign id/name +
-    how many leads are in the campaign.
-
-    The lead count comes from the LIVE HeyReach campaign (progressStats.totalUsers —
-    the same figure the Analytics page shows as "Leads in campaign"), NOT from
-    data/outreach/heyreach_state.json. That file is only written by the legacy
-    `sdr_batches.py heyreach-backfill` path; the main `enroll` path adds leads to
-    HeyReach without ever touching it, so in normal operation it is missing/stale and
-    would make this node read 0 even when the campaign holds thousands of leads. The
-    local file is kept only as a last-resort fallback when HeyReach is unreachable and
-    we've never seen a live value."""
-    env = read_env()
-    raw = (env.get("HEYREACH_CAMPAIGN_ID") or "").strip()
-    cid = int(raw) if raw.isdigit() else None
-    if cid is None:
-        return None
-    cache = _HEYREACH_CAMPAIGN_CACHE.setdefault(cid, {"name": None, "leads": None})
-    try:
-        sys.path.insert(0, str(SCRIPTS / "sdr-pipeline" / "scripts"))
-        from heyreach_client import HeyReachClient
-        camp = HeyReachClient().get_campaign(cid) or {}
-        if camp.get("name"):
-            cache["name"] = camp["name"]
-        total_users = (camp.get("progressStats") or {}).get("totalUsers")
-        if isinstance(total_users, (int, float)):
-            cache["leads"] = int(total_users)
-    except Exception:  # noqa: BLE001 — never block the diagram on a HeyReach hiccup
-        pass
-    leads = cache["leads"]
-    if leads is None:  # live unavailable and never seen — fall back to the local file
-        leads = 0
-        sp = DATA / "outreach" / "heyreach_state.json"
-        if sp.is_file():
-            try:
-                leads = len(json.loads(sp.read_text()).get("added", []))
-            except (ValueError, OSError):
-                pass
-    return {"campaign_id": cid, "campaign_name": cache["name"], "leads": leads}
-
-
-def linkedin_analytics_payload():
-    """Live HeyReach (LinkedIn) analytics for the configured campaign: the lead
-    funnel (GetById progressStats) + connection/message/reply metrics
-    (GetOverallStats). Degrades to {error}/{configured:false} so the Analytics
-    page never breaks on a HeyReach hiccup."""
-    env = read_env()
-    raw = (env.get("HEYREACH_CAMPAIGN_ID") or "").strip()
-    cid = int(raw) if raw.isdigit() else None
-    if cid is None:
-        return {"configured": False}
-    try:
-        sys.path.insert(0, str(SCRIPTS / "sdr-pipeline" / "scripts"))
-        from heyreach_client import HeyReachClient
-        hr = HeyReachClient()
-        camp = hr.get_campaign(cid) or {}
-        stats = (hr.get_overall_stats([cid]) or {}).get("overallStats") or {}
-    except Exception as e:  # noqa: BLE001
-        return {"configured": True, "campaign_id": cid, "error": str(e)[:200]}
-    return {
-        "configured": True, "campaign_id": cid,
-        "campaign_name": camp.get("name"), "status": camp.get("status"),
-        "funnel": camp.get("progressStats") or {}, "stats": stats,
-        "fetched_at": now_iso(),
-    }
-
-
-def _campaign_stats(c):
-    """The Bison campaign-wide totals slice (all leads ever added to the campaign,
-    from any source — NOT just this pipeline's contacts), or None if uncached."""
-    if not c:
-        return None
-    return {
-        "total_leads": c.get("total_leads"),
-        "total_leads_contacted": c.get("total_leads_contacted"),
-        "unique_replies": c.get("unique_replies"),
-        "interested": c.get("interested"),
-        "reply_rate_pct": c.get("reply_rate_pct"),
-        "interested_rate_pct": c.get("interested_rate_pct"),
-    }
-
-
-def _contacts_grouped():
-    """[(persona, variant, status, n)] over all contacts. Falls back to a
-    variant-less grouping on DBs that predate the variant column (the server opens
-    read-only and can't run the batch_db migration)."""
-    with db_connect() as conn:
-        try:
-            return [(r["persona"], r["variant"], r["status"], r["n"]) for r in conn.execute(
-                "SELECT persona, variant, status, COUNT(*) n FROM contacts "
-                "GROUP BY persona, variant, status")]
-        except sqlite3.OperationalError:
-            return [(r["persona"], None, r["status"], r["n"]) for r in conn.execute(
-                "SELECT persona, status, COUNT(*) n FROM contacts GROUP BY persona, status")]
-
-
-def rollup_payload():
-    st = db_status()
-    pmap = persona_campaign_map()
-    vmap = variant_campaign_map()
-    default_cid = default_campaign_id()
-    analytics = analytics_payload()
-    by_campaign = {c.get("campaign_id"): c for c in analytics["campaigns"]}
-
-    # Left column — persona/agent nodes (contact counts straight from the DB).
-    personas = []
-    for p in PERSONA_ORDER:
-        cid = pmap.get(p)
-        c = by_campaign.get(cid) if cid is not None else None
-        personas.append({
-            "persona": p,
-            "campaign_id": cid,
-            "campaign_name": (c or {}).get("campaign_name"),
-            "contacts": st["by_persona"].get(p, 0),
-            "by_status": st["persona_status"].get(p, {}),
-            "campaign_stats": _campaign_stats(c),
-        })
-
-    # Right column — EVERY Bison campaign contacts actually route into. Each
-    # contact's destination is derived exactly as enrollment does it (variant
-    # campaign first, persona campaign, then the default), so both the per-variant
-    # (14/15/16) and the legacy per-persona (10-13) campaigns surface when in use.
-    agg = {}    # cid(int|None) -> rollup of this pipeline's contacts
-    edges = {}  # (persona, cid) -> count, for drawing the routing
-    for persona, variant, status, n in _contacts_grouped():
-        cid = route_campaign(persona, variant, pmap, vmap, default_cid)
-        a = agg.setdefault(cid, {"contacts": 0, "enrolled": 0, "by_status": {},
-                                 "personas": set(), "variants": set()})
-        a["contacts"] += n
-        if status == "enrolled":
-            a["enrolled"] += n
-        a["by_status"][status] = a["by_status"].get(status, 0) + n
-        if persona:
-            a["personas"].add(persona)
-        if variant:
-            a["variants"].add(variant)
-        if persona is not None:
-            edges[(persona, cid)] = edges.get((persona, cid), 0) + n
-
-    variant_by_cid = {cid: v for v, cid in vmap.items() if cid is not None}
-    persona_by_cid = {cid: p for p, cid in pmap.items() if cid is not None}
-    campaigns = []
-    for cid, a in agg.items():
-        c = by_campaign.get(cid) or {}
-        if cid is None:
-            kind, label = "unrouted", "unrouted (no campaign configured)"
-        elif cid in variant_by_cid:
-            kind, label = "variant", variant_by_cid[cid]
-        elif cid in persona_by_cid:
-            kind, label = "persona", persona_by_cid[cid]
-        else:
-            kind, label = "campaign", (c.get("campaign_name") or f"#{cid}")
-        campaigns.append({
-            "campaign_id": cid,
-            "campaign_name": c.get("campaign_name"),
-            "kind": kind,
-            "label": label,
-            "pipeline_contacts": a["contacts"],
-            "pipeline_enrolled": a["enrolled"],
-            "by_status": a["by_status"],
-            "personas": sorted(a["personas"]),
-            "variants": sorted(a["variants"]),
-            "stats": _campaign_stats(c),
-        })
-    # busiest first; unrouted bucket always last
-    campaigns.sort(key=lambda x: (x["campaign_id"] is None, -x["pipeline_contacts"]))
-
-    return {
-        "personas": personas,
-        "personas_order": PERSONA_ORDER,
-        "campaigns": campaigns,
-        "edges": [{"persona": p, "campaign_id": cid, "count": n}
-                  for (p, cid), n in edges.items()],
-        "linkedin": linkedin_channel(),
     }
 
 
@@ -3503,8 +3309,8 @@ class Handler(BaseHTTPRequestHandler):
                 status = (params.get("status", [""])[0] or None)
                 limit = (params.get("limit", [""])[0] or None)
                 return self._json(db_batches(status=status, limit=limit))
-            if path == "/api/rollup":
-                return self._json(rollup_payload())
+            if path == "/api/orchestration/config":
+                return self._json(orchestration_config.orchestration_config_payload())
             if path == "/api/analytics":
                 return self._json(analytics_payload())
             if path == "/api/analytics/linkedin":

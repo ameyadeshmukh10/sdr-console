@@ -64,7 +64,7 @@ export const api = {
     if (limit) q.set('limit', limit)
     return get('/api/batches?' + q.toString())
   },
-  rollup: () => get('/api/rollup'),
+  orchestrationConfig: () => get('/api/orchestration/config'),
   analytics: () => get('/api/analytics'),
   refreshAnalytics: () => post('/api/analytics/refresh'),
   linkedinAnalytics: () => get('/api/analytics/linkedin'),
