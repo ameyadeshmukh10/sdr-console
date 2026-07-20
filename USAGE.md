@@ -156,7 +156,10 @@ engine) producing a line like `CRM: HubSpot | Ad Pixels: Meta Pixel | Martech: S
 Runs automatically with account research and after batch generation; results live on the
 Signals view (Tech column, per-row **⌁ Detect**, bulk **Detect missing**) and are written
 to the HubSpot company property `technographic_signals` (disable: `TECH_HUBSPOT_WRITEBACK=0`).
-Manual runs:
+Copy generation also acts on the detections via playbook groups: sequencing tools
+(Outreach/Salesloft/Apollo) steer **email 2** (no-disruption angle + run-rate CTA), and
+intent/ABM tools or ad pixels steer **email 3** (Memgraph signal-activation story +
+signal-mapping CTA); chat/scheduling tools are never mentioned in copy. Manual runs:
 
 ```bash
 P=.claude/skills/sdr-pipeline/scripts
@@ -180,7 +183,7 @@ with account research and after batch generation; results live on the Signals vi
 HubSpot company properties `open_roles_count` / `hiring_signals_job_titles` /
 `hiring_signals` (disable: `HIRING_HUBSPOT_WRITEBACK=0`). When open sales/GTM roles are
 found, generation opens **email 2** on the hiring signal (email 1 keeps the researched
-news signal). Manual runs:
+news signal; a tech sequencing play then shrinks to one supporting line). Manual runs:
 
 ```bash
 P=.claude/skills/sdr-pipeline/scripts

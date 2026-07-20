@@ -43,13 +43,17 @@ MAX_WORKERS = 4
 
 PERSONA_FRAMING = {
     "sales-leadership": "Frame the pain as coverage/quota: more pipeline per rep without hiring. "
-                        "Gives: signal play, pipeline gap analysis, peer benchmark, pilot playbook (breakup).",
+                        "Gives: signal play, run-rate + signal-set estimate, signal-mapping session, "
+                        "pipeline gap analysis, pilot playbook (breakup).",
     "revops": "Frame the pain as signal-to-action latency, data hygiene, measurable lift. "
-              "Gives: pipeline gap analysis, signal play, outbound teardown, peer benchmark.",
+              "Gives: signal-mapping session, run-rate + signal-set estimate, pipeline gap analysis, "
+              "signal play, outbound teardown.",
     "partnerships": "Frame the pain as co-sell / partner-sourced pipeline coverage at scale. "
-                    "Gives: signal play (partner ecosystem), co-sell pilot playbook, pipeline gap analysis, 3 personalized drafts.",
+                    "Gives: signal play (partner ecosystem), co-sell pilot playbook, run-rate + "
+                    "signal-set estimate, signal-mapping session, 3 personalized drafts.",
     "sdr-bdr": "Frame the pain as follow-up volume, ramp time, response speed. "
-               "Gives: 3 personalized drafts, signal play, outbound teardown, peer benchmark.",
+               "Gives: 3 personalized drafts, run-rate + signal-set estimate, signal play, "
+               "signal-mapping session, outbound teardown.",
 }
 
 # Shared research block — all variants research the same way; only the writing (Step 3) differs.
@@ -121,9 +125,16 @@ meeting.
   soft, open question. No meeting ask, no "give", no product pitch in touch 1.
 - Touch 2: one new specific angle (if a hiring-signal line is provided in the contact block, that IS
   the angle for email 2: open on it). At most ONE proof point in the WHOLE sequence, told as a one-line
-  human story (never a stack of numbers). End on a soft question or a light, low-friction offer.
-- Touch 3: now you may ask for a short conversation, framed as the easy way to go deeper on THEIR
-  situation. Keep it light (a quick chat / short call), not "worth 15 minutes to walk you through it".
+  human story (never a stack of numbers). End on a soft question or a light, low-friction offer. If a
+  sequencing play is provided in the contact block, add one plain reassurance line (own email and
+  LinkedIn infrastructure, nothing about their tools or process changes) and let the light offer be to
+  size their current run rate and what the AI SDR would add on top.
+- Touch 3: now you may ask for a short conversation, framed as a quick look at their signal sources
+  and which high-yield ones are going unworked. If the sequence's ONE proof point lands here, tell it
+  as the Memgraph signal-activation story in one human line (their intent tools and product telemetry
+  were surfacing more in-market accounts than the team could prospect; pointing the AI SDR at the full
+  signal set drove $2.7M in 90 days), tied to THEIR signals when a play above flags them. Keep the ask
+  light (a quick chat / short call), not "worth 15 minutes to walk you through it".
 - Touch 4: a genuine one-line breakup. No guilt, leave the door open.
 - No em or en dashes. NO sign-off or trailing name. No hype words (revolutionary, game-changing,
   cutting-edge, supercharge, unlock, transform). Do not cram metrics. Never put pricing in a cold
@@ -144,8 +155,12 @@ it before making the sample offer.
 - Touch 1: open on the signal (or anchor) + ONE specific observation about their situation + a SINGLE
   soft, open question. No meeting ask in touch 1.
 - Touch 2 carries the async sample offer above. At most ONE proof point in the whole sequence, as a
-  one-line human story.
-- Touch 3: a soft meeting ask, tied to their situation, framed as the easy way to go deeper.
+  one-line human story. A sequencing play from the contact block joins touch 2 only when there is NO
+  hiring signal (one reassurance line: own sending infrastructure, their tools and process untouched).
+- Touch 3: a soft meeting ask framed as signal activation: the variant's single proof point as one
+  Memgraph line (their intent tools and product telemetry surfaced more in-market accounts than the
+  team could prospect; the AI SDR was pointed at the full signal set), plus an offer to take a quick
+  look at THEIR signal sources together.
 - Touch 4: a genuine one-line breakup.
 - No em or en dashes. NO sign-off or trailing name. No hype words. Do not cram metrics. Never put
   pricing in a cold email. Vary how each email opens.
@@ -235,7 +250,7 @@ def build_system(knowledge, variant=DEFAULT_VARIANT, mode="research"):
 
 
 def build_user(contact, cached_signal=None, prior_issues=None, tech_signals=None,
-               hiring_signals=None):
+               tech_playbook=None, hiring_signals=None):
     persona = contact.get("persona", "sales-leadership")
     framing = PERSONA_FRAMING.get(persona, PERSONA_FRAMING["sales-leadership"])
     domain = contact.get("domain") or db.email_domain(contact.get("email"))
@@ -252,10 +267,46 @@ def build_user(contact, cached_signal=None, prior_issues=None, tech_signals=None
     if tech_signals:
         base += (
             f"Company tech stack (deterministic scan of their website/DNS; reliable): {tech_signals}\n"
-            "Background only: reference a specific tool ONLY when it sharpens one line's relevance "
-            "(e.g. their CRM or sales-engagement tool). Never list the stack, never mention scanning, "
-            "never present it as news.\n\n"
+            "Background only unless a play below says otherwise: reference a specific tool ONLY when "
+            "it sharpens one line's relevance (e.g. their CRM). Never list the stack, never mention "
+            "scanning, never present it as news. Never mention chat, scheduling, or website-chat "
+            "tools (e.g. Qualified, Drift, Intercom, Chili Piper, Calendly) at all.\n\n"
         )
+        pb = tech_playbook or {}
+        seq, intent, ads = pb.get("sequencing") or [], pb.get("intent_abm") or [], pb.get("ads") or []
+        if seq:
+            base += (
+                f"Sequencing play for EMAIL 2 (they run {seq[0]}): acknowledge in one line that the "
+                "team already runs sequences (you may name the tool once, naturally) and make the "
+                "no-disruption point: our AI SDR ships its own built-in email and LinkedIn "
+                "deliverability infrastructure and sending capacity, so nothing about their current "
+                "tools or process changes. Reps stay on follow-up and deal progression while it "
+                "generates meetings and interested leads on autopilot, adding 2-5x more meetings on "
+                "top of the current run rate. Close email 2 on the run-rate CTA: 15 minutes to "
+                "calculate their current run rate, map their signal set, and estimate how many "
+                "additional meetings the AI SDR would add. If a hiring signal is provided below, the "
+                "hiring signal stays email 2's opener and this play shrinks to one supporting line "
+                "before that CTA.\n\n"
+            )
+        if intent:
+            base += (
+                f"Signal-activation play for EMAIL 3 (they run {intent[0]}): name that one tool "
+                "naturally (never as news, never implying we scanned them). In-market and intent "
+                "signals are already flowing into their stack and most go unworked; our AI SDR "
+                "activates automatically against exactly those signals, so they get worked the moment "
+                "they appear. Tie this into email 3's Memgraph signal-activation proof and close on "
+                "the signal-mapping CTA (both in the knowledge above).\n\n"
+            )
+        elif ads:
+            base += (
+                "Signal-activation play for EMAIL 3 (their site runs ad pixels): they are investing "
+                "in ads, so their spend is already generating demand and inbound signals. Reference "
+                "that ad investment in general terms only, never name pixel vendors and never imply "
+                "we looked at their site: our AI SDR acts on the signals their ads already produce, "
+                "turning existing investment into more meetings and pipeline. Tie this into email 3's "
+                "Memgraph signal-activation proof and close on the signal-mapping CTA (both in the "
+                "knowledge above).\n\n"
+            )
     if hiring_signals:
         base += (
             f"Company hiring signal (live job-postings scan; reliable): {hiring_signals}\n"
@@ -264,7 +315,8 @@ def build_user(contact, cached_signal=None, prior_issues=None, tech_signals=None
             "new reps ramp. Never use it in email 1. If email 1's signal already covers their hiring, "
             "skip this angle entirely, do not double-hit. Never mention the data source, never list all "
             "the titles, do not claim the postings are new, and do not reference hiring anywhere else "
-            "in the sequence.\n\n"
+            "in the sequence. If a sequencing play is provided above, hiring still opens email 2 and "
+            "the sequencing point shrinks to one supporting line.\n\n"
         )
     if cached_signal:
         base += (f"Company signal (use this, do NOT search the web): {cached_signal}\n\n"
@@ -374,13 +426,17 @@ def _atomic_write(contact_id, asset):
 
 
 def generate_contact(contact, knowledge, client, write=True, cached_signal=None,
-                     variant=DEFAULT_VARIANT, tech_signals=None, hiring_signals=None):
+                     variant=DEFAULT_VARIANT, tech_signals=None, tech_playbook=None,
+                     hiring_signals=None):
     """Generate + validate one contact. Returns a result dict.
 
     cached_signal (when provided): use it as the company signal and DO NOT search
     the web — much cheaper. Otherwise research the signal with web search.
     tech_signals (when provided): the company's detected tech-stack line, passed
-    to the prompt as background-only context.
+    to the prompt as background context.
+    tech_playbook (when provided): the {ads, intent_abm, sequencing} groups from
+    _cached_tech — steers the email-2 sequencing play and email-3
+    signal-activation play in the prompt.
     hiring_signals (when provided): the company's open-sales-roles line, passed
     to the prompt with the email-2-only placement instruction.
     variant: which instruction set / linter to use (value-give | earn | show).
@@ -401,7 +457,8 @@ def generate_contact(contact, knowledge, client, write=True, cached_signal=None,
                 build_system(knowledge, variant=variant, mode=mode),
                 build_user(contact, cached_signal=cached_signal,
                            prior_issues=None if attempt == 1 else issues,
-                           tech_signals=tech_signals, hiring_signals=hiring_signals),
+                           tech_signals=tech_signals, tech_playbook=tech_playbook,
+                           hiring_signals=hiring_signals),
                 use_web_search=use_search, max_web_searches=3, max_tokens=4096,
             )
             web_searches = res.get("web_search_count", 0)
@@ -488,10 +545,14 @@ def _maybe_detect_tech(domain, company=None):
 
 
 def _cached_tech(domain):
-    """The stored tech-stack line for prompt use, or None. The 'No signals
-    detected' literal (tech_signals.NO_SIGNALS) is treated as nothing to say."""
+    """(line, playbook) for prompt use — the stored tech-stack line plus the
+    copy playbook groups ({ads, intent_abm, sequencing}) classified from stored
+    tech_detail. (None, None) when there is nothing to say (no row, or the 'No
+    signals detected' literal); legacy rows with no parseable detail give
+    (line, None) = the old line-only background behavior. Classification is
+    best-effort and never breaks generation."""
     if not domain:
-        return None
+        return None, None
     conn = db.connect()
     try:
         row = db.get_signal(conn, domain)
@@ -499,8 +560,14 @@ def _cached_tech(domain):
         conn.close()
     tech = (row or {}).get("tech_signals")
     if not tech or tech == "No signals detected":
-        return None
-    return tech
+        return None, None
+    playbook = None
+    try:
+        import tech_signals as _tech  # lazy: stdlib-only at import, mirrors the boot rule
+        playbook = _tech.playbook_from_detail(row.get("tech_detail"))
+    except Exception as e:  # noqa: BLE001
+        sys.stderr.write(f"[generate] tech playbook skipped for {domain}: {e}\n")
+    return tech, playbook
 
 
 def _maybe_detect_hiring(domain, company=None):
@@ -559,8 +626,10 @@ def generate_one(contact, knowledge, client, write=True, variant=DEFAULT_VARIANT
 
     cached = _fresh_cached_signal(domain)
     if cached:
+        tech_line, tech_playbook = _cached_tech(domain)
         r = generate_contact(contact, knowledge, client, write=write, cached_signal=cached, variant=variant,
-                             tech_signals=_cached_tech(domain), hiring_signals=_cached_hiring(domain))
+                             tech_signals=tech_line, tech_playbook=tech_playbook,
+                             hiring_signals=_cached_hiring(domain))
         r["used_cache"] = True
         return r
 
@@ -571,16 +640,20 @@ def generate_one(contact, knowledge, client, write=True, variant=DEFAULT_VARIANT
         if domain:  # another thread may have cached it while we waited
             cached = _fresh_cached_signal(domain)
             if cached:
+                tech_line, tech_playbook = _cached_tech(domain)
                 r = generate_contact(contact, knowledge, client, write=write, cached_signal=cached, variant=variant,
-                                     tech_signals=_cached_tech(domain), hiring_signals=_cached_hiring(domain))
+                                     tech_signals=tech_line, tech_playbook=tech_playbook,
+                                     hiring_signals=_cached_hiring(domain))
                 r["used_cache"] = True
                 return r
         # cache miss = this thread researches the company: scan its tech + hiring
         # first (cache-aware, seconds) so this contact's copy can already use them
         _maybe_detect_tech(domain, contact.get("company", ""))
         _maybe_detect_hiring(domain, contact.get("company", ""))
+        tech_line, tech_playbook = _cached_tech(domain)
         r = generate_contact(contact, knowledge, client, write=write, variant=variant,  # search + write
-                             tech_signals=_cached_tech(domain), hiring_signals=_cached_hiring(domain))
+                             tech_signals=tech_line, tech_playbook=tech_playbook,
+                             hiring_signals=_cached_hiring(domain))
         r["used_cache"] = False
         sig = (r.get("signal") or "").strip()
         if domain and sig:
@@ -675,14 +748,14 @@ def generate_samples(company, domain="", client=None):
 # and cache logic as the real-time path, just packaged for async batch submit.
 # ----------------------------------------------------------------------------
 def build_request_params(contact, knowledge, client, cached_signal=None, variant=DEFAULT_VARIANT,
-                         tech_signals=None, hiring_signals=None):
+                         tech_signals=None, tech_playbook=None, hiring_signals=None):
     """The Messages `params` for one contact (write-only if a cached signal is
     given, else a combined research+write request with web search). 1h cache."""
     mode = "write" if cached_signal else "research"
     return client.build_body(
         build_system(knowledge, variant=variant, mode=mode),
         build_user(contact, cached_signal=cached_signal, tech_signals=tech_signals,
-                   hiring_signals=hiring_signals),
+                   tech_playbook=tech_playbook, hiring_signals=hiring_signals),
         use_web_search=cached_signal is None, max_web_searches=3,
         max_tokens=4096, cache_ttl="1h",
     )
@@ -698,9 +771,11 @@ def prepare_batch_requests(contacts, knowledge, client=None, variant=DEFAULT_VAR
         domain = c.get("domain") or db.email_domain(c.get("email"))
         cached = _fresh_cached_signal(domain)
         cvariant = c.get("variant") or variant  # per-contact split wins over run-level
+        tech_line, tech_playbook = _cached_tech(domain)
         requests.append({"custom_id": cid,
                          "params": build_request_params(c, knowledge, client, cached_signal=cached,
-                                                        variant=cvariant, tech_signals=_cached_tech(domain),
+                                                        variant=cvariant, tech_signals=tech_line,
+                                                        tech_playbook=tech_playbook,
                                                         hiring_signals=_cached_hiring(domain))})
         manifest[cid] = {"contact": c, "domain": domain, "variant": cvariant,
                          "was_combined": cached is None, "cached_signal": cached}

@@ -26,7 +26,8 @@ GIVE = re.compile(
     r"happy to send|want me to send|want (that|it|those|the|to see)\b|"
     r"leave .*(playbook|one-?pager|teardown)|"
     r"3 (personalized|tailored) (emails|drafts)|personalized (emails|drafts)|"
-    r"one-?page(r)?|\bteardown\b|\bbenchmark\b|\bplaybook\b|plays? scoped|ai-?sdr plays?", re.I)
+    r"one-?page(r)?|\bteardown\b|\bbenchmark\b|\bplaybook\b|plays? scoped|ai-?sdr plays?|"
+    r"run[- ]?rate|signal[- ]?(sets?|sources?|mapping|map)\b|highest[- ]yield", re.I)
 # Undeliverable / banned gives — we CANNOT hand a prospect their own visitors or in-market lists.
 FORBIDDEN_CTA = re.compile(
     r"de-?anonymized|companies that visited|visited .*(site|website)|"

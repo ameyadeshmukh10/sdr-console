@@ -15,19 +15,19 @@ Scaling pipeline that fast usually means more accounts in play than the team can
 
 I built a personalized signal play for Driftwave off your hiring and tech-stack signals, and accounts showing them tend to progress ~4.4x faster. Worth 15 minutes for me to walk you through it?
 
-## Step 2 — Subject: meetings to hit your number
+## Step 2 — Subject: adding to Driftwave's run rate
 Maya, quick follow-up for Driftwave.
 
-Post-raise, board expectations on pipeline usually jump faster than headcount can. Most teams don't actually know how many meetings they need to book to hit the new number, so the gap shows up late, and by then it's a scramble to recover the quarter.
+Post-raise, board expectations on pipeline jump faster than headcount can, and most teams already run sequences with reps at capacity. Our AI SDR ships its own email and LinkedIn sending infrastructure, so nothing about your current tools or process changes: it books meetings on autopilot while your reps stay on follow-up and closing, typically 2-5x on top of the current run rate.
 
-Want to grab 15 minutes? I'll walk you through our pipeline model and show exactly how many meetings Driftwave needs to close that gap this quarter, and where the math breaks if you only add reps.
+Worth 15 minutes? I'll calculate Driftwave's current meeting run rate, map the signal set you're already generating, and walk you through how many additional meetings that adds.
 
-## Step 3 — Subject: how Memgraph did it
+## Step 3 — Subject: how Memgraph turned signals into pipeline
 Maya, last bit of proof for Driftwave.
 
-Memgraph had more accounts in play than the team could touch and couldn't hire SDRs fast enough. They ran our AI SDR to $2.7M in pipeline, 600 replies, and 60 BANT-qualified deals in 90 days, same team, live in four weeks with every email auto-logged to their CRM.
+Memgraph came in signal-rich: reo.dev, 6sense, and product telemetry were surfacing more in-market accounts than the team could ever prospect. They pointed our AI SDR at that full signal set and it ran to $2.7M in qualified pipeline, 600 replies, and 60 BANT-qualified deals in 90 days, same team, live in four weeks.
 
-I pulled a benchmark of how Driftwave's reply rate likely compares to other Series-A startups. Want to hop on a quick call and I'll walk you through it?
+Want to grab 15 minutes? We'll map Driftwave's signal sets, find the highest-yield sources, and I'll show you exactly where the AI SDR increases output.
 
 ## Step 4 — Subject: should I close your file?
 Maya, I'll stop reaching out on this one, but didn't want to leave you empty-handed.

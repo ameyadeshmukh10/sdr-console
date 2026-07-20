@@ -116,11 +116,19 @@ salestech) — no LLM, no third-party API.
 - **Storage:** `account_signals.tech_signals` (formatted line, or the literal
   `"No signals detected"`; NULL = scan itself failed), `tech_detail` (detections JSON),
   `tech_checked_at` (reused for `TECH_REFRESH_DAYS`, default 90), `tech_error`.
-- **Consumers:** generation prompts get the line as background-only context (reference ONE
-  relevant tool max, never list the stack); persona/batch-runner agents carry matching
-  instructions; HubSpot write-back PATCHes the `technographic_signals` company property
-  (best-effort — company matched by `domain`; `TECH_HUBSPOT_WRITEBACK=0` kills it; needs
-  company read/write + schema scopes on the token, otherwise it logs and moves on).
+- **Consumers:** generation prompts get the line as background context (reference ONE
+  relevant tool max, never list the stack; chat/scheduling tools — Qualified, Drift,
+  Intercom, Chili Piper, Calendly — are NEVER mentioned) plus **playbook plays** classified
+  from `tech_detail` by `tech_signals.playbook_groups()` (`PLAYBOOK_*` sets; also in the
+  scan CLI/API JSON as `playbook`): sequencing tools (Outreach/Salesloft/Apollo) → EMAIL 2
+  no-disruption angle (own email+LinkedIn infra, 2-5x on top of the run rate) + run-rate
+  CTA; intent/ABM tools (name ONE) or ad pixels (generic, never name pixels) → EMAIL 3
+  Memgraph signal-activation story + signal-mapping CTA. `_cached_tech()` returns
+  `(line, playbook)`; legacy rows without parseable detail degrade to line-only.
+  Persona/batch-runner agents carry matching instructions; HubSpot write-back PATCHes the
+  `technographic_signals` company property (best-effort — company matched by `domain`;
+  `TECH_HUBSPOT_WRITEBACK=0` kills it; needs company read/write + schema scopes on the
+  token, otherwise it logs and moves on).
 - **Gotchas:** every import of `tech_signals`/dnspython must stay lazy (boot rule above).
   A scan only counts as failed when BOTH channels died (fetch error AND zero DNS records) —
   never store a network-dead run as "No signals detected". `--self-test` runs offline
@@ -158,10 +166,14 @@ hand-rolled retry; NO requests/tenacity/pyyaml — zero new pip deps).
   `_cached_hiring()` feeds a compact line into the prompt and **email 2 opens on it**
   (count + 1-2 roles, tied to covering pipeline while the new reps ramp); email 1 keeps
   the researched news signal; skip if email 1 already covers hiring; never name the data
-  source or claim postings are new. Matching wording lives in: `generate_batch.py`
-  (`build_user` + earn/show WRITE_RULES), `icp-email.md` 4-touch table, `cta-offers.md`
-  cadence, `sdr-batch-runner.md`, and the 4 persona agents — `grep -rn "email 2\|EMAIL 2"`
-  over those files is the drift checklist. Counts with NO sales roles are not a hook.
+  source or claim postings are new. When a tech sequencing play is also present, hiring
+  still opens email 2 and the sequencing point shrinks to one supporting line. Matching
+  wording lives in: `generate_batch.py` (`build_user` + earn/show WRITE_RULES),
+  `icp-email.md` 4-touch table, `cta-offers.md` cadence + Tier lists, `offer.md` (Memgraph
+  signal-activation story + 2-5x infra claim), the gold example
+  (`examples/icp-email-sequence.md`), `sdr-batch-runner.md`, and the 4 persona agents —
+  `grep -rn "email 2\|EMAIL 2\|email 3\|EMAIL 3\|signal-mapping\|run[- ]rate"` over those
+  files is the drift checklist. Counts with NO sales roles are not a hook.
 - **HubSpot write-back:** refreshes the SAME three company properties the
   hubspot-hiring-signals job maintains — `open_roles_count` (str int),
   `hiring_signals_job_titles` (`<br>`-joined HTML, ALL titles), `hiring_signals`

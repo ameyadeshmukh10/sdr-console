@@ -1,5 +1,5 @@
 {
-  "_notes": "Focused marketing + sales tech selection (~60 vendors) for the HubSpot technographics agent. Edit this list to widen/narrow coverage; the engine and output buckets pick it up automatically. Buckets are assigned in src/detectors/category_map.py.",
+  "_notes": "Focused marketing + sales tech selection (~60 vendors). Edit this list to widen/narrow coverage; the engine and output buckets pick it up automatically. Buckets and copy playbook groups are assigned in .claude/skills/sdr-pipeline/scripts/tech_signals.py (CATEGORY_TO_BUCKET / VENDOR_BUCKET_OVERRIDE / PLAYBOOK_* sets) — the upstream repo's src/ layer, including its category_map.py, was deliberately not vendored (see technographics/VENDORED.md).",
   "selected": [
     "salesforce",
     "hubspot",

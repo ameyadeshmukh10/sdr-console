@@ -11,6 +11,11 @@ stores the result on the `account_signals` row for that domain:
     tech_checked_at ISO-8601 Z; scans are reused for TECH_REFRESH_DAYS (90)
     tech_error      set only when the whole scan failed (fetch AND dns dead)
 
+Scan JSON (CLI + detect_and_store) also carries a `playbook` field: the
+copy-facing classification of detections into ads / intent_abm / sequencing
+groups (PLAYBOOK_* sets below). generate_batch.py reads the same groups from
+stored tech_detail to steer emails 2-3; agents reuse the CLI field directly.
+
 After a successful scan the formatted line is also PATCHed to the HubSpot
 company property `technographic_signals` (best-effort; TECH_HUBSPOT_WRITEBACK=0
 to disable, or no matching company by domain -> recorded, never fatal).
@@ -198,6 +203,64 @@ VENDOR_BUCKET_OVERRIDE = {
     "reo": "salestech",
     "aisdr": "salestech",
 }
+
+# ---- copy playbook groups ----------------------------------------------------
+# Finer-grained than the storage buckets (intent/ABM, sequencing, and chat all
+# land in `salestech` above): these vendor-id sets drive which outreach play the
+# generation prompts run. sequencing -> email 2 (no-disruption + run-rate);
+# intent_abm / ads -> email 3 (signal activation). Chat/scheduling tools
+# (PLAYBOOK_NEVER_MENTION) must never appear in copy at all; CRM/martech/the
+# rest stay background-only under the ONE-tool rule.
+PLAYBOOK_INTENT_ABM = {"6sense", "demandbase", "zoominfo", "clearbit_reveal",
+                       "albacross", "warmly", "koala", "leadfeeder",
+                       "factors_ai", "reo", "g2"}
+PLAYBOOK_SEQUENCING = {"outreach", "salesloft", "apollo"}
+# ads = the ad_pixel bucket minus this: GTM alone doesn't prove ad spend.
+PLAYBOOK_ADS_EXCLUDE = {"google_tag_manager"}
+PLAYBOOK_NEVER_MENTION = {"qualified", "drift", "intercom", "chili_piper", "calendly"}
+
+
+def playbook_groups(detections):
+    """Classify a tech_detail `detections` list into the copy playbook groups.
+
+    Returns {"ads": [names], "intent_abm": [names], "sequencing": [names]} —
+    keys always present, vendor display names sorted. Same trust bar as the
+    formatted line: a low-confidence detection counts only when the vendor is
+    corroborated high/medium elsewhere."""
+    strong = {d.get("vendor_id") for d in detections
+              if confidence_bucket(d.get("confidence") or 0.0) in ("high", "medium")}
+    groups = {"ads": set(), "intent_abm": set(), "sequencing": set()}
+    for d in detections:
+        vid = d.get("vendor_id")
+        if not vid:
+            continue
+        if confidence_bucket(d.get("confidence") or 0.0) == "low" and vid not in strong:
+            continue
+        name = d.get("vendor_name") or vid
+        if vid in PLAYBOOK_SEQUENCING:
+            groups["sequencing"].add(name)
+        elif vid in PLAYBOOK_INTENT_ABM:
+            groups["intent_abm"].add(name)
+        elif d.get("bucket") == "ad_pixel" and vid not in PLAYBOOK_ADS_EXCLUDE:
+            groups["ads"].add(name)
+    return {k: sorted(v) for k, v in groups.items()}
+
+
+def playbook_from_detail(tech_detail):
+    """playbook_groups() from a stored tech_detail JSON string (or parsed dict).
+    None when the row has no parseable detail (legacy rows -> callers keep the
+    line-only background behavior)."""
+    if not tech_detail:
+        return None
+    try:
+        detail = json.loads(tech_detail) if isinstance(tech_detail, str) else tech_detail
+        detections = detail.get("detections")
+        if detections is None:
+            return None
+        return playbook_groups(detections)
+    except (ValueError, TypeError, AttributeError):
+        return None
+
 
 _CATEGORY_DISPLAY = [
     ("crm", "CRM"),
@@ -507,6 +570,7 @@ def detect_and_store(domain, company=None, force=False, hubspot=None, rendered=F
                     "tech_error": row.get("tech_error"),
                     "tech_checked_at": row.get("tech_checked_at"),
                     "detections": _detection_count(row.get("tech_detail")),
+                    "playbook": playbook_from_detail(row.get("tech_detail")),
                     "hubspot": None}
     finally:
         conn.close()
@@ -542,7 +606,8 @@ def detect_and_store(domain, company=None, force=False, hubspot=None, rendered=F
 
     return {"domain": host, "skipped": False, "tech_signals": res["formatted"],
             "tech_error": res["error"], "tech_checked_at": stored.get("tech_checked_at"),
-            "detections": len(res["detections"]), "hubspot": hs}
+            "detections": len(res["detections"]),
+            "playbook": playbook_groups(res["detections"]), "hubspot": hs}
 
 
 def _detection_count(tech_detail):
@@ -665,6 +730,24 @@ def self_test():
 
     web_ids = {d.vendor_id for d in web}
     dns_ids = {d.vendor_id for d in dns}
+
+    # playbook classification: the fixture stack (Intercom/Segment/HubSpot) is
+    # all background, and a synthetic detections list must split into the three
+    # copy groups with GTM excluded and chat tools ignored.
+    fixture_dets = [{"vendor_id": det.vendor_id, "vendor_name": det.vendor_name,
+                     "bucket": bucket_for(det.vendor_id, det.category),
+                     "confidence": det.confidence} for det in fused]
+    fixture_pb = playbook_groups(fixture_dets)
+    synth = [{"vendor_id": "outreach", "vendor_name": "Outreach", "bucket": "salestech", "confidence": 0.9},
+             {"vendor_id": "6sense", "vendor_name": "6sense", "bucket": "salestech", "confidence": 0.9},
+             {"vendor_id": "facebook_pixel", "vendor_name": "Meta Pixel", "bucket": "ad_pixel", "confidence": 0.9},
+             {"vendor_id": "google_tag_manager", "vendor_name": "Google Tag Manager", "bucket": "ad_pixel", "confidence": 0.9},
+             {"vendor_id": "hubspot", "vendor_name": "HubSpot", "bucket": "crm", "confidence": 0.9},
+             {"vendor_id": "qualified", "vendor_name": "Qualified", "bucket": "salestech", "confidence": 0.9},
+             {"vendor_id": "salesloft", "vendor_name": "Salesloft", "bucket": "salestech", "confidence": 0.3}]
+    synth_pb = playbook_groups(synth)
+    detail_pb = playbook_from_detail(json.dumps({"detections": synth}))
+
     checks = [
         ("web detects intercom", "intercom" in web_ids),
         ("web detects segment", "segment" in web_ids),
@@ -673,6 +756,14 @@ def self_test():
         ("HubSpot lands in CRM bucket", "CRM:" in formatted and "HubSpot" in formatted),
         ("Segment lands in Martech bucket", "Martech:" in formatted and "Segment" in formatted),
         ("Intercom lands in Salestech bucket", "Salestech:" in formatted and "Intercom" in formatted),
+        ("fixture stack is all-background", fixture_pb == {"ads": [], "intent_abm": [], "sequencing": []}),
+        ("outreach classifies as sequencing", synth_pb["sequencing"] == ["Outreach"]),
+        ("6sense classifies as intent_abm", synth_pb["intent_abm"] == ["6sense"]),
+        ("facebook_pixel classifies as ads, GTM excluded", synth_pb["ads"] == ["Meta Pixel"]),
+        ("uncorroborated low-confidence detection dropped", "Salesloft" not in synth_pb["sequencing"]),
+        ("playbook_from_detail round-trips", detail_pb == synth_pb),
+        ("playbook_from_detail None on legacy rows",
+         playbook_from_detail(None) is None and playbook_from_detail("not json") is None),
     ]
     failed = [name for name, passed in checks if not passed]
     for name, passed in checks:
