@@ -38,10 +38,21 @@ def cmd_init(args):
         print(f"ERROR: {src} not found. Run hubspot_pull.py first.")
         return 1
     rows = [json.loads(l) for l in src.open() if l.strip()]
-    conn = db.connect(); db.init_schema(conn)
-    added = db.upsert_contacts(conn, rows)
-    made = db.assign_batches(conn, args.batch_size)
-    c = db.counts(conn)
+
+    # Idempotent (INSERT OR IGNORE; batches only WHERE batch_id IS NULL), so a
+    # "database is locked" loss to the server's background writers just retries
+    # on a fresh connection.
+    def _run():
+        conn = db.connect()
+        try:
+            db.init_schema(conn)
+            added = db.upsert_contacts(conn, rows)
+            made = db.assign_batches(conn, args.batch_size)
+            return added, made, db.counts(conn)
+        finally:
+            conn.close()
+
+    added, made, c = db.retry_locked(_run)
     print(f"init: +{added} new contacts, +{made} new batches (size {args.batch_size})")
     print(f"total contacts: {c['total_contacts']} | batches: {c['batches_by_status']}")
     return 0
