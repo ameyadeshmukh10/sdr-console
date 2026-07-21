@@ -620,6 +620,32 @@ def analytics_payload():
     }
 
 
+def linkedin_analytics_payload():
+    """Live HeyReach (LinkedIn) analytics for the configured campaign: the lead
+    funnel (GetById progressStats) + connection/message/reply metrics
+    (GetOverallStats). Degrades to {error}/{configured:false} so the Analytics
+    page never breaks on a HeyReach hiccup."""
+    env = read_env()
+    raw = (env.get("HEYREACH_CAMPAIGN_ID") or "").strip()
+    cid = int(raw) if raw.isdigit() else None
+    if cid is None:
+        return {"configured": False}
+    try:
+        sys.path.insert(0, str(SCRIPTS / "sdr-pipeline" / "scripts"))
+        from heyreach_client import HeyReachClient
+        hr = HeyReachClient()
+        camp = hr.get_campaign(cid) or {}
+        stats = (hr.get_overall_stats([cid]) or {}).get("overallStats") or {}
+    except Exception as e:  # noqa: BLE001
+        return {"configured": True, "campaign_id": cid, "error": str(e)[:200]}
+    return {
+        "configured": True, "campaign_id": cid,
+        "campaign_name": camp.get("name"), "status": camp.get("status"),
+        "funnel": camp.get("progressStats") or {}, "stats": stats,
+        "fetched_at": now_iso(),
+    }
+
+
 # ----------------------------------------------------------------------------
 # Subprocess helpers.
 # ----------------------------------------------------------------------------
