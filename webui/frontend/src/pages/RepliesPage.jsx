@@ -37,6 +37,8 @@ export default function RepliesPage() {
   const [sendErr, setSendErr] = useState({})       // reply_id -> inline send error
   const [playJobs, setPlayJobs] = useState({})     // reply_id -> playbook job status
   const [agentPick, setAgentPick] = useState({})   // reply_id -> agent id (optimistic)
+  const [domainPrompt, setDomainPrompt] = useState({})  // reply_id -> needs a hand-typed domain
+  const [domainInput, setDomainInput] = useState({})    // reply_id -> typed company domain
   const timers = useRef({})
 
   const loadQueue = () => api.repliesQueue().then(setQueue).catch((e) => setError(e.message))
@@ -142,19 +144,34 @@ export default function RepliesPage() {
     } catch (e) { setMsg({ err: true, text: e.message }) }
   }
 
-  async function regenerate(it) {
+  async function regenerate(it, companyDomain) {
     const id = it.reply_id
+    // Reuse a domain the user already typed this session so the normal
+    // Regenerate button doesn't dead-end on the same lead a second time.
+    const domain = (companyDomain ?? domainInput[id]) || undefined
     mark('regen', id, true); setMsg(null)
     try {
-      const r = await api.regenerateDraft(id, agentFor(it))
-      if (r.ok === false) setMsg({ err: true, text: r.error || 'draft failed' })
-      else if (r.async) setPlayJobs((m) => ({ ...m, [id]: { job_id: r.job_id, status: 'running', stage: 'research', pct: 2 } }))
-      else {
-        setEdits((m) => { const n = { ...m }; delete n[id]; return n })
-        await loadDrafts()
+      const r = await api.regenerateDraft(id, agentFor(it), domain)
+      if (r.ok === false) {
+        // The signal-playbook agent couldn't resolve the account — prompt for a
+        // hand-typed domain inline instead of surfacing a dead-end banner.
+        if (r.need_domain) setDomainPrompt((m) => ({ ...m, [id]: true }))
+        else setMsg({ err: true, text: r.error || 'draft failed' })
+      } else {
+        setDomainPrompt((m) => { const n = { ...m }; delete n[id]; return n })
+        if (r.async) setPlayJobs((m) => ({ ...m, [id]: { job_id: r.job_id, status: 'running', stage: 'research', pct: 2 } }))
+        else {
+          setEdits((m) => { const n = { ...m }; delete n[id]; return n })
+          await loadDrafts()
+        }
       }
     } catch (e) { setMsg({ err: true, text: e.message }) }
     finally { mark('regen', id, false) }
+  }
+
+  const submitDomain = (it) => {
+    const d = (domainInput[it.reply_id] || '').trim()
+    if (d) regenerate(it, d)
   }
 
   async function bulkDraft() {
@@ -323,6 +340,10 @@ export default function RepliesPage() {
             playJob={selected ? playJobs[selected.reply_id] : null}
             sendPct={selected ? pct[selected.reply_id] : null}
             sendErr={selected ? sendErr[selected.reply_id] : null}
+            needDomain={selected ? !!domainPrompt[selected.reply_id] : false}
+            domainValue={selected ? domainInput[selected.reply_id] : ''}
+            onDomainChange={(id, v) => setDomainInput((m) => ({ ...m, [id]: v }))}
+            onSubmitDomain={submitDomain}
             onTag={tag} onDismiss={dismiss} onUndismiss={undismiss} onReclassify={reclassify}
             onMove={move} onAgentChange={setAgent} onRegenerate={regenerate} onApprove={approve}
             onPreviewPlay={previewPlay}

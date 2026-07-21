@@ -115,7 +115,7 @@ export const api = {
   moveReply: (replyId, to) => post('/api/replies/followup/move', { reply_id: replyId, to }),
   repliesAgents: () => get('/api/replies/agents'),
   setReplyAgent: (replyId, agent) => post('/api/replies/agent', { reply_id: replyId, agent }),
-  regenerateDraft: (replyId, agent) => post('/api/replies/followup/regenerate', { reply_id: replyId, agent }),
+  regenerateDraft: (replyId, agent, companyDomain) => post('/api/replies/followup/regenerate', { reply_id: replyId, agent, company_domain: companyDomain || undefined }),
   playbookStatus: (jobId) => get('/api/replies/playbook/status/' + jobId),
   systemStatus: () => get('/api/system/status'),
   // The play HTML is auth-gated, so fetch it with the bearer header and hand

@@ -69,7 +69,7 @@ function PlayChip({ play, onPreview }) {
 
 export default function ReplyDetail({
   item, section, agents, agentSel, draft, editValue, setEdit,
-  busy, playJob, sendPct, sendErr,
+  busy, playJob, sendPct, sendErr, needDomain, domainValue, onDomainChange, onSubmitDomain,
   onTag, onDismiss, onUndismiss, onReclassify, onMove, onAgentChange, onRegenerate, onApprove, onPreviewPlay,
 }) {
   if (!item) {
@@ -196,6 +196,25 @@ export default function ReplyDetail({
             </div>
           )}
 
+          {needDomain && !building && (
+            <div className="banner warn" style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 12.5, marginBottom: 8 }}>
+                We couldn't work out {item.company ? <b>{item.company}</b> : 'this lead'}&apos;s company website
+                {li && !(item.from_email || item.lead_email) ? ' (LinkedIn leads often have no email to derive it from)' : ''} —
+                the Signal Playbook agent researches the company, so it needs the domain. Enter it and we&apos;ll build the play.
+              </div>
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                <input value={domainValue || ''} placeholder="e.g. ibm.com"
+                  onChange={(e) => onDomainChange(item.reply_id, e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') onSubmitDomain(item) }}
+                  disabled={!!busy.regen}
+                  style={{ flex: 1, minWidth: 180, boxSizing: 'border-box' }} />
+                <button onClick={() => onSubmitDomain(item)} disabled={!!busy.regen || !(domainValue || '').trim()}>
+                  {busy.regen ? <Spinner label="Building…" /> : 'Build play with this domain'}
+                </button>
+              </div>
+            </div>
+          )}
           {building && <PlayProgress job={playJob} />}
           {playJob?.status === 'error' && (
             <div className="banner warn" style={{ marginTop: 10 }}>Signal play build failed: {playJob.error}</div>

@@ -2728,10 +2728,11 @@ def do_set_reply_agent(reply_id, agent):
     return {"ok": True, "reply_id": reply_id, "agent": agent}, 200
 
 
-def do_regenerate_followup(reply_id, agent=None):
+def do_regenerate_followup(reply_id, agent=None, company_domain=None):
     """Re-draft one follow-up with the chosen agent. Standard = synchronous; the
     signal-playbook agent kicks off the async build job and the UI polls its
-    status until the draft lands in followup_drafts.json."""
+    status until the draft lands in followup_drafts.json. `company_domain` is an
+    optional hand-typed override for leads whose account can't be auto-resolved."""
     it = _find_queue_item(reply_id)
     if it is None:
         return {"ok": False, "error": f"no queue item {reply_id}"}, 404
@@ -2743,7 +2744,7 @@ def do_regenerate_followup(reply_id, agent=None):
     if not spec:
         return {"ok": False, "error": f"unknown agent {agent!r}"}, 400
     if spec.get("kind") == "pipeline":   # registry-driven: async build agents
-        return start_play_job(reply_id)
+        return start_play_job(reply_id, company_domain=company_domain)
     res = run_script([str(DRAFT_FOLLOWUPS), "--reply-id", str(reply_id)], timeout=600)
     drafts = _read_json(FOLLOWUP_DRAFTS) or {"items": []}
     draft = next((d for d in drafts.get("items", [])
@@ -2770,17 +2771,35 @@ def _new_play_job_id():
         return f"play-{_PLAY_SEQ[0]}"
 
 
-def _play_contact_inputs(item):
-    """Resolve the contact profile the play pipeline needs from the queue item,
-    topped up from the contacts table (company/domain) and falling back to the
-    lead's email domain."""
+def _normalize_domain(raw):
+    """Best-effort clean a user-typed or derived value into a bare host — tolerant
+    of a full URL ('https://www.IBM.com/careers'), a 'www.' prefix, or even a whole
+    email ('ronnie@ibm.com') -> 'ibm.com'. Returns '' if nothing domain-shaped."""
+    d = (raw or "").strip().lower()
+    if not d:
+        return ""
+    d = re.sub(r"^[a-z][a-z0-9+.-]*://", "", d)   # strip scheme
+    d = d.split("/", 1)[0].split("?", 1)[0]        # strip path / query
+    d = d.rsplit("@", 1)[-1]                        # tolerate a full email address
+    if d.startswith("www."):
+        d = d[4:]
+    d = d.strip(".")
+    return d if ("." in d and " " not in d) else ""
+
+
+def _play_contact_inputs(item, override_domain=None):
+    """Resolve the contact profile the play pipeline needs from the queue item.
+    Domain resolution, most trusted first: a caller-supplied override (the user
+    typed it in), the contacts table matched by email, the lead's own email
+    domain, then — for email-less leads like LinkedIn — any contact we've already
+    pulled at the same company. `_normalize_domain` cleans whatever we land on."""
     email_addr = (item.get("lead_email") or item.get("from_email") or "").strip().lower()
     parts = (item.get("from_name") or "").split()
     first = item.get("first_name") or (parts[0] if parts else "")
     last = item.get("last_name") or (" ".join(parts[1:]) if len(parts) > 1 else "")
     company = item.get("company")
-    domain = None
-    if email_addr and "@" in email_addr:
+    domain = _normalize_domain(override_domain)   # a user-supplied domain always wins
+    if not domain and email_addr and "@" in email_addr:
         try:
             conn = db_connect()
             row = conn.execute(
@@ -2793,12 +2812,27 @@ def _play_contact_inputs(item):
         except sqlite3.Error:
             pass
         domain = domain or email_addr.rsplit("@", 1)[-1]
+    # No email to key off (typical for LinkedIn leads) — recover the account's
+    # domain from any contact we've already pulled at the same company.
+    if not domain and company:
+        try:
+            conn = db_connect()
+            row = conn.execute(
+                "SELECT domain FROM contacts WHERE lower(company)=? "
+                "AND domain IS NOT NULL AND domain != '' LIMIT 1",
+                (company.strip().lower(),)).fetchone()
+            conn.close()
+            if row:
+                domain = row["domain"]
+        except sqlite3.Error:
+            pass
+    domain = _normalize_domain(domain)
     return {"firstName": first, "lastName": last, "jobTitle": item.get("title") or "",
             "businessEmail": email_addr, "companyName": company or (domain or "").split(".")[0],
             "companyDomain": domain or ""}
 
 
-def start_play_job(reply_id):
+def start_play_job(reply_id, company_domain=None):
     it = _find_queue_item(reply_id)
     if it is None:
         return {"ok": False, "error": f"no queue item {reply_id}"}, 404
@@ -2813,9 +2847,12 @@ def start_play_job(reply_id):
         if running:  # one build per lead at a time — return the in-flight job
             return {"ok": True, "async": True, "agent": "signal-playbook",
                     "job_id": running["job_id"], "existing": True}, 200
-        contact = _play_contact_inputs(it)
+        contact = _play_contact_inputs(it, override_domain=company_domain)
         if not contact.get("companyDomain"):
-            return {"ok": False, "error": "could not resolve a company domain for this lead"}, 409
+            # need_domain lets the UI prompt for a hand-typed domain instead of just
+            # surfacing a dead-end error (leads with no email + no known account).
+            return {"ok": False, "need_domain": True,
+                    "error": "could not resolve a company domain for this lead"}, 409
         job_id = _new_play_job_id()
         PLAY_JOBS[job_id] = {
             "job_id": job_id, "reply_id": reply_id, "lead_key": key, "status": "running",
@@ -3613,7 +3650,8 @@ class Handler(BaseHTTPRequestHandler):
                 body = self._read_body()
                 if not body.get("reply_id"):
                     return self._error(400, "reply_id required")
-                payload, code = do_regenerate_followup(body.get("reply_id"), body.get("agent"))
+                payload, code = do_regenerate_followup(
+                    body.get("reply_id"), body.get("agent"), body.get("company_domain"))
                 return self._json(payload, code=code)
             if path == "/api/replies/dismiss":
                 body = self._read_body()
