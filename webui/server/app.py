@@ -2851,8 +2851,12 @@ def start_play_job(reply_id, company_domain=None):
         if not contact.get("companyDomain"):
             # need_domain lets the UI prompt for a hand-typed domain instead of just
             # surfacing a dead-end error (leads with no email + no known account).
+            # Status 200 (NOT 4xx) is load-bearing: the frontend fetch wrapper throws
+            # on any non-2xx and drops the JSON body, so a 409 would strip need_domain
+            # and the UI would fall through to a generic error banner. This is a soft
+            # "need more input" result, so 200 with ok:false is the right shape here.
             return {"ok": False, "need_domain": True,
-                    "error": "could not resolve a company domain for this lead"}, 409
+                    "error": "could not resolve a company domain for this lead"}, 200
         job_id = _new_play_job_id()
         PLAY_JOBS[job_id] = {
             "job_id": job_id, "reply_id": reply_id, "lead_key": key, "status": "running",
