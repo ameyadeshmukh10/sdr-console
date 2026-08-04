@@ -6,9 +6,13 @@ can be computed. It also pulls per-sequence-step stats so we can tell which step
 truly converts best vs. merely appears most among repliers.
 
 Outputs (data/campaign-stats/):
-  campaigns.jsonl    one record per campaign (aggregate counts + rates)
-  step_stats.jsonl   one record per campaign per sequence step
-  last_run.json      run metadata
+  campaigns.jsonl          one record per campaign (aggregate counts + rates)
+  step_stats.jsonl         one record per campaign per sequence step
+  campaigns_history.jsonl  APPEND-ONLY: every snapshot ever taken, so rates can be
+                           differenced over time (Bison's API only ever reports
+                           lifetime-to-date counts — without this the console can
+                           never show whether performance is improving)
+  last_run.json            run metadata
 
 Run:  python3 .claude/skills/email-bison/scripts/fetch_campaign_stats.py
 """
@@ -40,6 +44,35 @@ def to_int(v):
 
 def rate(num, den):
     return round(100.0 * num / den, 2) if den else None
+
+
+def append_history(path, records, fetched_at):
+    """Append this snapshot to the append-only history, once per fetched_at.
+
+    Re-running the fetcher in the same second is a no-op rather than a duplicate.
+    A corrupt/partial line never aborts the run — history is a nice-to-have next
+    to the current-state files, so it degrades quietly.
+    """
+    try:
+        seen = set()
+        if path.exists():
+            with path.open() as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    try:
+                        seen.add(json.loads(line).get("fetched_at"))
+                    except json.JSONDecodeError:
+                        continue
+        if fetched_at in seen:
+            return 0
+        with path.open("a") as f:
+            for r in records:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        return len(records)
+    except OSError as e:
+        print(f"WARNING: could not append {path.name}: {e}")
+        return 0
 
 
 def main():
@@ -121,6 +154,7 @@ def main():
     with (OUT_DIR / "step_stats.jsonl").open("w") as f:
         for r in step_records:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    hist_n = append_history(OUT_DIR / "campaigns_history.jsonl", camp_records, fetched_at)
     (OUT_DIR / "last_run.json").write_text(json.dumps({
         "fetched_at": fetched_at,
         "campaigns": len(camp_records),
@@ -133,6 +167,7 @@ def main():
     tot_c = sum(r["total_leads_contacted"] for r in camp_records)
     tot_i = sum(r["interested"] for r in camp_records)
     print(f"\nWrote {len(camp_records)} campaigns, {len(step_records)} step rows to {OUT_DIR}")
+    print(f"History: appended {hist_n} snapshot row(s) to campaigns_history.jsonl")
     print(f"Overall: {tot_i} interested / {tot_c} contacted = {rate(tot_i, tot_c)}%")
     if errors:
         print(f"{len(errors)} campaign(s) errored on step stats — see last_run.json")

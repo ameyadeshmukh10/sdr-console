@@ -59,6 +59,53 @@ function Unavailable({ what }) {
   return <p className="muted" style={{ fontSize: 12 }}>{what} could not be loaded from the repo sources.</p>
 }
 
+// Every "under the hood" section wears the same frame, so the view reads as one
+// system instead of eight bespoke cards:
+//   header  — what this section CONTROLS, plus the files it is read from
+//   body    — the section's own rendering
+//   footer  — how to change it
+// The source chips copy their path on click. Editing is deliberately not offered
+// inline: this config lives in versioned repo files that the pipeline agents also
+// read, so a form here would fork the truth. Pointing precisely at the file is the
+// honest affordance until there's a real config-write path.
+export function SectionFrame({ controls, sources = [], editNote, children }) {
+  const [copied, setCopied] = useState(null)
+  function copy(path) {
+    navigator.clipboard?.writeText(path).then(
+      () => { setCopied(path); setTimeout(() => setCopied(null), 1200) },
+      () => {},
+    )
+  }
+  return (
+    <>
+      <div className="uth-head">
+        <div className="uth-controls">
+          {controls && <><b>Controls:</b> {controls}</>}
+        </div>
+        {sources.length > 0 && (
+          <div className="uth-src">
+            {sources.map((s) => (
+              <button key={s} onClick={() => copy(s)}
+                title={`Copy path — ${s}`}>
+                {copied === s ? '✓ copied' : s.split('/').pop()}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {children}
+      <div className="uth-foot">
+        <b>To change this:</b>{' '}
+        {editNote || (
+          <>edit {sources.length ? <span className="mono">{sources.join(', ')}</span> : 'the source files'}{' '}
+            and redeploy — the pipeline agents read the same files, so the change applies
+            everywhere at once.</>
+        )}
+      </div>
+    </>
+  )
+}
+
 export function SectionCard({ id, title, sub, open, onToggle, innerRef, children }) {
   return (
     <div className="panel" ref={innerRef} id={`section-${id}`} style={{ marginTop: 14 }}>
@@ -238,66 +285,133 @@ export function GuardrailsSection({ data }) {
   )
 }
 
+// Both signal engines get the same four-block layout — status, settings, scope,
+// effect on copy — so they can be compared at a glance and a third engine has an
+// obvious shape to follow.
+function SignalStatus({ available, reason, cadence }) {
+  return (
+    <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+      <span className="badge" style={{
+        color: available ? BRAND.jade : BRAND.amber,
+        borderColor: available ? BRAND.jade : BRAND.amber,
+      }}>
+        {available ? '✓ operational' : '⚠ unavailable'}
+      </span>
+      <span className="muted" style={{ fontSize: 12 }}>{cadence}</span>
+      {!available && reason && (
+        <span style={{ fontSize: 12, color: BRAND.amber }}>· {reason}</span>
+      )}
+    </div>
+  )
+}
+
+function SettingsTable({ rows }) {
+  if (!rows?.length) return null
+  return (
+    <table className="dense" style={{ marginBottom: 4 }}>
+      <thead><tr><th>Setting</th><th>Value</th><th>Effect</th></tr></thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr key={r.key}>
+            <td className="mono" style={{ fontSize: 11.5, whiteSpace: 'nowrap' }}>{r.key}</td>
+            <td style={{ whiteSpace: 'nowrap' }}>
+              <span className="mono" style={{
+                fontSize: 11.5,
+                color: r.secret
+                  ? (r.value === 'set' ? BRAND.jade : BRAND.amber)
+                  : (r.value === '0' ? BRAND.red : BRAND.ink),
+              }}>{r.value}</span>
+              {r.source === 'default' && <span className="muted" style={{ fontSize: 10.5 }}> (default)</span>}
+            </td>
+            <td className="muted" style={{ fontSize: 11.5 }}>{r.effect}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+function SignalBlock({ name, purpose, data, unavailableWhat, cadence, children }) {
+  return (
+    <div className="touch" style={{ marginBottom: 14 }}>
+      <div className="row between" style={{ alignItems: 'flex-start', gap: 12 }}>
+        <div>
+          <b style={{ fontSize: 14 }}>{name}</b>
+          <div className="muted" style={{ fontSize: 12, marginTop: 2, maxWidth: 560 }}>{purpose}</div>
+        </div>
+      </div>
+      {!data ? <div style={{ marginTop: 8 }}><Unavailable what={unavailableWhat} /></div> : (
+        <div style={{ marginTop: 10 }}>
+          <SignalStatus available={data.available} reason={data.reason} cadence={cadence(data)} />
+          <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 6 }}>Settings</div>
+          <SettingsTable rows={data.settings} />
+          {children}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function SignalsSection({ data }) {
   const tech = data?.tech
   const hiring = data?.hiring
   return (
     <>
-      <div className="section-h" style={{ marginTop: 0 }}>
-        Technographics — which GTM tech an account runs
-        {tech && <span className="muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
-          {' '}· deterministic website + DNS scan · cached {tech.refresh_days} days
-          {!tech.available && <span style={{ color: BRAND.amber }}> · currently unavailable: {tech.reason}</span>}
-        </span>}
-      </div>
-      {!tech ? <Unavailable what="The technographic selection" /> : (
-        <>
-          {tech.buckets.map((b) => (
-            <div key={b.id} style={{ marginBottom: 6 }}>
-              <div className="muted" style={{ fontSize: 12 }}>{b.name} ({b.vendors.length})</div>
-              <ChipRow>
-                {b.vendors.map((v) => (
-                  <Chip key={v.id} label={v.name} color={v.playbook ? PLAYBOOK_TONE[v.playbook] : undefined}
-                    title={v.playbook ? PLAYBOOK_LABEL[v.playbook] : undefined} />
-                ))}
-              </ChipRow>
-            </div>
-          ))}
-          <div className="muted" style={{ fontSize: 12, marginTop: 8, marginBottom: 4 }}>How detections shape the copy</div>
-          {tech.playbooks.map((p) => (
-            <div key={p.id} style={{ fontSize: 12, marginBottom: 3 }}>
-              <span style={{ color: PLAYBOOK_TONE[p.id], fontWeight: 600 }}>{p.id.replace('_', '/')}</span>
-              {' '}({p.vendors.join(', ')}) → {p.play}
-            </div>
-          ))}
-        </>
-      )}
-
-      <div className="section-h">
-        Hiring — is the account hiring sales/GTM roles?
-        {hiring && <span className="muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
-          {' '}· job-postings scan · cached {hiring.refresh_days} days
-          {!hiring.available && <span style={{ color: BRAND.amber }}> · currently unavailable: {hiring.reason}</span>}
-        </span>}
-      </div>
-      {!hiring ? <Unavailable what="The hiring-role taxonomy" /> : (
-        <>
-          {hiring.include.map((g) => (
-            <div key={g.group} style={{ marginBottom: 6 }}>
-              <div className="muted" style={{ fontSize: 12 }}>{g.group} ({g.chips.length})</div>
-              <ChipRow>{g.chips.map((c) => <Chip key={c.raw} label={c.label} />)}</ChipRow>
-            </div>
-          ))}
-          <div className="muted" style={{ fontSize: 12 }}>
-            Never counted{hiring.exclude_beats_include ? ' (exclude beats include)' : ''}
+      <SignalBlock
+        name="Technographics" data={tech}
+        purpose="Which GTM tech an account runs. Deterministic DNS + website fingerprinting — no LLM, no third-party API."
+        unavailableWhat="The technographic selection"
+        cadence={(d) => `cached ${d.refresh_days} days`}
+      >
+        <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '.5px', margin: '12px 0 6px' }}>
+          Detection scope
+        </div>
+        {tech?.buckets.map((b) => (
+          <div key={b.id} style={{ marginBottom: 6 }}>
+            <div className="muted" style={{ fontSize: 12 }}>{b.name} ({b.vendors.length})</div>
+            <ChipRow>
+              {b.vendors.map((v) => (
+                <Chip key={v.id} label={v.name} color={v.playbook ? PLAYBOOK_TONE[v.playbook] : undefined}
+                  title={v.playbook ? PLAYBOOK_LABEL[v.playbook] : undefined} />
+              ))}
+            </ChipRow>
           </div>
-          <ChipRow>{hiring.exclude.map((c) => <Chip key={c.raw} label={c.label} color={BRAND.red} />)}</ChipRow>
-          <RawPatterns rows={[
-            ...hiring.include.flatMap((g) => g.chips.map((c) => ({ label: 'include', raw: c.raw }))),
-            ...hiring.exclude.map((c) => ({ label: 'exclude', raw: c.raw })),
-          ]} />
-        </>
-      )}
+        ))}
+        <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '.5px', margin: '12px 0 6px' }}>
+          Effect on the copy
+        </div>
+        {tech?.playbooks.map((p) => (
+          <div key={p.id} style={{ fontSize: 12, marginBottom: 3 }}>
+            <span style={{ color: PLAYBOOK_TONE[p.id], fontWeight: 600 }}>{p.id.replace('_', '/')}</span>
+            {' '}({p.vendors.join(', ')}) → {p.play}
+          </div>
+        ))}
+      </SignalBlock>
+
+      <SignalBlock
+        name="Hiring" data={hiring}
+        purpose="Is the account hiring, and specifically for sales/GTM roles? A non-empty sales subset is what email 2 opens on."
+        unavailableWhat="The hiring-role taxonomy"
+        cadence={(d) => `cached ${d.refresh_days} days · 1 credit per uncached scan`}
+      >
+        <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '.5px', margin: '12px 0 6px' }}>
+          Detection scope — counted as sales/GTM
+        </div>
+        {hiring?.include.map((g) => (
+          <div key={g.group} style={{ marginBottom: 6 }}>
+            <div className="muted" style={{ fontSize: 12 }}>{g.group} ({g.chips.length})</div>
+            <ChipRow>{g.chips.map((c) => <Chip key={c.raw} label={c.label} />)}</ChipRow>
+          </div>
+        ))}
+        <div className="muted" style={{ fontSize: 12 }}>
+          Never counted{hiring?.exclude_beats_include ? ' (exclude beats include)' : ''}
+        </div>
+        <ChipRow>{hiring?.exclude.map((c) => <Chip key={c.raw} label={c.label} color={BRAND.red} />)}</ChipRow>
+        <RawPatterns rows={[
+          ...(hiring?.include || []).flatMap((g) => g.chips.map((c) => ({ label: 'include', raw: c.raw }))),
+          ...(hiring?.exclude || []).map((c) => ({ label: 'exclude', raw: c.raw })),
+        ]} />
+      </SignalBlock>
     </>
   )
 }

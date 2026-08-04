@@ -1,0 +1,123 @@
+{
+  "seed": 20260803,
+  "what_each_chart_must_reveal": [
+    {
+      "chart": "Offer opportunity scatter",
+      "expect": "Demo request (2.4% on 620) and Webinar pilot (3.3% on 180) sit above the baseline line; Persona-targeted (0.10% on 5,200) sits far right and bottom. Newsletter reply (n=1) must be visibly marked insufficient-data and must NOT read as the top performer."
+    },
+    {
+      "chart": "Sequence funnel + rate overlay",
+      "expect": "Sends decay 17,500 -> 8,400 while the rate line dips to 0.059% at step 3 and spikes to 0.450% at step 4."
+    },
+    {
+      "chart": "Replies over time / mix",
+      "expect": "Offer mix rotates from Demo-request-dominant in Jan-Feb to Lead-magnet + Persona-targeted by May-Jun."
+    },
+    {
+      "chart": "Rate over time (differenced snapshots)",
+      "expect": "Window rate falls 0.94 -> 0.31 then recovers to 0.96, while the cumulative line stays nearly flat around 0.6."
+    }
+  ],
+  "planted_offers": [
+    {
+      "offer_type": "Demo request",
+      "contacted": 620,
+      "rate_pct": 2.4,
+      "interested": 15,
+      "label": "high-rate / low-volume \u2014 starved winner"
+    },
+    {
+      "offer_type": "Lead magnet (PDF)",
+      "contacted": 9100,
+      "rate_pct": 0.62,
+      "interested": 56,
+      "label": "workhorse \u2014 mid rate, most volume"
+    },
+    {
+      "offer_type": "Event",
+      "contacted": 2400,
+      "rate_pct": 0.5,
+      "interested": 12,
+      "label": "middling \u2014 no strong signal"
+    },
+    {
+      "offer_type": "Persona-targeted",
+      "contacted": 5200,
+      "rate_pct": 0.1,
+      "interested": 5,
+      "label": "low-rate / high-volume \u2014 kill or rewrite"
+    },
+    {
+      "offer_type": "Webinar (pilot)",
+      "contacted": 180,
+      "rate_pct": 3.3,
+      "interested": 6,
+      "label": "small-n, flattering rate \u2014 low confidence, not yet a winner"
+    },
+    {
+      "offer_type": "Newsletter reply",
+      "contacted": 40,
+      "rate_pct": 2.5,
+      "interested": 1,
+      "label": "n=1 \u2014 must render as insufficient data, never as a top performer"
+    }
+  ],
+  "planted_steps": [
+    {
+      "step": 1,
+      "contacted": 17500,
+      "rate_pct": 0.15,
+      "reply_rate_pct": 2.5
+    },
+    {
+      "step": 2,
+      "contacted": 11800,
+      "rate_pct": 0.19,
+      "reply_rate_pct": 2.0
+    },
+    {
+      "step": 3,
+      "contacted": 10200,
+      "rate_pct": 0.059,
+      "reply_rate_pct": 1.3
+    },
+    {
+      "step": 4,
+      "contacted": 8400,
+      "rate_pct": 0.45,
+      "reply_rate_pct": 2.4
+    }
+  ],
+  "planted_windows": [
+    {
+      "at": "2026-01-31T00:00:00Z",
+      "new_contacted": 1800,
+      "window_rate_pct": 0.94
+    },
+    {
+      "at": "2026-02-28T00:00:00Z",
+      "new_contacted": 2400,
+      "window_rate_pct": 0.83
+    },
+    {
+      "at": "2026-03-31T00:00:00Z",
+      "new_contacted": 3600,
+      "window_rate_pct": 0.36
+    },
+    {
+      "at": "2026-04-30T00:00:00Z",
+      "new_contacted": 4200,
+      "window_rate_pct": 0.31
+    },
+    {
+      "at": "2026-05-31T00:00:00Z",
+      "new_contacted": 3800,
+      "window_rate_pct": 0.79
+    },
+    {
+      "at": "2026-06-30T00:00:00Z",
+      "new_contacted": 3740,
+      "window_rate_pct": 0.96
+    }
+  ]
+}

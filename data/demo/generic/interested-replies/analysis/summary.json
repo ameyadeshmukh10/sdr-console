@@ -1,0 +1,1456 @@
+{
+  "generated_from": "demo profile (make_demo_data.py)",
+  "demo": true,
+  "total_replies": 95,
+  "auto_reply_count": 5,
+  "genuine_count": 90,
+  "untracked_count": 0,
+  "by_campaign": {
+    "Global Lead magnet (PDF)": {
+      "count": 56,
+      "pct": 58.9
+    },
+    "Americas Demo request": {
+      "count": 15,
+      "pct": 15.8
+    },
+    "Global Event": {
+      "count": 12,
+      "pct": 12.6
+    },
+    "Global Webinar (pilot)": {
+      "count": 6,
+      "pct": 6.3
+    },
+    "Americas Persona-targeted": {
+      "count": 5,
+      "pct": 5.3
+    },
+    "Unknown Newsletter reply": {
+      "count": 1,
+      "pct": 1.1
+    }
+  },
+  "by_geo": {
+    "Global": {
+      "count": 74,
+      "pct": 77.9
+    },
+    "Americas": {
+      "count": 20,
+      "pct": 21.1
+    },
+    "Unknown": {
+      "count": 1,
+      "pct": 1.1
+    }
+  },
+  "by_offer_type": {
+    "Lead magnet (PDF)": {
+      "count": 56,
+      "pct": 58.9
+    },
+    "Demo request": {
+      "count": 15,
+      "pct": 15.8
+    },
+    "Event": {
+      "count": 12,
+      "pct": 12.6
+    },
+    "Webinar (pilot)": {
+      "count": 6,
+      "pct": 6.3
+    },
+    "Persona-targeted": {
+      "count": 5,
+      "pct": 5.3
+    },
+    "Newsletter reply": {
+      "count": 1,
+      "pct": 1.1
+    }
+  },
+  "by_seniority": {
+    "Head/Director": {
+      "count": 29,
+      "pct": 30.5
+    },
+    "Manager": {
+      "count": 26,
+      "pct": 27.4
+    },
+    "IC": {
+      "count": 16,
+      "pct": 16.8
+    },
+    "C-Level": {
+      "count": 13,
+      "pct": 13.7
+    },
+    "Founder/Owner": {
+      "count": 11,
+      "pct": 11.6
+    }
+  },
+  "by_function": {
+    "Marketing": {
+      "count": 27,
+      "pct": 28.4
+    },
+    "Sales": {
+      "count": 21,
+      "pct": 22.1
+    },
+    "Executive/General": {
+      "count": 20,
+      "pct": 21.1
+    },
+    "Other": {
+      "count": 15,
+      "pct": 15.8
+    },
+    "RevOps": {
+      "count": 12,
+      "pct": 12.6
+    }
+  },
+  "by_winning_step": {
+    "4": {
+      "count": 52,
+      "pct": 57.8
+    },
+    "2": {
+      "count": 20,
+      "pct": 22.2
+    },
+    "1": {
+      "count": 12,
+      "pct": 13.3
+    },
+    "3": {
+      "count": 6,
+      "pct": 6.7
+    }
+  },
+  "by_winning_cta": {
+    "Open question": {
+      "count": 27,
+      "pct": 30.0
+    },
+    "Soft permission question": {
+      "count": 20,
+      "pct": 22.2
+    },
+    "None/unclear": {
+      "count": 16,
+      "pct": 17.8
+    },
+    "Specific-time offer": {
+      "count": 11,
+      "pct": 12.2
+    },
+    "Demo offer": {
+      "count": 9,
+      "pct": 10.0
+    },
+    "Resource offer": {
+      "count": 7,
+      "pct": 7.8
+    }
+  },
+  "by_reply_intent": {
+    "Question": {
+      "count": 22,
+      "pct": 24.4
+    },
+    "Info request": {
+      "count": 20,
+      "pct": 22.2
+    },
+    "Other": {
+      "count": 20,
+      "pct": 22.2
+    },
+    "Meeting/demo accept": {
+      "count": 11,
+      "pct": 12.2
+    },
+    "Referral/forward": {
+      "count": 8,
+      "pct": 8.9
+    },
+    "Positive-later": {
+      "count": 7,
+      "pct": 7.8
+    },
+    "Pricing request": {
+      "count": 2,
+      "pct": 2.2
+    }
+  },
+  "by_reply_dow": {
+    "Wed": {
+      "count": 20,
+      "pct": 22.2
+    },
+    "Mon": {
+      "count": 17,
+      "pct": 18.9
+    },
+    "Thu": {
+      "count": 15,
+      "pct": 16.7
+    },
+    "Tue": {
+      "count": 12,
+      "pct": 13.3
+    },
+    "Fri": {
+      "count": 12,
+      "pct": 13.3
+    },
+    "Sun": {
+      "count": 8,
+      "pct": 8.9
+    },
+    "Sat": {
+      "count": 6,
+      "pct": 6.7
+    }
+  },
+  "by_interested_via": {
+    "status,tag": {
+      "count": 95,
+      "pct": 100.0
+    }
+  },
+  "winning_email_word_count": {
+    "min": 45,
+    "max": 139,
+    "avg": 94.0,
+    "n": 90
+  },
+  "timeseries": {
+    "available": true,
+    "span": {
+      "first": "2026-01-03",
+      "last": "2026-06-30",
+      "dated_replies": 95,
+      "undated_replies": 0
+    },
+    "months": [
+      {
+        "period": "2026-01",
+        "replies": 7,
+        "genuine": 7,
+        "auto": 0,
+        "by_offer_type": {
+          "Demo request": 5,
+          "Lead magnet (PDF)": 1,
+          "Event": 1
+        },
+        "by_function": {
+          "Executive/General": 5,
+          "Sales": 2
+        },
+        "by_seniority": {
+          "Head/Director": 3,
+          "Founder/Owner": 2,
+          "Manager": 1,
+          "IC": 1
+        },
+        "by_reply_intent": {
+          "Question": 3,
+          "Meeting/demo accept": 2,
+          "Info request": 1,
+          "Pricing request": 1
+        },
+        "by_winning_cta": {
+          "Demo offer": 2,
+          "Open question": 2,
+          "Soft permission question": 2,
+          "Specific-time offer": 1
+        },
+        "by_winning_step": {
+          "1": 3,
+          "2": 3,
+          "3": 1
+        }
+      },
+      {
+        "period": "2026-02",
+        "replies": 8,
+        "genuine": 6,
+        "auto": 2,
+        "by_offer_type": {
+          "Lead magnet (PDF)": 3,
+          "Demo request": 2,
+          "Event": 1
+        },
+        "by_function": {
+          "Marketing": 3,
+          "Sales": 2,
+          "Executive/General": 1
+        },
+        "by_seniority": {
+          "Manager": 2,
+          "Head/Director": 2,
+          "C-Level": 1,
+          "IC": 1
+        },
+        "by_reply_intent": {
+          "Info request": 3,
+          "Other": 2,
+          "Referral/forward": 1
+        },
+        "by_winning_cta": {
+          "Open question": 2,
+          "Specific-time offer": 2,
+          "Resource offer": 1,
+          "Soft permission question": 1
+        },
+        "by_winning_step": {
+          "4": 5,
+          "2": 1
+        }
+      },
+      {
+        "period": "2026-03",
+        "replies": 12,
+        "genuine": 12,
+        "auto": 0,
+        "by_offer_type": {
+          "Lead magnet (PDF)": 7,
+          "Demo request": 3,
+          "Event": 2
+        },
+        "by_function": {
+          "RevOps": 4,
+          "Other": 3,
+          "Executive/General": 2,
+          "Marketing": 2,
+          "Sales": 1
+        },
+        "by_seniority": {
+          "Manager": 5,
+          "Head/Director": 4,
+          "C-Level": 1,
+          "IC": 1,
+          "Founder/Owner": 1
+        },
+        "by_reply_intent": {
+          "Meeting/demo accept": 3,
+          "Info request": 3,
+          "Other": 2,
+          "Question": 2,
+          "Positive-later": 1,
+          "Referral/forward": 1
+        },
+        "by_winning_cta": {
+          "Open question": 4,
+          "None/unclear": 3,
+          "Demo offer": 2,
+          "Specific-time offer": 2,
+          "Soft permission question": 1
+        },
+        "by_winning_step": {
+          "4": 6,
+          "2": 3,
+          "3": 2,
+          "1": 1
+        }
+      },
+      {
+        "period": "2026-04",
+        "replies": 24,
+        "genuine": 23,
+        "auto": 1,
+        "by_offer_type": {
+          "Lead magnet (PDF)": 16,
+          "Event": 3,
+          "Demo request": 2,
+          "Persona-targeted": 1,
+          "Webinar (pilot)": 1
+        },
+        "by_function": {
+          "Marketing": 11,
+          "Other": 4,
+          "Sales": 3,
+          "Executive/General": 3,
+          "RevOps": 2
+        },
+        "by_seniority": {
+          "IC": 7,
+          "Manager": 6,
+          "Head/Director": 6,
+          "Founder/Owner": 2,
+          "C-Level": 2
+        },
+        "by_reply_intent": {
+          "Question": 6,
+          "Other": 5,
+          "Referral/forward": 4,
+          "Info request": 4,
+          "Meeting/demo accept": 3,
+          "Positive-later": 1
+        },
+        "by_winning_cta": {
+          "Open question": 10,
+          "None/unclear": 4,
+          "Soft permission question": 4,
+          "Specific-time offer": 3,
+          "Resource offer": 1,
+          "Demo offer": 1
+        },
+        "by_winning_step": {
+          "4": 14,
+          "2": 6,
+          "1": 2,
+          "3": 1
+        }
+      },
+      {
+        "period": "2026-05",
+        "replies": 26,
+        "genuine": 24,
+        "auto": 2,
+        "by_offer_type": {
+          "Lead magnet (PDF)": 15,
+          "Webinar (pilot)": 3,
+          "Event": 2,
+          "Persona-targeted": 2,
+          "Newsletter reply": 1,
+          "Demo request": 1
+        },
+        "by_function": {
+          "Other": 7,
+          "Sales": 5,
+          "Executive/General": 5,
+          "Marketing": 4,
+          "RevOps": 3
+        },
+        "by_seniority": {
+          "Manager": 8,
+          "Head/Director": 6,
+          "C-Level": 4,
+          "IC": 4,
+          "Founder/Owner": 2
+        },
+        "by_reply_intent": {
+          "Question": 6,
+          "Positive-later": 5,
+          "Other": 5,
+          "Info request": 4,
+          "Meeting/demo accept": 2,
+          "Referral/forward": 1,
+          "Pricing request": 1
+        },
+        "by_winning_cta": {
+          "Open question": 7,
+          "Resource offer": 4,
+          "None/unclear": 4,
+          "Soft permission question": 4,
+          "Specific-time offer": 3,
+          "Demo offer": 2
+        },
+        "by_winning_step": {
+          "4": 13,
+          "2": 6,
+          "1": 3,
+          "3": 2
+        }
+      },
+      {
+        "period": "2026-06",
+        "replies": 18,
+        "genuine": 18,
+        "auto": 0,
+        "by_offer_type": {
+          "Lead magnet (PDF)": 12,
+          "Webinar (pilot)": 2,
+          "Event": 2,
+          "Persona-targeted": 2
+        },
+        "by_function": {
+          "Marketing": 6,
+          "Sales": 5,
+          "Executive/General": 4,
+          "RevOps": 3
+        },
+        "by_seniority": {
+          "Head/Director": 5,
+          "C-Level": 4,
+          "Founder/Owner": 4,
+          "Manager": 4,
+          "IC": 1
+        },
+        "by_reply_intent": {
+          "Other": 6,
+          "Info request": 5,
+          "Question": 5,
+          "Meeting/demo accept": 1,
+          "Referral/forward": 1
+        },
+        "by_winning_cta": {
+          "Soft permission question": 8,
+          "None/unclear": 5,
+          "Open question": 2,
+          "Demo offer": 2,
+          "Resource offer": 1
+        },
+        "by_winning_step": {
+          "4": 14,
+          "1": 3,
+          "2": 1
+        }
+      }
+    ],
+    "weeks": [
+      {
+        "period": "2025-12-29",
+        "replies": 1,
+        "genuine": 1,
+        "auto": 0,
+        "by_offer_type": {
+          "Demo request": 1
+        },
+        "by_function": {
+          "Executive/General": 1
+        },
+        "by_seniority": {
+          "Head/Director": 1
+        },
+        "by_reply_intent": {
+          "Meeting/demo accept": 1
+        },
+        "by_winning_cta": {
+          "Demo offer": 1
+        },
+        "by_winning_step": {
+          "1": 1
+        }
+      },
+      {
+        "period": "2026-01-05",
+        "replies": 0,
+        "genuine": 0,
+        "auto": 0,
+        "by_offer_type": {},
+        "by_function": {},
+        "by_seniority": {},
+        "by_reply_intent": {},
+        "by_winning_cta": {},
+        "by_winning_step": {}
+      },
+      {
+        "period": "2026-01-12",
+        "replies": 1,
+        "genuine": 1,
+        "auto": 0,
+        "by_offer_type": {
+          "Demo request": 1
+        },
+        "by_function": {
+          "Sales": 1
+        },
+        "by_seniority": {
+          "Founder/Owner": 1
+        },
+        "by_reply_intent": {
+          "Info request": 1
+        },
+        "by_winning_cta": {
+          "Open question": 1
+        },
+        "by_winning_step": {
+          "2": 1
+        }
+      },
+      {
+        "period": "2026-01-19",
+        "replies": 2,
+        "genuine": 2,
+        "auto": 0,
+        "by_offer_type": {
+          "Demo request": 1,
+          "Lead magnet (PDF)": 1
+        },
+        "by_function": {
+          "Sales": 1,
+          "Executive/General": 1
+        },
+        "by_seniority": {
+          "Manager": 1,
+          "IC": 1
+        },
+        "by_reply_intent": {
+          "Meeting/demo accept": 1,
+          "Question": 1
+        },
+        "by_winning_cta": {
+          "Specific-time offer": 1,
+          "Open question": 1
+        },
+        "by_winning_step": {
+          "2": 1,
+          "1": 1
+        }
+      },
+      {
+        "period": "2026-01-26",
+        "replies": 3,
+        "genuine": 3,
+        "auto": 0,
+        "by_offer_type": {
+          "Demo request": 2,
+          "Event": 1
+        },
+        "by_function": {
+          "Executive/General": 3
+        },
+        "by_seniority": {
+          "Head/Director": 2,
+          "Founder/Owner": 1
+        },
+        "by_reply_intent": {
+          "Question": 2,
+          "Pricing request": 1
+        },
+        "by_winning_cta": {
+          "Soft permission question": 2,
+          "Demo offer": 1
+        },
+        "by_winning_step": {
+          "2": 1,
+          "1": 1,
+          "3": 1
+        }
+      },
+      {
+        "period": "2026-02-02",
+        "replies": 3,
+        "genuine": 3,
+        "auto": 0,
+        "by_offer_type": {
+          "Lead magnet (PDF)": 2,
+          "Event": 1
+        },
+        "by_function": {
+          "Marketing": 2,
+          "Executive/General": 1
+        },
+        "by_seniority": {
+          "C-Level": 1,
+          "Manager": 1,
+          "IC": 1
+        },
+        "by_reply_intent": {
+          "Other": 1,
+          "Info request": 1,
+          "Referral/forward": 1
+        },
+        "by_winning_cta": {
+          "Open question": 2,
+          "Resource offer": 1
+        },
+        "by_winning_step": {
+          "4": 3
+        }
+      },
+      {
+        "period": "2026-02-09",
+        "replies": 2,
+        "genuine": 0,
+        "auto": 2,
+        "by_offer_type": {},
+        "by_function": {},
+        "by_seniority": {},
+        "by_reply_intent": {},
+        "by_winning_cta": {},
+        "by_winning_step": {}
+      },
+      {
+        "period": "2026-02-16",
+        "replies": 2,
+        "genuine": 2,
+        "auto": 0,
+        "by_offer_type": {
+          "Lead magnet (PDF)": 1,
+          "Demo request": 1
+        },
+        "by_function": {
+          "Marketing": 1,
+          "Sales": 1
+        },
+        "by_seniority": {
+          "Head/Director": 2
+        },
+        "by_reply_intent": {
+          "Info request": 2
+        },
+        "by_winning_cta": {
+          "Soft permission question": 1,
+          "Specific-time offer": 1
+        },
+        "by_winning_step": {
+          "2": 1,
+          "4": 1
+        }
+      },
+      {
+        "period": "2026-02-23",
+        "replies": 2,
+        "genuine": 2,
+        "auto": 0,
+        "by_offer_type": {
+          "Demo request": 1,
+          "Lead magnet (PDF)": 1
+        },
+        "by_function": {
+          "Sales": 1,
+          "RevOps": 1
+        },
+        "by_seniority": {
+          "Manager": 2
+        },
+        "by_reply_intent": {
+          "Other": 1,
+          "Positive-later": 1
+        },
+        "by_winning_cta": {
+          "Specific-time offer": 1,
+          "None/unclear": 1
+        },
+        "by_winning_step": {
+          "4": 2
+        }
+      },
+      {
+        "period": "2026-03-02",
+        "replies": 2,
+        "genuine": 2,
+        "auto": 0,
+        "by_offer_type": {
+          "Demo request": 2
+        },
+        "by_function": {
+          "Sales": 1,
+          "Other": 1
+        },
+        "by_seniority": {
+          "Head/Director": 1,
+          "C-Level": 1
+        },
+        "by_reply_intent": {
+          "Meeting/demo accept": 2
+        },
+        "by_winning_cta": {
+          "Demo offer": 1,
+          "Specific-time offer": 1
+        },
+        "by_winning_step": {
+          "4": 2
+        }
+      },
+      {
+        "period": "2026-03-09",
+        "replies": 2,
+        "genuine": 2,
+        "auto": 0,
+        "by_offer_type": {
+          "Event": 1,
+          "Lead magnet (PDF)": 1
+        },
+        "by_function": {
+          "Executive/General": 1,
+          "Other": 1
+        },
+        "by_seniority": {
+          "Head/Director": 2
+        },
+        "by_reply_intent": {
+          "Other": 1,
+          "Referral/forward": 1
+        },
+        "by_winning_cta": {
+          "Open question": 2
+        },
+        "by_winning_step": {
+          "2": 2
+        }
+      },
+      {
+        "period": "2026-03-16",
+        "replies": 5,
+        "genuine": 5,
+        "auto": 0,
+        "by_offer_type": {
+          "Lead magnet (PDF)": 3,
+          "Demo request": 1,
+          "Event": 1
+        },
+        "by_function": {
+          "Marketing": 2,
+          "RevOps": 2,
+          "Other": 1
+        },
+        "by_seniority": {
+          "Manager": 3,
+          "IC": 1,
+          "Head/Director": 1
+        },
+        "by_reply_intent": {
+          "Info request": 2,
+          "Other": 1,
+          "Meeting/demo accept": 1,
+          "Question": 1
+        },
+        "by_winning_cta": {
+          "None/unclear": 2,
+          "Soft permission question": 1,
+          "Specific-time offer": 1,
+          "Open question": 1
+        },
+        "by_winning_step": {
+          "4": 2,
+          "2": 1,
+          "3": 1,
+          "1": 1
+        }
+      },
+      {
+        "period": "2026-03-23",
+        "replies": 2,
+        "genuine": 2,
+        "auto": 0,
+        "by_offer_type": {
+          "Lead magnet (PDF)": 2
+        },
+        "by_function": {
+          "Executive/General": 1,
+          "RevOps": 1
+        },
+        "by_seniority": {
+          "Manager": 1,
+          "Founder/Owner": 1
+        },
+        "by_reply_intent": {
+          "Question": 1,
+          "Info request": 1
+        },
+        "by_winning_cta": {
+          "Open question": 1,
+          "Demo offer": 1
+        },
+        "by_winning_step": {
+          "4": 1,
+          "3": 1
+        }
+      },
+      {
+        "period": "2026-03-30",
+        "replies": 1,
+        "genuine": 0,
+        "auto": 1,
+        "by_offer_type": {},
+        "by_function": {},
+        "by_seniority": {},
+        "by_reply_intent": {},
+        "by_winning_cta": {},
+        "by_winning_step": {}
+      },
+      {
+        "period": "2026-04-06",
+        "replies": 3,
+        "genuine": 3,
+        "auto": 0,
+        "by_offer_type": {
+          "Event": 1,
+          "Lead magnet (PDF)": 1,
+          "Persona-targeted": 1
+        },
+        "by_function": {
+          "Marketing": 2,
+          "Sales": 1
+        },
+        "by_seniority": {
+          "IC": 2,
+          "Manager": 1
+        },
+        "by_reply_intent": {
+          "Question": 2,
+          "Referral/forward": 1
+        },
+        "by_winning_cta": {
+          "Open question": 1,
+          "None/unclear": 1,
+          "Resource offer": 1
+        },
+        "by_winning_step": {
+          "4": 2,
+          "2": 1
+        }
+      },
+      {
+        "period": "2026-04-13",
+        "replies": 5,
+        "genuine": 5,
+        "auto": 0,
+        "by_offer_type": {
+          "Lead magnet (PDF)": 3,
+          "Demo request": 2
+        },
+        "by_function": {
+          "Marketing": 2,
+          "Executive/General": 1,
+          "RevOps": 1,
+          "Other": 1
+        },
+        "by_seniority": {
+          "IC": 2,
+          "Manager": 1,
+          "Head/Director": 1,
+          "Founder/Owner": 1
+        },
+        "by_reply_intent": {
+          "Referral/forward": 1,
+          "Meeting/demo accept": 1,
+          "Info request": 1,
+          "Question": 1,
+          "Other": 1
+        },
+        "by_winning_cta": {
+          "Open question": 3,
+          "Specific-time offer": 1,
+          "Soft permission question": 1
+        },
+        "by_winning_step": {
+          "4": 3,
+          "2": 2
+        }
+      },
+      {
+        "period": "2026-04-20",
+        "replies": 9,
+        "genuine": 9,
+        "auto": 0,
+        "by_offer_type": {
+          "Lead magnet (PDF)": 8,
+          "Event": 1
+        },
+        "by_function": {
+          "Marketing": 4,
+          "Other": 2,
+          "RevOps": 1,
+          "Sales": 1,
+          "Executive/General": 1
+        },
+        "by_seniority": {
+          "Manager": 3,
+          "Head/Director": 3,
+          "IC": 2,
+          "Founder/Owner": 1
+        },
+        "by_reply_intent": {
+          "Other": 3,
+          "Question": 2,
+          "Meeting/demo accept": 1,
+          "Info request": 1,
+          "Referral/forward": 1,
+          "Positive-later": 1
+        },
+        "by_winning_cta": {
+          "Soft permission question": 3,
+          "Open question": 2,
+          "None/unclear": 2,
+          "Specific-time offer": 2
+        },
+        "by_winning_step": {
+          "4": 5,
+          "1": 2,
+          "3": 1,
+          "2": 1
+        }
+      },
+      {
+        "period": "2026-04-27",
+        "replies": 9,
+        "genuine": 8,
+        "auto": 1,
+        "by_offer_type": {
+          "Lead magnet (PDF)": 6,
+          "Event": 1,
+          "Webinar (pilot)": 1
+        },
+        "by_function": {
+          "Marketing": 4,
+          "Sales": 2,
+          "Executive/General": 1,
+          "Other": 1
+        },
+        "by_seniority": {
+          "C-Level": 3,
+          "Manager": 2,
+          "Head/Director": 2,
+          "IC": 1
+        },
+        "by_reply_intent": {
+          "Referral/forward": 2,
+          "Info request": 2,
+          "Other": 1,
+          "Meeting/demo accept": 1,
+          "Question": 1,
+          "Positive-later": 1
+        },
+        "by_winning_cta": {
+          "Open question": 5,
+          "None/unclear": 1,
+          "Demo offer": 1,
+          "Resource offer": 1
+        },
+        "by_winning_step": {
+          "4": 5,
+          "2": 3
+        }
+      },
+      {
+        "period": "2026-05-04",
+        "replies": 3,
+        "genuine": 3,
+        "auto": 0,
+        "by_offer_type": {
+          "Event": 1,
+          "Lead magnet (PDF)": 1,
+          "Newsletter reply": 1
+        },
+        "by_function": {
+          "Other": 2,
+          "RevOps": 1
+        },
+        "by_seniority": {
+          "IC": 2,
+          "Head/Director": 1
+        },
+        "by_reply_intent": {
+          "Question": 1,
+          "Info request": 1,
+          "Positive-later": 1
+        },
+        "by_winning_cta": {
+          "Specific-time offer": 2,
+          "Open question": 1
+        },
+        "by_winning_step": {
+          "4": 2,
+          "1": 1
+        }
+      },
+      {
+        "period": "2026-05-11",
+        "replies": 6,
+        "genuine": 5,
+        "auto": 1,
+        "by_offer_type": {
+          "Lead magnet (PDF)": 3,
+          "Persona-targeted": 2
+        },
+        "by_function": {
+          "Other": 2,
+          "Sales": 2,
+          "Executive/General": 1
+        },
+        "by_seniority": {
+          "Manager": 2,
+          "Head/Director": 1,
+          "IC": 1,
+          "C-Level": 1
+        },
+        "by_reply_intent": {
+          "Question": 2,
+          "Other": 2,
+          "Positive-later": 1
+        },
+        "by_winning_cta": {
+          "Resource offer": 2,
+          "None/unclear": 2,
+          "Soft permission question": 1
+        },
+        "by_winning_step": {
+          "4": 2,
+          "1": 2,
+          "2": 1
+        }
+      },
+      {
+        "period": "2026-05-18",
+        "replies": 7,
+        "genuine": 7,
+        "auto": 0,
+        "by_offer_type": {
+          "Lead magnet (PDF)": 4,
+          "Demo request": 1,
+          "Event": 1,
+          "Webinar (pilot)": 1
+        },
+        "by_function": {
+          "Executive/General": 4,
+          "Marketing": 2,
+          "RevOps": 1
+        },
+        "by_seniority": {
+          "C-Level": 2,
+          "Manager": 2,
+          "IC": 1,
+          "Founder/Owner": 1,
+          "Head/Director": 1
+        },
+        "by_reply_intent": {
+          "Info request": 2,
+          "Other": 1,
+          "Meeting/demo accept": 1,
+          "Positive-later": 1,
+          "Question": 1,
+          "Pricing request": 1
+        },
+        "by_winning_cta": {
+          "Soft permission question": 2,
+          "Demo offer": 2,
+          "Specific-time offer": 1,
+          "Open question": 1,
+          "None/unclear": 1
+        },
+        "by_winning_step": {
+          "4": 5,
+          "3": 1,
+          "2": 1
+        }
+      },
+      {
+        "period": "2026-05-25",
+        "replies": 7,
+        "genuine": 7,
+        "auto": 0,
+        "by_offer_type": {
+          "Lead magnet (PDF)": 5,
+          "Webinar (pilot)": 2
+        },
+        "by_function": {
+          "Other": 3,
+          "Sales": 2,
+          "RevOps": 1,
+          "Marketing": 1
+        },
+        "by_seniority": {
+          "Manager": 3,
+          "Head/Director": 3,
+          "Founder/Owner": 1
+        },
+        "by_reply_intent": {
+          "Question": 2,
+          "Other": 2,
+          "Positive-later": 1,
+          "Meeting/demo accept": 1,
+          "Info request": 1
+        },
+        "by_winning_cta": {
+          "Open question": 4,
+          "None/unclear": 1,
+          "Soft permission question": 1,
+          "Resource offer": 1
+        },
+        "by_winning_step": {
+          "4": 3,
+          "2": 3,
+          "3": 1
+        }
+      },
+      {
+        "period": "2026-06-01",
+        "replies": 2,
+        "genuine": 2,
+        "auto": 0,
+        "by_offer_type": {
+          "Lead magnet (PDF)": 1,
+          "Webinar (pilot)": 1
+        },
+        "by_function": {
+          "Marketing": 1,
+          "RevOps": 1
+        },
+        "by_seniority": {
+          "Head/Director": 1,
+          "C-Level": 1
+        },
+        "by_reply_intent": {
+          "Other": 1,
+          "Meeting/demo accept": 1
+        },
+        "by_winning_cta": {
+          "Open question": 2
+        },
+        "by_winning_step": {
+          "4": 2
+        }
+      },
+      {
+        "period": "2026-06-08",
+        "replies": 4,
+        "genuine": 4,
+        "auto": 0,
+        "by_offer_type": {
+          "Event": 2,
+          "Lead magnet (PDF)": 1,
+          "Persona-targeted": 1
+        },
+        "by_function": {
+          "Sales": 3,
+          "RevOps": 1
+        },
+        "by_seniority": {
+          "Head/Director": 1,
+          "Founder/Owner": 1,
+          "Manager": 1,
+          "IC": 1
+        },
+        "by_reply_intent": {
+          "Other": 2,
+          "Info request": 2
+        },
+        "by_winning_cta": {
+          "Demo offer": 2,
+          "Soft permission question": 2
+        },
+        "by_winning_step": {
+          "4": 4
+        }
+      },
+      {
+        "period": "2026-06-15",
+        "replies": 5,
+        "genuine": 5,
+        "auto": 0,
+        "by_offer_type": {
+          "Lead magnet (PDF)": 4,
+          "Persona-targeted": 1
+        },
+        "by_function": {
+          "Executive/General": 2,
+          "Sales": 1,
+          "RevOps": 1,
+          "Marketing": 1
+        },
+        "by_seniority": {
+          "C-Level": 2,
+          "Head/Director": 1,
+          "Manager": 1,
+          "Founder/Owner": 1
+        },
+        "by_reply_intent": {
+          "Info request": 2,
+          "Other": 2,
+          "Question": 1
+        },
+        "by_winning_cta": {
+          "None/unclear": 3,
+          "Soft permission question": 2
+        },
+        "by_winning_step": {
+          "4": 3,
+          "1": 1,
+          "2": 1
+        }
+      },
+      {
+        "period": "2026-06-22",
+        "replies": 5,
+        "genuine": 5,
+        "auto": 0,
+        "by_offer_type": {
+          "Lead magnet (PDF)": 4,
+          "Webinar (pilot)": 1
+        },
+        "by_function": {
+          "Marketing": 3,
+          "Executive/General": 1,
+          "Sales": 1
+        },
+        "by_seniority": {
+          "Founder/Owner": 2,
+          "Head/Director": 2,
+          "Manager": 1
+        },
+        "by_reply_intent": {
+          "Question": 2,
+          "Other": 1,
+          "Info request": 1,
+          "Referral/forward": 1
+        },
+        "by_winning_cta": {
+          "Soft permission question": 2,
+          "None/unclear": 2,
+          "Resource offer": 1
+        },
+        "by_winning_step": {
+          "4": 5
+        }
+      },
+      {
+        "period": "2026-06-29",
+        "replies": 2,
+        "genuine": 2,
+        "auto": 0,
+        "by_offer_type": {
+          "Lead magnet (PDF)": 2
+        },
+        "by_function": {
+          "Executive/General": 1,
+          "Marketing": 1
+        },
+        "by_seniority": {
+          "C-Level": 1,
+          "Manager": 1
+        },
+        "by_reply_intent": {
+          "Question": 2
+        },
+        "by_winning_cta": {
+          "Soft permission question": 2
+        },
+        "by_winning_step": {
+          "1": 2
+        }
+      }
+    ],
+    "mix_dims": [
+      "offer_type",
+      "function",
+      "seniority",
+      "reply_intent",
+      "winning_cta",
+      "winning_step"
+    ],
+    "note": "Interested-reply COUNTS and mix over time (numerator only). Not a conversion rate \u2014 sends per period are not in this dataset. Mix shares are of genuine (non-auto) replies in the period."
+  },
+  "crosstabs": {
+    "offer_type_x_seniority": {
+      "Demo request": {
+        "Head/Director": 6,
+        "Founder/Owner": 3,
+        "Manager": 2,
+        "C-Level": 2
+      },
+      "Lead magnet (PDF)": {
+        "IC": 10,
+        "Manager": 17,
+        "Head/Director": 15,
+        "Founder/Owner": 5,
+        "C-Level": 7
+      },
+      "Event": {
+        "Head/Director": 4,
+        "C-Level": 1,
+        "Manager": 2,
+        "IC": 3,
+        "Founder/Owner": 1
+      },
+      "Persona-targeted": {
+        "Manager": 3,
+        "IC": 1,
+        "Founder/Owner": 1
+      },
+      "Webinar (pilot)": {
+        "C-Level": 2,
+        "Manager": 2,
+        "Founder/Owner": 1,
+        "Head/Director": 1
+      },
+      "Newsletter reply": {
+        "IC": 1
+      }
+    },
+    "cta_x_reply_intent": {
+      "Demo offer": {
+        "Meeting/demo accept": 2,
+        "Pricing request": 2,
+        "Info request": 3,
+        "Question": 1,
+        "Other": 1
+      },
+      "Open question": {
+        "Info request": 5,
+        "Question": 5,
+        "Other": 5,
+        "Referral/forward": 5,
+        "Meeting/demo accept": 5,
+        "Positive-later": 2
+      },
+      "Specific-time offer": {
+        "Meeting/demo accept": 3,
+        "Info request": 4,
+        "Other": 2,
+        "Question": 2
+      },
+      "Soft permission question": {
+        "Question": 6,
+        "Info request": 6,
+        "Other": 7,
+        "Positive-later": 1
+      },
+      "Resource offer": {
+        "Info request": 1,
+        "Question": 2,
+        "Referral/forward": 2,
+        "Positive-later": 2
+      },
+      "None/unclear": {
+        "Positive-later": 2,
+        "Meeting/demo accept": 1,
+        "Question": 6,
+        "Referral/forward": 1,
+        "Other": 5,
+        "Info request": 1
+      }
+    },
+    "seniority_x_function": {
+      "Head/Director": {
+        "Executive/General": 8,
+        "Sales": 7,
+        "Marketing": 7,
+        "Other": 5,
+        "RevOps": 2
+      },
+      "Founder/Owner": {
+        "Sales": 3,
+        "Executive/General": 2,
+        "RevOps": 1,
+        "Marketing": 5
+      },
+      "Manager": {
+        "Sales": 5,
+        "Marketing": 10,
+        "RevOps": 4,
+        "Other": 4,
+        "Executive/General": 3
+      },
+      "IC": {
+        "Executive/General": 2,
+        "Marketing": 4,
+        "Sales": 3,
+        "RevOps": 3,
+        "Other": 4
+      },
+      "C-Level": {
+        "Executive/General": 5,
+        "Other": 2,
+        "Marketing": 1,
+        "Sales": 3,
+        "RevOps": 2
+      }
+    }
+  },
+  "caveats": [
+    "Demo profile dataset \u2014 see ground_truth.json for the planted effects each chart should reveal.",
+    "DESCRIPTIVE ONLY: these distributions are the population of interested repliers, not all leads contacted. Read them as composition, not lift."
+  ]
+}

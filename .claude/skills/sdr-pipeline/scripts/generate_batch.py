@@ -250,7 +250,7 @@ def build_system(knowledge, variant=DEFAULT_VARIANT, mode="research"):
 
 
 def build_user(contact, cached_signal=None, prior_issues=None, tech_signals=None,
-               tech_playbook=None, hiring_signals=None):
+               tech_playbook=None, hiring_signals=None, campaign_plan=None):
     persona = contact.get("persona", "sales-leadership")
     framing = PERSONA_FRAMING.get(persona, PERSONA_FRAMING["sales-leadership"])
     domain = contact.get("domain") or db.email_domain(contact.get("email"))
@@ -264,6 +264,11 @@ def build_user(contact, cached_signal=None, prior_issues=None, tech_signals=None
         f"- linkedin: {contact.get('linkedin_url','')}\n\n"
         f"Persona framing: {framing}\n\n"
     )
+    # The campaign's own step->CTA plan, when this contact belongs to one. Placed
+    # before the per-contact plays below so those read as refinements to it, and
+    # stated as authoritative over the default cadence in the knowledge base.
+    if campaign_plan:
+        base += campaign_plan + "\n"
     if tech_signals:
         base += (
             f"Company tech stack (deterministic scan of their website/DNS; reliable): {tech_signals}\n"
@@ -458,7 +463,8 @@ def generate_contact(contact, knowledge, client, write=True, cached_signal=None,
                 build_user(contact, cached_signal=cached_signal,
                            prior_issues=None if attempt == 1 else issues,
                            tech_signals=tech_signals, tech_playbook=tech_playbook,
-                           hiring_signals=hiring_signals),
+                           hiring_signals=hiring_signals,
+                           campaign_plan=_campaign_plan(cid)),
                 use_web_search=use_search, max_web_searches=3, max_tokens=4096,
             )
             web_searches = res.get("web_search_count", 0)
@@ -479,6 +485,9 @@ def generate_contact(contact, knowledge, client, write=True, cached_signal=None,
             "contact_id": cid,
             "persona": persona,
             "variant": variant,
+            # which campaign's sequence plan this copy was written against (None
+            # for the pre-campaign path) — the asset's own record of its frame
+            "campaign_id": _campaign_ref(cid)[0],
             # trust the cached signal verbatim; otherwise take the model's
             "signal": (cached_signal or data.get("signal") or "").strip(),
             "email": data.get("email", {}) or {},
@@ -613,6 +622,62 @@ def _cached_hiring(domain):
     count = detail.get("active_count") or len(sales)
     return (f"{count} open roles, {len(sales)} in sales/GTM "
             f"(e.g. {', '.join(sales[:2])})")
+
+
+# Memo keyed by campaign_id: a batch is normally one campaign, so the plan is
+# rendered once instead of per contact. Process-local and short-lived (a generation
+# run), so a plan edited mid-run is picked up on the next run.
+_PLAN_CACHE = {}
+
+
+def _campaign_ref(contact_id):
+    """(campaign_id, rendered step->CTA plan) for whichever campaign this contact
+    belongs to, or (None, None) when they belong to none — the pre-campaign path,
+    where the cadence in the knowledge base applies unchanged.
+
+    This is what makes the sequence step -> CTA link real at generation time. Never
+    breaks generation: any failure degrades to the knowledge-base default."""
+    if not contact_id:
+        return None, None
+    try:
+        import campaigns as _camp  # lazy, mirrors the boot rule
+        conn = db.connect()
+        try:
+            camp = _camp.campaign_for_contact(conn, contact_id)
+            if not camp:
+                return None, None
+            cid = camp["campaign_id"]
+            if cid not in _PLAN_CACHE:
+                # Brief first, then the step plan: the direction agreed for the
+                # campaign frames the sequence, and the sequence assigns each
+                # touch's offer inside that frame.
+                # Type first: whether this is inbound changes how every touch
+                # opens, so it frames the brief and the plan rather than sitting
+                # after them.
+                blocks = [_camp.render_type_prompt(camp),
+                          _camp.render_brief_prompt(camp),
+                          _camp.render_plan_prompt(_camp.step_plan(conn, cid))]
+                _PLAN_CACHE[cid] = "\n".join(b for b in blocks if b) or None
+            plan = _PLAN_CACHE[cid]
+            # Overlap context is PER CONTACT, not per campaign, so it is never
+            # cached: only this person knows which other cadences they are on. Two
+            # campaigns writing as if each were the only conversation is how a
+            # prospect gets two cold opens in a week.
+            tp = _camp.touch_plan(conn, contact_id)
+            if tp.get("overlapping"):
+                ctx = _camp.render_context_prompt(tp, cid)
+                if ctx:
+                    plan = (plan or "") + "\n" + ctx
+            return cid, plan
+        finally:
+            conn.close()
+    except Exception as e:  # noqa: BLE001
+        sys.stderr.write(f"[generate] campaign plan skipped for {contact_id}: {e}\n")
+        return None, None
+
+
+def _campaign_plan(contact_id):
+    return _campaign_ref(contact_id)[1]
 
 
 def generate_one(contact, knowledge, client, write=True, variant=DEFAULT_VARIANT):
@@ -755,7 +820,8 @@ def build_request_params(contact, knowledge, client, cached_signal=None, variant
     return client.build_body(
         build_system(knowledge, variant=variant, mode=mode),
         build_user(contact, cached_signal=cached_signal, tech_signals=tech_signals,
-                   tech_playbook=tech_playbook, hiring_signals=hiring_signals),
+                   tech_playbook=tech_playbook, hiring_signals=hiring_signals,
+                   campaign_plan=_campaign_plan(contact.get("contact_id"))),
         use_web_search=cached_signal is None, max_web_searches=3,
         max_tokens=4096, cache_ttl="1h",
     )
@@ -805,6 +871,7 @@ def process_batch_result(custom_id, result, manifest):
 
     asset = {
         "contact_id": cid, "persona": persona, "variant": variant,
+        "campaign_id": _campaign_ref(cid)[0],
         "signal": (cached_signal or data.get("signal") or "").strip(),
         "email": data.get("email", {}) or {}, "linkedin": data.get("linkedin", {}) or {},
     }

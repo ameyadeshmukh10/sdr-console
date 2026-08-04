@@ -54,7 +54,14 @@ export function LinkedInIcon({ x, y, size = 16 }) {
 }
 
 export function pct(v) {
-  return v == null ? '—' : `${v}%`
+  // Callers pass both pre-rounded server values and raw computed ratios
+  // (100 * n / d), so round here — otherwise a computed rate renders as
+  // "34.9673202614379051%". Sub-1% values keep 2 decimals, since interested
+  // rates live down there and 0.5 vs 0.52 is a meaningful difference.
+  if (v == null) return '—'
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '—'
+  return `${n === 0 ? 0 : n < 1 ? Number(n.toFixed(2)) : Number(n.toFixed(1))}%`
 }
 
 export function num(v) {

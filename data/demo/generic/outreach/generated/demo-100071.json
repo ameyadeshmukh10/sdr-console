@@ -1,0 +1,25 @@
+{
+  "contact_id": "demo-100071",
+  "persona": "sales-leadership",
+  "variant": "earn",
+  "signal": "acquired a smaller competitor and is merging the two customer bases",
+  "tech_signals": "Salesforce · Outreach · 6sense",
+  "hiring_signals": "22 open roles · 5 sales: BDR; AE; Sales Manager",
+  "cta_play": "pipeline-model",
+  "demo": true,
+  "email": {
+    "subject1": "your pipeline gap, modelled",
+    "body1": "Alex, saw Meridian Talent acquired a smaller competitor and is merging the two customer bases.\n\nMost VPs we talk to are being asked to grow pipeline while the hiring plan is frozen.\n\nWe run an AI SDR that writes the first touches so your reps start warm.\n\nI can model the pipeline gap against your current run rate. Open to a quick call to walk through it?",
+    "subject2": "covering the gap while you hire",
+    "body2": "Alex, following up on Meridian Talent.\n\n5 sales: BDR; AE; Sales Manager — the ramp window is where pipeline usually slips.\n\nOn top of Salesforce we add 2-5x the touch volume without changing how the team works.\n\nOpen to a look at the run rate?",
+    "subject3": "how Memgraph did it",
+    "body3": "Alex, last bit of proof for Meridian Talent.\n\nMemgraph mapped their intent signals to the accounts worth a first touch and ran our AI SDR to $2.7M in pipeline.\n\nWant the same mapping for Meridian Talent?",
+    "subject4": "last one, Alex",
+    "body4": "Alex, I'll stop reaching out on this one. If hitting the number without adding headcount is still open, the offer stands."
+  },
+  "linkedin": {
+    "li_connect": "Alex, saw Meridian Talent acquired a smaller competitor. We work with teams on hitting the number without adding headcount.",
+    "li_msg1": "Thanks for connecting, Alex. I can model the pipeline gap against your current run rate. Open to a quick call to walk through it?",
+    "li_msg2": "Alex, one more nudge — Memgraph ran the same play to $2.7M in pipeline. Worth 20 minutes?"
+  }
+}

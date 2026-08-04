@@ -1,0 +1,321 @@
+{
+  "caveat": "Cohort shares are directional \u2014 small cohorts move a lot on a single reply.",
+  "cohort_sizes": {
+    "Sales": 18,
+    "Marketing": 26,
+    "RevOps": 12,
+    "Executive/General": 20,
+    "Other": 14
+  },
+  "cohorts": {
+    "Sales": {
+      "n": 18,
+      "winning_cta": {
+        "Open question": {
+          "count": 5,
+          "pct_of_cohort": 27.8
+        },
+        "Demo offer": {
+          "count": 4,
+          "pct_of_cohort": 22.2
+        },
+        "Specific-time offer": {
+          "count": 3,
+          "pct_of_cohort": 16.7
+        },
+        "Soft permission question": {
+          "count": 3,
+          "pct_of_cohort": 16.7
+        },
+        "Resource offer": {
+          "count": 2,
+          "pct_of_cohort": 11.1
+        },
+        "None/unclear": {
+          "count": 1,
+          "pct_of_cohort": 5.6
+        }
+      },
+      "offer_type": {
+        "Demo request": {
+          "count": 5,
+          "pct_of_cohort": 27.8
+        },
+        "Lead magnet (PDF)": {
+          "count": 5,
+          "pct_of_cohort": 27.8
+        },
+        "Webinar (pilot)": {
+          "count": 4,
+          "pct_of_cohort": 22.2
+        },
+        "Event": {
+          "count": 3,
+          "pct_of_cohort": 16.7
+        },
+        "Persona-targeted": {
+          "count": 1,
+          "pct_of_cohort": 5.6
+        }
+      },
+      "winning_step": {
+        "4": {
+          "count": 13,
+          "pct_of_cohort": 72.2
+        },
+        "2": {
+          "count": 5,
+          "pct_of_cohort": 27.8
+        }
+      }
+    },
+    "Marketing": {
+      "n": 26,
+      "winning_cta": {
+        "Open question": {
+          "count": 8,
+          "pct_of_cohort": 30.8
+        },
+        "Soft permission question": {
+          "count": 7,
+          "pct_of_cohort": 26.9
+        },
+        "None/unclear": {
+          "count": 5,
+          "pct_of_cohort": 19.2
+        },
+        "Resource offer": {
+          "count": 3,
+          "pct_of_cohort": 11.5
+        },
+        "Specific-time offer": {
+          "count": 2,
+          "pct_of_cohort": 7.7
+        },
+        "Demo offer": {
+          "count": 1,
+          "pct_of_cohort": 3.8
+        }
+      },
+      "offer_type": {
+        "Lead magnet (PDF)": {
+          "count": 23,
+          "pct_of_cohort": 88.5
+        },
+        "Persona-targeted": {
+          "count": 2,
+          "pct_of_cohort": 7.7
+        },
+        "Demo request": {
+          "count": 1,
+          "pct_of_cohort": 3.8
+        }
+      },
+      "winning_step": {
+        "4": {
+          "count": 17,
+          "pct_of_cohort": 65.4
+        },
+        "2": {
+          "count": 6,
+          "pct_of_cohort": 23.1
+        },
+        "1": {
+          "count": 2,
+          "pct_of_cohort": 7.7
+        },
+        "3": {
+          "count": 1,
+          "pct_of_cohort": 3.8
+        }
+      }
+    },
+    "RevOps": {
+      "n": 12,
+      "winning_cta": {
+        "None/unclear": {
+          "count": 4,
+          "pct_of_cohort": 33.3
+        },
+        "Open question": {
+          "count": 3,
+          "pct_of_cohort": 25.0
+        },
+        "Specific-time offer": {
+          "count": 2,
+          "pct_of_cohort": 16.7
+        },
+        "Soft permission question": {
+          "count": 2,
+          "pct_of_cohort": 16.7
+        },
+        "Demo offer": {
+          "count": 1,
+          "pct_of_cohort": 8.3
+        }
+      },
+      "offer_type": {
+        "Lead magnet (PDF)": {
+          "count": 5,
+          "pct_of_cohort": 41.7
+        },
+        "Demo request": {
+          "count": 2,
+          "pct_of_cohort": 16.7
+        },
+        "Event": {
+          "count": 2,
+          "pct_of_cohort": 16.7
+        },
+        "Newsletter reply": {
+          "count": 1,
+          "pct_of_cohort": 8.3
+        },
+        "Webinar (pilot)": {
+          "count": 1,
+          "pct_of_cohort": 8.3
+        },
+        "Persona-targeted": {
+          "count": 1,
+          "pct_of_cohort": 8.3
+        }
+      },
+      "winning_step": {
+        "4": {
+          "count": 8,
+          "pct_of_cohort": 66.7
+        },
+        "3": {
+          "count": 3,
+          "pct_of_cohort": 25.0
+        },
+        "1": {
+          "count": 1,
+          "pct_of_cohort": 8.3
+        }
+      }
+    },
+    "Executive/General": {
+      "n": 20,
+      "winning_cta": {
+        "Open question": {
+          "count": 6,
+          "pct_of_cohort": 30.0
+        },
+        "Soft permission question": {
+          "count": 6,
+          "pct_of_cohort": 30.0
+        },
+        "None/unclear": {
+          "count": 4,
+          "pct_of_cohort": 20.0
+        },
+        "Demo offer": {
+          "count": 3,
+          "pct_of_cohort": 15.0
+        },
+        "Specific-time offer": {
+          "count": 1,
+          "pct_of_cohort": 5.0
+        }
+      },
+      "offer_type": {
+        "Lead magnet (PDF)": {
+          "count": 11,
+          "pct_of_cohort": 55.0
+        },
+        "Demo request": {
+          "count": 4,
+          "pct_of_cohort": 20.0
+        },
+        "Event": {
+          "count": 4,
+          "pct_of_cohort": 20.0
+        },
+        "Webinar (pilot)": {
+          "count": 1,
+          "pct_of_cohort": 5.0
+        }
+      },
+      "winning_step": {
+        "4": {
+          "count": 8,
+          "pct_of_cohort": 40.0
+        },
+        "1": {
+          "count": 6,
+          "pct_of_cohort": 30.0
+        },
+        "2": {
+          "count": 5,
+          "pct_of_cohort": 25.0
+        },
+        "3": {
+          "count": 1,
+          "pct_of_cohort": 5.0
+        }
+      }
+    },
+    "Other": {
+      "n": 14,
+      "winning_cta": {
+        "Open question": {
+          "count": 5,
+          "pct_of_cohort": 35.7
+        },
+        "Specific-time offer": {
+          "count": 3,
+          "pct_of_cohort": 21.4
+        },
+        "None/unclear": {
+          "count": 2,
+          "pct_of_cohort": 14.3
+        },
+        "Soft permission question": {
+          "count": 2,
+          "pct_of_cohort": 14.3
+        },
+        "Resource offer": {
+          "count": 2,
+          "pct_of_cohort": 14.3
+        }
+      },
+      "offer_type": {
+        "Lead magnet (PDF)": {
+          "count": 10,
+          "pct_of_cohort": 71.4
+        },
+        "Event": {
+          "count": 2,
+          "pct_of_cohort": 14.3
+        },
+        "Demo request": {
+          "count": 1,
+          "pct_of_cohort": 7.1
+        },
+        "Persona-targeted": {
+          "count": 1,
+          "pct_of_cohort": 7.1
+        }
+      },
+      "winning_step": {
+        "4": {
+          "count": 6,
+          "pct_of_cohort": 42.9
+        },
+        "2": {
+          "count": 4,
+          "pct_of_cohort": 28.6
+        },
+        "1": {
+          "count": 3,
+          "pct_of_cohort": 21.4
+        },
+        "3": {
+          "count": 1,
+          "pct_of_cohort": 7.1
+        }
+      }
+    }
+  }
+}

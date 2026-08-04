@@ -1,0 +1,13 @@
+{
+  "configured": true,
+  "demo": true,
+  "running": false,
+  "started_at": null,
+  "last_result": {
+    "ok": true,
+    "emails": 18420,
+    "deals_flagged": 14
+  },
+  "watermark_ms": 0,
+  "last_sync_at": "2026-08-03T22:06:40Z"
+}

@@ -1,0 +1,25 @@
+{
+  "contact_id": "demo-100022",
+  "persona": "sdr-bdr",
+  "variant": "earn",
+  "signal": "announced a $24M Series B to expand its go-to-market team",
+  "tech_signals": "HubSpot · Apollo · Google Ads pixel",
+  "hiring_signals": "6 open roles · 2 sales: Enterprise AE; SDR",
+  "cta_play": "personalized-drafts",
+  "demo": true,
+  "email": {
+    "subject1": "10 personalized drafts for your team",
+    "body1": "Kwame, saw Beacon Learning announced a $24M Series B to expand its go-to-market team.\n\nNew reps take a quarter to ramp, and the pipeline gap shows up before they are productive.\n\nWe run an AI SDR that writes the first touches so your reps start warm.\n\nHappy to run 10 personalized emails for your top accounts so you can judge the output before committing to anything.",
+    "subject2": "covering the gap while you hire",
+    "body2": "Kwame, following up on Beacon Learning.\n\n2 sales: Enterprise AE; SDR — the ramp window is where pipeline usually slips.\n\nOn top of HubSpot we add 2-5x the touch volume without changing how the team works.\n\nOpen to a look at the run rate?",
+    "subject3": "how Memgraph did it",
+    "body3": "Kwame, last bit of proof for Beacon Learning.\n\nMemgraph mapped their intent signals to the accounts worth a first touch and ran our AI SDR to $2.7M in pipeline.\n\nWant the same mapping for Beacon Learning?",
+    "subject4": "last one, Kwame",
+    "body4": "Kwame, I'll stop reaching out on this one. If ramp time and rep capacity is still open, the offer stands."
+  },
+  "linkedin": {
+    "li_connect": "Kwame, saw Beacon Learning announced a $24M Series B to expand its go-to-market team. We work with teams on ramp time and rep capacity.",
+    "li_msg1": "Thanks for connecting, Kwame. Happy to run 10 personalized emails for your top accounts so you can judge the output before committing to anything.",
+    "li_msg2": "Kwame, one more nudge — Memgraph ran the same play to $2.7M in pipeline. Worth 20 minutes?"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "id": "generic",
+  "label": "Demo mode",
+  "description": "Synthetic end-to-end dataset: fictional accounts, generated copy, signals, campaign stats and reply trends.",
+  "customer": null,
+  "contains_real_accounts": false,
+  "covers": [
+    "analytics",
+    "campaigns",
+    "outreach",
+    "pipeline",
+    "replies",
+    "signals",
+    "trends"
+  ],
+  "generated_at": "2026-08-04T05:06:40Z",
+  "generator": "make_demo_profile.py",
+  "synthetic": true,
+  "contacts": 120
+}

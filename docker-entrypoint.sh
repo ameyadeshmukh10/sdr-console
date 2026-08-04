@@ -19,6 +19,16 @@ if [ ! -f "$DATA/outreach/pipeline.db" ] && [ -d "$SEED" ]; then
   SEEDED=1
 fi
 
+# The synthetic Trends demo set is generated, static and read-only to the app, so
+# unlike the seed above it is refreshed on EVERY boot — otherwise a volume that was
+# already seeded (i.e. all of production) would never receive it and the console's
+# "Demo data" toggle would silently stay hidden. Never touches real analysis dirs.
+if [ -d "$SEED/demo" ]; then
+  echo "[entrypoint] refreshing demo dataset in $DATA/demo ..."
+  rm -rf "$DATA/demo"
+  cp -a "$SEED/demo" "$DATA/demo"
+fi
+
 # Boot marker: boots/seed counters the app exposes at /api/system/status, so a
 # non-durable /app/data (no Railway Volume attached) is visible in the UI.
 python3 - "$DATA/.boot-marker.json" "$SEEDED" <<'PY'

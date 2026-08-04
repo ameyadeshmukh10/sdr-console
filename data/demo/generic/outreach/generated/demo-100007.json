@@ -1,0 +1,25 @@
+{
+  "contact_id": "demo-100007",
+  "persona": "sales-leadership",
+  "variant": "value-give",
+  "signal": "announced a $24M Series B to expand its go-to-market team",
+  "tech_signals": "Salesforce · Outreach · 6sense",
+  "hiring_signals": "14 open roles · 4 sales: SDR; AE; VP Sales",
+  "cta_play": "pipeline-model",
+  "demo": true,
+  "email": {
+    "subject1": "your pipeline gap, modelled",
+    "body1": "Omar, saw Quarry Compute announced a $24M Series B to expand its go-to-market team.\n\nMost VPs we talk to are being asked to grow pipeline while the hiring plan is frozen.\n\nWe run an AI SDR that writes the first touches so your reps start warm.\n\nI can model the pipeline gap against your current run rate. Open to a quick call to walk through it?",
+    "subject2": "covering the gap while you hire",
+    "body2": "Omar, following up on Quarry Compute.\n\n4 sales: SDR; AE; VP Sales — the ramp window is where pipeline usually slips.\n\nOn top of Salesforce we add 2-5x the touch volume without changing how the team works.\n\nOpen to a look at the run rate?",
+    "subject3": "how Memgraph did it",
+    "body3": "Omar, last bit of proof for Quarry Compute.\n\nMemgraph mapped their intent signals to the accounts worth a first touch and ran our AI SDR to $2.7M in pipeline.\n\nWant the same mapping for Quarry Compute?",
+    "subject4": "last one, Omar",
+    "body4": "Omar, I'll stop reaching out on this one. If hitting the number without adding headcount is still open, the offer stands."
+  },
+  "linkedin": {
+    "li_connect": "Omar, saw Quarry Compute announced a $24M Series B to expand its go-to-market team. We work with teams on hitting the number without adding headcount.",
+    "li_msg1": "Thanks for connecting, Omar. I can model the pipeline gap against your current run rate. Open to a quick call to walk through it?",
+    "li_msg2": "Omar, one more nudge — Memgraph ran the same play to $2.7M in pipeline. Worth 20 minutes?"
+  }
+}

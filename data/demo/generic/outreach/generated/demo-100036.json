@@ -1,0 +1,25 @@
+{
+  "contact_id": "demo-100036",
+  "persona": "revops",
+  "variant": "value-give",
+  "signal": "acquired a smaller competitor and is merging the two customer bases",
+  "tech_signals": "Salesforce · Salesloft",
+  "hiring_signals": "14 open roles · 4 sales: SDR; AE; VP Sales",
+  "cta_play": "signal-play",
+  "demo": true,
+  "email": {
+    "subject1": "a signal play for Willowbrook Labs",
+    "body1": "Mei, saw Willowbrook Labs acquired a smaller competitor and is merging the two customer bases.\n\nThe RevOps question is usually attribution — you cannot defend spend on a channel you cannot trace to pipeline.\n\nWe run an AI SDR that researches each account and writes the first touches, so your reps start from a warm list instead of a raw one.\n\nI built a signal play for Willowbrook Labs — want me to send it over?",
+    "subject2": "covering the gap while you hire",
+    "body2": "Mei, following up on Willowbrook Labs.\n\n4 sales: SDR; AE; VP Sales — the ramp window is where pipeline usually slips.\n\nOn top of Salesforce we add 2-5x the touch volume without changing how the team works.\n\nOpen to a look at the run rate?",
+    "subject3": "how Memgraph did it",
+    "body3": "Mei, last bit of proof for Willowbrook Labs.\n\nMemgraph mapped their intent signals to the accounts worth a first touch and ran our AI SDR to $2.7M in pipeline.\n\nWant the same mapping for Willowbrook Labs?",
+    "subject4": "should I close your file?",
+    "body4": "Mei, I'll stop reaching out on this one. If outbound data quality and attribution is still open, the offer stands."
+  },
+  "linkedin": {
+    "li_connect": "Mei, saw Willowbrook Labs acquired a smaller competitor. We work with teams on outbound data quality and attribution.",
+    "li_msg1": "Thanks for connecting, Mei. I built a signal play for Willowbrook Labs — want me to send it over?",
+    "li_msg2": "Mei, one more nudge — Memgraph ran the same play to $2.7M in pipeline. Worth 20 minutes?"
+  }
+}

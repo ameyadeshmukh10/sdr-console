@@ -1,0 +1,13 @@
+{
+  "connected": [
+    "hubspot",
+    "hubspot-files",
+    "clay",
+    "prospeo",
+    "emailbison",
+    "heyreach",
+    "anthropic",
+    "mongodb"
+  ],
+  "note": "Demo connector states \u2014 declared, never probed from the host."
+}

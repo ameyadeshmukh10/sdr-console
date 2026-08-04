@@ -1,0 +1,25 @@
+{
+  "contact_id": "demo-100008",
+  "persona": "sdr-bdr",
+  "variant": "value-give",
+  "signal": "entered the UK market with a London-based sales team",
+  "tech_signals": "HubSpot · Demandbase",
+  "hiring_signals": "3 open roles · 0 sales",
+  "cta_play": "pipeline-model",
+  "demo": true,
+  "email": {
+    "subject1": "your pipeline gap, modelled",
+    "body1": "Alex, saw Tandem Labs entered the UK market with a London-based sales team.\n\nNew reps take a quarter to ramp, and the pipeline gap shows up before they are productive.\n\nWe run an AI SDR that writes the first touches so your reps start warm.\n\nI can model the pipeline gap against your current run rate. Open to a quick call to walk through it?",
+    "subject2": "the ramp time and rep capacity problem",
+    "body2": "Alex, quick follow-up for Tandem Labs.\n\nOn top of HubSpot we add 2-5x the touch volume without changing how the team works.\n\nOpen to a look at the run rate?",
+    "subject3": "how Memgraph did it",
+    "body3": "Alex, last bit of proof for Tandem Labs.\n\nMemgraph mapped their intent signals to the accounts worth a first touch and ran our AI SDR to $2.7M in pipeline.\n\nWant the same mapping for Tandem Labs?",
+    "subject4": "last one, Alex",
+    "body4": "Alex, I'll stop reaching out on this one. If ramp time and rep capacity is still open, the offer stands."
+  },
+  "linkedin": {
+    "li_connect": "Alex, saw Tandem Labs entered the UK market with a London-based sales team. We work with teams on ramp time and rep capacity.",
+    "li_msg1": "Thanks for connecting, Alex. I can model the pipeline gap against your current run rate. Open to a quick call to walk through it?",
+    "li_msg2": "Alex, one more nudge — Memgraph ran the same play to $2.7M in pipeline. Worth 20 minutes?"
+  }
+}

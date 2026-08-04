@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { Stat, Spinner, ErrorBanner, num } from '../components/ui.jsx'
 import SignalDetail from '../components/SignalDetail.jsx'
+import SignalFeed from '../components/SignalFeed.jsx'
+import SignalDefinitions from '../components/SignalDefinitions.jsx'
 
 // Signal cache — per-company research reused for 90 days so a company is searched
 // once instead of once per contact / per re-run. Force-refresh re-searches one.
@@ -239,6 +241,10 @@ export default function SignalsPage() {
           </table>
         </div>
       )}
+
+      <SignalDefinitions />
+
+      <SignalFeed />
 
       {openDomain && (
         <SignalDetail

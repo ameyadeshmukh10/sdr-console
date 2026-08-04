@@ -1,0 +1,25 @@
+{
+  "contact_id": "demo-100042",
+  "persona": "revops",
+  "variant": "earn",
+  "signal": "named a new CRO from a category leader last quarter",
+  "tech_signals": "HubSpot · Demandbase",
+  "hiring_signals": "3 open roles · 0 sales",
+  "cta_play": "outbound-teardown",
+  "demo": true,
+  "email": {
+    "subject1": "a teardown of your current outbound",
+    "body1": "Ravi, saw Tandem Labs named a new CRO from a category leader last quarter.\n\nThe RevOps question is usually attribution — you cannot defend spend on a channel you cannot trace to pipeline.\n\nWe run an AI SDR that researches each account and writes the first touches, so your reps start from a warm list instead of a raw one.\n\nI can do a teardown of your current sequence and show where the drop-off is. Worth 20 minutes?",
+    "subject2": "the outbound data quality and attribution problem",
+    "body2": "Ravi, quick follow-up for Tandem Labs.\n\nOn top of HubSpot we add 2-5x the touch volume without changing how the team works.\n\nOpen to a look at the run rate?",
+    "subject3": "how Memgraph did it",
+    "body3": "Ravi, last bit of proof for Tandem Labs.\n\nMemgraph mapped their intent signals to the accounts worth a first touch and ran our AI SDR to $2.7M in pipeline.\n\nWant the same mapping for Tandem Labs?",
+    "subject4": "should I close your file?",
+    "body4": "Ravi, I'll stop reaching out on this one. If outbound data quality and attribution is still open, the offer stands."
+  },
+  "linkedin": {
+    "li_connect": "Ravi, saw Tandem Labs named a new CRO from a category leader last quarter. We work with teams on outbound data quality and attribution.",
+    "li_msg1": "Thanks for connecting, Ravi. I can do a teardown of your current sequence and show where the drop-off is. Worth 20 minutes?",
+    "li_msg2": "Ravi, one more nudge — Memgraph ran the same play to $2.7M in pipeline. Worth 20 minutes?"
+  }
+}

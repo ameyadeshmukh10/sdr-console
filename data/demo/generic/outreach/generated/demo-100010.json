@@ -1,0 +1,25 @@
+{
+  "contact_id": "demo-100010",
+  "persona": "revops",
+  "variant": "value-give",
+  "signal": "moved upmarket with an enterprise tier announced at their user conference",
+  "tech_signals": "HubSpot · Demandbase",
+  "hiring_signals": "6 open roles · 2 sales: Enterprise AE; SDR",
+  "cta_play": "outbound-teardown",
+  "demo": true,
+  "email": {
+    "subject1": "a teardown of your current outbound",
+    "body1": "Nina, saw Sandpiper Games moved upmarket with an enterprise tier announced at their user conference.\n\nThe RevOps question is usually attribution — you cannot defend spend on a channel you cannot trace to pipeline.\n\nWe run an AI SDR that writes the first touches so your reps start warm.\n\nI can do a teardown of your current sequence and show where the drop-off is. Worth 20 minutes?",
+    "subject2": "covering the gap while you hire",
+    "body2": "Nina, following up on Sandpiper Games.\n\n2 sales: Enterprise AE; SDR — the ramp window is where pipeline usually slips.\n\nOn top of HubSpot we add 2-5x the touch volume without changing how the team works.\n\nOpen to a look at the run rate?",
+    "subject3": "how Memgraph did it",
+    "body3": "Nina, last bit of proof for Sandpiper Games.\n\nMemgraph mapped their intent signals to the accounts worth a first touch and ran our AI SDR to $2.7M in pipeline.\n\nWant the same mapping for Sandpiper Games?",
+    "subject4": "last one, Nina",
+    "body4": "Nina, I'll stop reaching out on this one. If outbound data quality and attribution is still open, the offer stands."
+  },
+  "linkedin": {
+    "li_connect": "Nina, saw Sandpiper Games moved upmarket with an enterprise tier announced at their user conference. We work with teams on outbound data quality and attribution.",
+    "li_msg1": "Thanks for connecting, Nina. I can do a teardown of your current sequence and show where the drop-off is. Worth 20 minutes?",
+    "li_msg2": "Nina, one more nudge — Memgraph ran the same play to $2.7M in pipeline. Worth 20 minutes?"
+  }
+}

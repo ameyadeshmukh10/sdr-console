@@ -1,0 +1,346 @@
+{
+  "recipes": [
+    {
+      "keywords": [
+        "closed lost",
+        "closed-lost",
+        "lost",
+        "re-engage",
+        "reengage",
+        "went dark",
+        "last quarter"
+      ],
+      "summary": "Set this up as a closed-lost re-engagement: everyone on a deal we lost, worked again only when something has actually changed at the account. Outbound-only, so the numbers stay attributable.",
+      "clarify": {
+        "id": "lost_window",
+        "question": "How far back should the closed-lost list reach?",
+        "why": "It sets both the audience and the signal window \u2014 a wider reach means more accounts but colder memories of the last conversation.",
+        "decides": [
+          "window_start",
+          "window_end",
+          "audience"
+        ],
+        "options": [
+          {
+            "label": "Last 30 days",
+            "detail": "Tight and warm \u2014 they remember the conversation.",
+            "config": {
+              "window_start": "2026-07-05",
+              "window_end": "2026-09-03",
+              "audience": {
+                "type": "crm_query",
+                "preset": "closed_lost",
+                "days": 30
+              }
+            },
+            "note": "Audience set to deals lost in the last 30 days."
+          },
+          {
+            "label": "The last quarter",
+            "detail": "The usual choice \u2014 enough accounts to be worth a sequence.",
+            "config": {
+              "window_start": "2026-05-06",
+              "window_end": "2026-09-03",
+              "audience": {
+                "type": "crm_query",
+                "preset": "closed_lost",
+                "days": 90
+              }
+            },
+            "note": "Audience set to deals lost in the last 90 days."
+          },
+          {
+            "label": "Everything this year",
+            "detail": "Widest reach. Expect some accounts to have changed buyer entirely.",
+            "config": {
+              "window_start": "2026-01-01",
+              "window_end": "2026-09-03",
+              "audience": {
+                "type": "crm_query",
+                "preset": "closed_lost",
+                "days": 240
+              },
+              "target_accounts": 120
+            },
+            "note": "Capped at 120 accounts \u2014 at this reach the list gets long enough to outrun sending capacity."
+          }
+        ]
+      },
+      "config": {
+        "name": "Closed-lost re-engagement",
+        "description": "Deals we lost, worked again when something changes at the account.",
+        "brief": "These accounts already evaluated us and chose otherwise, so nothing here opens like a first touch. Every email leads with what has CHANGED at their end since the conversation ended \u2014 new funding, a sales team being rebuilt, tooling that just went in. The argument is that the reason it did not land last time has moved, and it is worth fifteen minutes to look again. Never reference the lost deal as a grievance and never re-pitch the same case; the change at their end is the whole reason we are writing.",
+        "membership_mode": "rolling",
+        "variant": "value-give",
+        "discovery_interval_days": 7,
+        "signal_query": {
+          "kinds": [
+            "research",
+            "hiring"
+          ],
+          "require_recent": true,
+          "motion": "outbound",
+          "personas": [
+            "sales-leadership",
+            "revops"
+          ]
+        }
+      },
+      "notes": [
+        "Signal is set to real dated events only \u2014 for a re-engagement the whole premise is that something changed, so the fallback anchor would undercut it.",
+        "Outbound-only, so inbound-sourced contacts don't get counted as outbound pipeline."
+      ]
+    },
+    {
+      "keywords": [
+        "hiring",
+        "hire",
+        "ramp",
+        "new reps",
+        "headcount",
+        "growing the team",
+        "scaling the team",
+        "sales roles"
+      ],
+      "summary": "Set this up around the hiring signal: accounts actively building a sales team, pitched on covering pipeline while the new reps ramp.",
+      "clarify": {
+        "id": "hiring_bar",
+        "question": "How many open sales roles should an account have to qualify?",
+        "why": "This is the difference between 'they're hiring' and 'they're building a team' \u2014 it moves the account count a lot.",
+        "decides": [
+          "signal_query"
+        ],
+        "options": [
+          {
+            "label": "Any open sales role",
+            "detail": "Widest. Includes one-off backfills.",
+            "config": {
+              "signal_query": {
+                "kinds": [
+                  "hiring",
+                  "research"
+                ],
+                "hiring_sales_min": 1,
+                "motion": "outbound"
+              }
+            }
+          },
+          {
+            "label": "Three or more",
+            "detail": "A team being built, not a backfill. The usual bar.",
+            "config": {
+              "signal_query": {
+                "kinds": [
+                  "hiring",
+                  "research"
+                ],
+                "hiring_sales_min": 3,
+                "motion": "outbound"
+              }
+            },
+            "note": "Three open sales roles is the point where ramp coverage is a problem the buyer already has."
+          },
+          {
+            "label": "Five or more",
+            "detail": "Only serious build-outs. Far fewer accounts.",
+            "config": {
+              "signal_query": {
+                "kinds": [
+                  "hiring",
+                  "research"
+                ],
+                "hiring_sales_min": 5,
+                "motion": "outbound"
+              }
+            }
+          }
+        ]
+      },
+      "config": {
+        "name": "Hiring push \u2014 ramp coverage",
+        "description": "Accounts actively building a sales team.",
+        "brief": "Every account here is hiring reps right now, which means the buyer is already carrying a number they cannot cover for the next two quarters while those reps ramp. Email 2 opens on the hiring itself \u2014 the count and one or two of the roles \u2014 and ties it to covering pipeline during the ramp, never to replacing anyone. Do not claim the postings are new and never name where the data came from.",
+        "window_start": "2026-07-05",
+        "window_end": "2026-09-03",
+        "membership_mode": "rolling",
+        "variant": "earn",
+        "discovery_interval_days": 7,
+        "signal_query": {
+          "kinds": [
+            "hiring",
+            "research"
+          ],
+          "motion": "outbound"
+        }
+      },
+      "notes": [
+        "Discovery re-scans weekly \u2014 hiring is the signal that turns over fastest, and each scan costs one credit per account."
+      ]
+    },
+    {
+      "keywords": [
+        "outreach",
+        "salesloft",
+        "apollo",
+        "sequencing",
+        "displacement",
+        "stack",
+        "tooling",
+        "competitor",
+        "already using"
+      ],
+      "summary": "Set this up as a tech-play campaign against accounts running a sequencing tool, on the no-disruption angle.",
+      "clarify": {
+        "id": "stack_scope",
+        "question": "Which stack are we going after?",
+        "why": "It decides the tech play each account has to match, and therefore which argument the sequence makes.",
+        "decides": [
+          "signal_query"
+        ],
+        "options": [
+          {
+            "label": "Sequencing tools",
+            "detail": "Outreach, Salesloft, Apollo \u2014 the no-disruption story.",
+            "config": {
+              "signal_query": {
+                "kinds": [
+                  "tech",
+                  "research"
+                ],
+                "tech_playbook": [
+                  "sequencing"
+                ],
+                "motion": "outbound"
+              }
+            }
+          },
+          {
+            "label": "Intent / ABM platforms",
+            "detail": "6sense, Demandbase \u2014 the signal-activation story.",
+            "config": {
+              "signal_query": {
+                "kinds": [
+                  "tech",
+                  "research"
+                ],
+                "tech_playbook": [
+                  "intent_abm"
+                ],
+                "motion": "outbound"
+              }
+            },
+            "note": "Switched to the signal-activation angle: these accounts already generate more signal than they work."
+          },
+          {
+            "label": "Either",
+            "detail": "Any detected GTM stack worth a play.",
+            "config": {
+              "signal_query": {
+                "kinds": [
+                  "tech",
+                  "research"
+                ],
+                "tech_playbook": [
+                  "sequencing",
+                  "intent_abm"
+                ],
+                "motion": "outbound"
+              }
+            }
+          }
+        ]
+      },
+      "config": {
+        "name": "GTM stack plays",
+        "description": "Accounts running a detected GTM stack worth a play.",
+        "brief": "These accounts have already bought into outbound tooling, so the argument is emphatically not replacement. We ship our own email and LinkedIn infrastructure and run alongside what they have, adding meetings on top of their existing run rate rather than changing anything about it. Reference at most ONE tool they run, and only where it makes that point land.",
+        "window_start": "2026-06-05",
+        "window_end": "2026-09-03",
+        "membership_mode": "rolling",
+        "variant": "show",
+        "signal_query": {
+          "kinds": [
+            "tech",
+            "research"
+          ],
+          "motion": "outbound"
+        }
+      },
+      "notes": []
+    }
+  ],
+  "default": {
+    "summary": "Configured a general signal-led campaign: accounts showing recent news or hiring activity in the last 30 days, worked across sales leadership and RevOps.",
+    "clarify": {
+      "id": "who",
+      "question": "Who should this reach at those accounts?",
+      "why": "Persona decides which agent writes the sequence and how the value is framed \u2014 the case to a CRO is a different case to a RevOps lead.",
+      "decides": [
+        "signal_query"
+      ],
+      "options": [
+        {
+          "label": "Sales leadership",
+          "detail": "CRO, VP Sales \u2014 they own the number.",
+          "config": {
+            "signal_query": {
+              "personas": [
+                "sales-leadership"
+              ],
+              "kinds": [
+                "research",
+                "hiring"
+              ],
+              "motion": "outbound"
+            }
+          }
+        },
+        {
+          "label": "Sales leadership + SDR leaders",
+          "detail": "The number and the team that has to hit it.",
+          "config": {
+            "signal_query": {
+              "personas": [
+                "sales-leadership",
+                "sdr-bdr"
+              ],
+              "kinds": [
+                "research",
+                "hiring"
+              ],
+              "motion": "outbound"
+            }
+          }
+        },
+        {
+          "label": "The whole buying group",
+          "detail": "Widest \u2014 includes RevOps and partnerships.",
+          "config": {
+            "signal_query": {
+              "personas": [],
+              "kinds": [
+                "research",
+                "hiring"
+              ],
+              "motion": "outbound"
+            }
+          },
+          "note": "No persona filter \u2014 every ICP contact at a qualifying account is in scope."
+        }
+      ]
+    },
+    "config": {
+      "name": "Signal-led outbound",
+      "description": "Accounts showing recent news or hiring activity.",
+      "brief": "Lead every opener on the specific thing that just happened at the account, and make the rest of the email earn that opener rather than restate it. One question per email, one offer per touch, no hype.",
+      "window_start": "2026-08-04",
+      "window_end": "2026-09-03",
+      "membership_mode": "rolling",
+      "variant": "value-give",
+      "discovery_interval_days": 7
+    },
+    "notes": [
+      "Window defaulted to the last 30 days of signal \u2014 nothing in the description named one."
+    ]
+  }
+}

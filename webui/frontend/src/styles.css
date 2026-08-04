@@ -80,11 +80,33 @@ a:hover { text-decoration: underline; }
 .nav-link.active { background: rgba(82, 254, 191, 0.13); color: var(--mint); font-weight: 600; box-shadow: inset 2px 0 0 var(--mint); }
 .nav-link .ico { width: 18px; height: 18px; display: grid; place-items: center; opacity: .85; }
 .nav-link.active .ico { opacity: 1; }
+/* Collapsible nav groups (Action Center / Reporting) */
+.nav-group { display: flex; flex-direction: column; }
+.nav-group-toggle {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 10px 14px; margin: 0; background: none; border: 0; cursor: pointer;
+  border-radius: var(--radius-sm); text-align: left;
+  color: rgba(255, 255, 255, 0.5); font: inherit; font-weight: 600; font-size: 11px;
+  letter-spacing: .6px; text-transform: uppercase;
+  transition: background .12s, color .12s;
+}
+.nav-group-toggle:hover { background: rgba(255, 255, 255, 0.07); color: #fff; filter: none; }
+.nav-group-toggle .chev { flex-shrink: 0; opacity: .7; transition: transform .15s; }
+.nav-group.open .nav-group-toggle .chev { transform: rotate(90deg); }
+.nav-group-items { display: flex; flex-direction: column; gap: 4px; padding: 2px 0 6px; }
+.nav-group-items .nav-link { padding-left: 22px; }
 .sidebar .spacer { flex: 1; }
 .sidebar .foot { color: rgba(255, 255, 255, 0.38); font-size: 10.5px; padding: 10px; line-height: 1.6; letter-spacing: .2px; }
 
 /* Main */
-.main { flex: 1; padding: 36px 44px; max-width: 1180px; }
+/* Fill the window rather than sitting in a fixed 1180px column — the grids below
+   use auto-fit/minmax, so extra width becomes extra columns instead of dead margin.
+   Prose blocks cap their own measure (.page-sub, .uth-controls) so lines never get
+   uncomfortably long. min-width:0 lets flex children shrink instead of overflowing. */
+.main {
+  flex: 1; min-width: 0;
+  padding: 36px clamp(24px, 2.6vw, 56px);
+}
 .page-title { font-size: 30px; font-weight: 600; letter-spacing: -.6px; line-height: 1.1; margin: 0 0 6px; }
 .page-sub { color: var(--muted); font-size: 14.5px; line-height: 1.5; max-width: 680px; margin: 0 0 28px; }
 
@@ -131,8 +153,13 @@ button.linklike { background: none; border: none; padding: 0; color: var(--accen
 button.linklike:hover { text-decoration: underline; }
 
 /* Tables */
-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+/* Tabular figures everywhere: these tables are read by scanning a column of
+   numbers, and proportional digits make 1,131 and 4,004 different widths. */
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; font-variant-numeric: tabular-nums; }
 th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--hairline); }
+/* Numeric columns right-align so the units line up under each other. Applied to
+   the th and the td alike, or the header floats away from its own column. */
+th.num, td.num { text-align: right; }
 /* Dense variant (Signals view): tighter cells for wide many-column tables */
 table.dense th, table.dense td { padding: 8px 12px; }
 th { color: var(--faint); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .7px; }
@@ -165,6 +192,62 @@ tr.clickable:hover { background: var(--surface-hover); }
 /* Toolbar / filter bar */
 .toolbar { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; margin-bottom: 20px; }
 .toolbar .grow { flex: 1; min-width: 180px; }
+
+/* Filter + sort controls for the cross-campaign index tables (components/tableTools.jsx).
+   Denser than .toolbar: these bars carry six or seven controls, and at .toolbar's
+   rhythm they wrap into a block taller than the table they filter. */
+.filterbar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end; margin-bottom: 12px; }
+.filterbar .grow { flex: 1; min-width: 100px; }
+.filterbar select, .filterbar input { padding: 6px 9px; font-size: 13px; }
+.filterbar label.field { font-size: 11px; letter-spacing: .2px; }
+
+.search-wrap { position: relative; display: inline-flex; }
+.search-wrap input { padding-right: 24px; }
+.search-wrap input::-webkit-search-cancel-button { display: none; }
+.search-wrap .clear {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; padding: 0 4px; color: var(--faint);
+  font-size: 16px; line-height: 1; cursor: pointer;
+}
+.search-wrap .clear:hover { color: var(--text); filter: none; }
+
+.f-toggle {
+  display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px;
+  border: 1px solid var(--border-strong); border-radius: 999px; background: #fff;
+  font-size: 12.5px; font-weight: 500; color: var(--muted); cursor: pointer;
+  white-space: nowrap; transition: color .12s, border-color .12s, background .12s;
+}
+.f-toggle:hover { border-color: var(--jade); color: var(--jade); }
+.f-toggle.on { color: var(--jade); border-color: var(--jade); background: var(--accent-dim); }
+.f-toggle input { margin: 0; accent-color: var(--jade); }
+
+.filter-count { align-self: center; color: var(--muted); font-size: 12.5px; }
+.filter-count b { color: var(--text); }
+
+/* Sortable table headers. The whole cell is the hit target, so the padding moves
+   onto the button — a th with its own padding leaves a dead border you can click
+   without sorting. */
+th.th-sort { padding: 0; }
+th.th-sort > button {
+  display: block; width: 100%; padding: 12px 16px;
+  background: none; border: none; border-radius: 0; cursor: pointer;
+  font: inherit; font-weight: 600; font-size: 11px; letter-spacing: .7px;
+  text-transform: uppercase; color: inherit; text-align: left;
+}
+table.dense th.th-sort > button { padding: 8px 12px; }
+th.th-sort > button:hover { color: var(--jade); filter: none; }
+/* The label wraps exactly as a plain <th> would. Clipping it to the column width
+   instead turned narrow headers ("Score" at 5%) into a bare arrow, and forcing it
+   onto one line pushed "Best score" over its neighbour. */
+/* The caret only takes space on the column being sorted (or hovered). These tables
+   run to fifteen columns at 5% each — a permanent glyph in every header eats the
+   width the label needs and "Score" renders as nothing but an arrow. */
+th.th-sort .caret { display: none; opacity: .45; font-size: 8px; margin-left: 4px; }
+th.th-sort:hover .caret, th.th-sort.on .caret { display: inline; }
+th.th-sort > button:hover .caret { opacity: .8; }
+th.th-sort.on { color: var(--jade); }
+th.th-sort.on .caret { opacity: 1; }
+th.th-sort:focus-within { box-shadow: inset var(--focus-ring); }
 
 /* Misc */
 .row { display: flex; gap: 12px; align-items: center; }
@@ -311,6 +394,393 @@ tr.clickable:hover { background: var(--surface-hover); }
   .login__headline { font-size: 38px; }
 }
 
+/* Outreach — per-contact sequence progress (filled = sent, hollow = staged/draft) */
+.seq-cell { display: inline-flex; align-items: center; gap: 8px; }
+.seq-track { display: inline-flex; gap: 3px; }
+.seq-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  border: 1.5px solid rgba(15, 28, 24, 0.22); background: transparent;
+}
+.badge.seq-replied {
+  color: var(--jade); border-color: var(--jade); background: rgba(34, 130, 111, 0.08);
+  font-size: 10px; padding: 1px 6px;
+}
+
+/* Outreach detail — per-message send state */
+.msg-state {
+  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px;
+  padding: 2px 7px; border-radius: 999px; border: 1px solid; white-space: nowrap;
+}
+.msg-state.sent { color: #105143; border-color: rgba(34,130,111,.45); background: rgba(34,130,111,.09); }
+.msg-state.staged { color: #7a4f10; border-color: rgba(184,121,31,.45); background: rgba(184,121,31,.09); }
+.msg-state.draft { color: var(--muted); border-color: var(--border-strong); background: var(--panel-2); }
+
+/* Home — widget dashboard.
+   Cards in a row SHARE a height (grid rows stretch + flex column body), so the page
+   reads as a grid instead of ragged columns of different lengths. */
+.home-grid {
+  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+  align-items: stretch; gap: 18px;
+}
+.home-widget { display: flex; flex-direction: column; height: 100%; padding: 18px 20px; }
+.home-widget-h { align-items: center; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid var(--hairline); }
+.home-widget-body { flex: 1; display: flex; flex-direction: column; padding-top: 14px; }
+.home-more { font-size: 12px; font-weight: 600; color: var(--jade); white-space: nowrap; }
+.home-more:hover { text-decoration: underline; }
+
+/* Outcome tiles — clickable, and a fixed sub line so all four align. */
+a.home-tile {
+  display: block; color: inherit; text-decoration: none;
+  transition: border-color .12s, box-shadow .12s;
+}
+a.home-tile:hover { border-color: var(--jade); box-shadow: var(--shadow-md); text-decoration: none; }
+.home-tile .value { font-size: 28px; }
+.home-tile .sub { min-height: 18px; }
+.home-delta { font-weight: 600; white-space: nowrap; }
+
+.home-big { font-size: 32px; font-weight: 700; letter-spacing: -.7px; line-height: 1; }
+.home-note { font-size: 11.5px; color: var(--muted); margin-top: 6px; }
+.home-sub-h {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .6px; font-weight: 600;
+  color: var(--faint); margin: 16px 0 8px;
+}
+.home-clear {
+  margin: 0; font-size: 12.5px; line-height: 1.55; color: #105143;
+  background: rgba(34, 130, 111, 0.06); border: 1px solid rgba(34, 130, 111, 0.2);
+  border-radius: var(--radius-sm); padding: 11px 13px;
+}
+.home-spark { width: 140px; height: 46px; flex-shrink: 0; }
+
+/* Task list — count, what it is, where to go. */
+.home-tasks { list-style: none; margin: 0; padding: 0; }
+.home-tasks li + li { margin-top: 6px; }
+.home-tasks a {
+  display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--panel-2); color: inherit; text-decoration: none;
+  transition: border-color .12s, background .12s;
+}
+.home-tasks a:hover { border-color: var(--jade); background: #fff; text-decoration: none; }
+.home-tasks b { font-size: 15px; min-width: 34px; }
+.home-task-label { flex: 1; font-size: 12.5px; }
+.home-task-cta { font-size: 11.5px; font-weight: 600; color: var(--jade); white-space: nowrap; }
+
+/* Compact data tables inside widgets (replies, steps) */
+.home-replies, .home-steps { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.home-replies { margin-top: 12px; }
+/* The global `th` rule uppercases and shrinks headers for data tables — these use
+   <th> as a row label, so reset it or names render as "SAM OKAFOR". */
+.home-replies th, .home-replies td, .home-steps th, .home-steps td {
+  padding: 5px 0; text-align: left; border: 0; vertical-align: middle;
+  text-transform: none; letter-spacing: normal; font-size: inherit; color: inherit;
+  background: none;
+}
+.home-replies th { font-weight: 600; white-space: nowrap; padding-right: 10px; }
+.home-reply-co { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-reply-ago { text-align: right; white-space: nowrap; font-size: 11px; }
+
+.home-steps th { font-weight: 500; white-space: nowrap; padding-right: 12px; }
+.home-steps td.muted { white-space: nowrap; padding-right: 12px; font-size: 11.5px; }
+.home-steps-bar { width: 100%; }
+.home-steps-bar > span {
+  display: block; height: 6px; border-radius: 999px; background: var(--jade); min-width: 3px;
+}
+.home-steps-rate {
+  text-align: right; white-space: nowrap; font-weight: 600; padding-left: 14px;
+  width: 52px; font-variant-numeric: tabular-nums;
+}
+
+/* Shared legend: label left, count right, one row per series. */
+.home-legend { margin: 12px 0 0; display: grid; gap: 5px; }
+.home-legend > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.home-legend dt { display: flex; align-items: center; gap: 7px; font-size: 12.5px; margin: 0; }
+.home-legend dd { margin: 0; font-weight: 600; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.home-legend .dot { width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
+.home-legend .dot.round { border-radius: 50%; }
+
+.home-funnel {
+  display: flex; height: 12px; border-radius: 999px; overflow: hidden;
+  background: var(--panel-2); border: 1px solid var(--border);
+}
+
+/* Signal coverage — share bars, mirroring the Signals view's counts. */
+.home-coverage { display: grid; gap: 9px; }
+.home-cov-row { display: flex; align-items: center; gap: 10px; }
+.home-cov-label {
+  font-size: 12.5px; width: 124px; flex-shrink: 0;
+  display: flex; flex-direction: column; line-height: 1.3;
+}
+.home-cov-label em {
+  font-style: normal; font-size: 10.5px; color: var(--faint); letter-spacing: .2px;
+}
+.home-hook-foot {
+  font-size: 11.5px; color: var(--muted); line-height: 1.5; margin-top: 12px;
+  padding-top: 10px; border-top: 1px solid var(--hairline);
+}
+.home-hook-foot b { color: var(--ink); }
+.home-cov-bar {
+  flex: 1; height: 7px; border-radius: 999px; background: var(--panel-2);
+  border: 1px solid var(--border); overflow: hidden;
+}
+.home-cov-bar > span { display: block; height: 100%; background: var(--jade); }
+.home-cov-n {
+  font-size: 11.5px; color: var(--muted); white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Analytics → attribution stage breakdown */
+.stage-bars { display: grid; gap: 9px; margin-bottom: 4px; }
+.stage-row { display: flex; align-items: center; gap: 12px; font-size: 12.5px; }
+.stage-name { width: 150px; flex-shrink: 0; }
+.stage-bar {
+  flex: 1; height: 9px; border-radius: 999px; background: var(--panel-2);
+  border: 1px solid var(--border); overflow: hidden;
+}
+.stage-bar > span { display: block; height: 100%; background: var(--jade); }
+.stage-deals { width: 64px; text-align: right; color: var(--muted); white-space: nowrap; }
+.stage-amt {
+  width: 92px; text-align: right; font-weight: 600; white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Home — recent signals list */
+.home-signals { list-style: none; margin: 0; padding: 0; flex: 1; }
+.home-signals li + li { border-top: 1px solid var(--hairline); }
+.home-signals a {
+  display: block; padding: 9px 2px; color: inherit; text-decoration: none;
+  border-radius: 6px;
+}
+.home-signals a:hover { text-decoration: none; }
+.home-signals a:hover .home-sig-co { color: var(--jade); }
+.home-sig-head { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.home-sig-co { font-size: 13px; font-weight: 600; }
+.home-sig-meta { font-size: 10.5px; color: var(--faint); white-space: nowrap; }
+.home-sig-text {
+  font-size: 12px; color: var(--muted); line-height: 1.45; margin-top: 2px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.home-sig-tags { display: flex; gap: 5px; margin-top: 5px; flex-wrap: wrap; }
+.home-sig-tags .badge { font-size: 10px; padding: 1px 6px; }
+
+/* Setup → Connectors */
+.conn-cat {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .6px; font-weight: 600;
+  color: var(--muted); margin-bottom: 8px;
+}
+.conn-cat.sub { font-weight: 500; opacity: .8; }
+.conn-grid {
+  display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
+}
+.conn-card {
+  display: flex; flex-direction: column; padding: 12px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: #fff;
+}
+.conn-head { display: flex; gap: 11px; align-items: flex-start; }
+.conn-card.open { grid-column: 1 / -1; }
+.conn-edit { margin-left: auto; flex-shrink: 0; }
+.conn-note { margin-left: auto; font-size: 11px; color: var(--muted); flex-shrink: 0;
+  align-self: center; }
+/* The connect form. Opens in place, spans the grid row so the fields have room. */
+.conn-form { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border-strong);
+  display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.conn-form .card-actions, .conn-form .banner, .conn-form > p { grid-column: 1 / -1; }
+.conn-field input { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; }
+.conn-field .req { color: var(--red); }
+.conn-src { display: block; font-size: 10px; color: var(--jade); font-weight: 500;
+  text-transform: none; letter-spacing: 0; }
+.conn-help { display: block; font-size: 10.5px; color: var(--muted); line-height: 1.45;
+  font-weight: 400; }
+.conn-card.live { border-color: rgba(34, 130, 111, 0.42); background: rgba(34, 130, 111, 0.035); }
+.conn-card.catalogue { background: var(--panel-2); border-style: dashed; }
+.conn-mark {
+  width: 30px; height: 30px; flex-shrink: 0; border-radius: 8px;
+  display: grid; place-items: center; font-size: 11.5px; font-weight: 700;
+  letter-spacing: -.2px;
+}
+.conn-body { min-width: 0; }
+.conn-name-row { display: flex; align-items: center; gap: 6px; }
+.conn-name { font-size: 13.5px; font-weight: 600; }
+.conn-check {
+  width: 15px; height: 15px; border-radius: 50%; background: var(--jade, #22826f);
+  color: #fff; font-size: 9.5px; display: grid; place-items: center; flex-shrink: 0;
+}
+.conn-blurb { font-size: 11.5px; color: var(--muted); line-height: 1.45; margin-top: 3px; }
+.conn-status { font-size: 11px; margin-top: 5px; font-weight: 500; }
+.conn-reason { font-weight: 400; opacity: .85; }
+
+/* Setup → chat-driven config editing */
+.cc { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.cc-head { margin-bottom: 10px; }
+.cc-locked {
+  margin-top: 16px; padding: 12px 14px; border-radius: var(--radius-sm);
+  background: var(--panel-2); border: 1px dashed var(--border); font-size: 13px;
+}
+.cc-note {
+  font-size: 11.5px; color: var(--muted); line-height: 1.5; margin: 0 0 10px;
+  padding: 8px 10px; background: var(--panel-2); border-radius: 6px;
+}
+.cc-warn {
+  font-size: 12px; color: #9a3412; line-height: 1.5; margin: 0 0 10px;
+  padding: 8px 10px; background: rgba(184, 121, 31, 0.10);
+  border: 1px solid rgba(184, 121, 31, 0.35); border-radius: 6px;
+}
+.cc-notes { font-size: 12.5px; line-height: 1.55; margin: 8px 0; color: var(--ink); }
+.cc-summary { font-size: 12px; color: var(--muted); margin: 8px 0 6px; }
+
+.cc-thread { display: grid; gap: 10px; margin-bottom: 12px; }
+.cc-turn { font-size: 12.5px; line-height: 1.5; padding: 9px 12px; border-radius: 8px; }
+.cc-turn.user { background: var(--panel-2); border: 1px solid var(--border); }
+.cc-turn.applied {
+  background: rgba(34, 130, 111, 0.07); border: 1px solid rgba(34, 130, 111, 0.4);
+  color: #105143;
+}
+.cc-attached { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+.cc-prop { border: 1px solid rgba(34, 130, 111, 0.4); border-radius: 8px; padding: 12px; }
+.cc-filetabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 10px 0 6px; }
+.cc-filetab {
+  font-size: 11.5px; padding: 4px 9px; border-radius: 6px; cursor: pointer;
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--muted);
+  filter: none; box-shadow: none; display: inline-flex; gap: 6px; align-items: center;
+}
+.cc-filetab.active { background: #fff; color: var(--ink); border-color: var(--jade, #22826f); }
+.cc-stat { font-family: var(--mono, ui-monospace, monospace); font-size: 10.5px; }
+.cc-stat.add { color: #15803d; }
+.cc-stat.del { color: #b91c1c; }
+
+.diff {
+  display: flex; flex-direction: column; margin: 0; max-height: 340px; overflow: auto;
+  background: #fbfbfa; border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 0; font-family: var(--mono, ui-monospace, monospace); font-size: 11px;
+  line-height: 1.55;
+}
+.diff .dl { padding: 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff .add { background: rgba(21, 128, 61, 0.10); color: #14532d; }
+.diff .del { background: rgba(185, 28, 28, 0.09); color: #7f1d1d; }
+.diff .hunk { color: var(--muted); background: rgba(15, 28, 24, 0.04); }
+.diff .meta { color: var(--muted); }
+
+.cc-pending { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.cc-chip {
+  font-size: 11.5px; padding: 3px 6px 3px 9px; border-radius: 999px;
+  background: var(--panel-2); border: 1px solid var(--border);
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.cc-chip button {
+  background: none; border: 0; cursor: pointer; color: var(--muted);
+  font-size: 13px; line-height: 1; padding: 0 3px; filter: none; box-shadow: none;
+}
+.cc-input { display: grid; gap: 8px; }
+.cc-input textarea {
+  width: 100%; resize: vertical; font: inherit; font-size: 13px; padding: 9px 11px;
+  border: 1px solid var(--border); border-radius: 8px; background: #fff;
+}
+.cc-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+.cc-history { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+.cc-hrow {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding: 7px 0; border-bottom: 1px solid var(--border);
+}
+.cc-hrow:last-child { border-bottom: 0; }
+
+/* Setup → under-the-hood tab strip */
+.uth-tabs {
+  display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none;
+  border-bottom: 1px solid var(--border); margin: 10px 0 0; padding: 0 2px;
+}
+.uth-tabs::-webkit-scrollbar { display: none; }
+.uth-tab {
+  flex: 0 0 auto; padding: 9px 15px; margin-bottom: -1px;
+  background: none; border: 0; border-bottom: 2px solid transparent;
+  border-radius: 0; cursor: pointer; white-space: nowrap;
+  font: inherit; font-size: 13px; font-weight: 500; color: var(--muted);
+  filter: none; box-shadow: none; transition: color .12s, border-color .12s;
+}
+.uth-tab:hover { color: var(--ink); background: none; filter: none; }
+.uth-tab.active { color: var(--jade, #22826f); font-weight: 600; border-bottom-color: var(--jade, #22826f); }
+.uth-panel { border-top-left-radius: 0; border-top-right-radius: 0; margin-top: 0; }
+
+/* Setup → consistent "under the hood" section frame */
+.uth-head {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 14px;
+  padding-bottom: 10px; margin-bottom: 12px; border-bottom: 1px solid var(--border);
+}
+.uth-controls { font-size: 12.5px; color: var(--ink); line-height: 1.5; max-width: 640px; }
+.uth-controls b { color: var(--jade, #22826f); }
+.uth-src { display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-end; }
+.uth-src button {
+  font-family: var(--mono, ui-monospace, monospace); font-size: 10.5px; padding: 3px 7px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 5px;
+  color: var(--muted); cursor: pointer; filter: none; box-shadow: none; white-space: nowrap;
+}
+.uth-src button:hover { background: #fff; color: var(--ink); filter: none; }
+.uth-foot {
+  margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border);
+  font-size: 11.5px; color: var(--muted); line-height: 1.55;
+}
+
+/* Sidebar — demo/live data-source switcher, pinned under Setup */
+.demo-switcher { position: relative; margin: 8px 0 4px; }
+.demo-switcher .demo-row {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: var(--radius-sm); color: rgba(255, 255, 255, 0.72);
+  font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; text-align: left;
+  filter: none; box-shadow: none; transition: background .12s, border-color .12s;
+}
+.demo-switcher .demo-row:hover { background: rgba(255, 255, 255, 0.10); color: #fff; filter: none; }
+/* Active demo reads as a normal selected control, not a warning — a demo should
+   look like a working system, not a system in a caution state. */
+.demo-switcher.on .demo-row {
+  background: rgba(82, 254, 191, 0.12); border-color: rgba(82, 254, 191, 0.35); color: var(--mint);
+}
+.demo-switcher .muted-row { cursor: default; opacity: .55; }
+.demo-switcher .muted-row.err { opacity: .9; border-color: rgba(220, 38, 38, 0.5); color: #f0a5a5; }
+.demo-switcher .demo-dot.err { background: #dc2626; box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.2); }
+.demo-switcher .demo-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--mint);
+  box-shadow: 0 0 0 3px rgba(82, 254, 191, 0.16);
+}
+.demo-switcher .demo-dot.off { background: var(--mint); box-shadow: 0 0 0 3px rgba(82, 254, 191, 0.16); }
+.demo-switcher .demo-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.demo-switcher .demo-caret { opacity: .6; font-size: 10px; }
+
+.demo-pop {
+  position: absolute; bottom: calc(100% + 8px); left: 0; right: 0; z-index: 40;
+  background: #14231e; border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--radius-sm); padding: 6px; max-height: 60vh; overflow-y: auto;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+.demo-pop-h {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .6px; font-weight: 600;
+  color: rgba(255, 255, 255, 0.42); padding: 6px 8px 8px;
+}
+.demo-opt {
+  display: grid; gap: 2px; width: 100%; padding: 8px; margin-bottom: 2px;
+  background: none; border: 0; border-radius: 6px; cursor: pointer; text-align: left;
+  color: rgba(255, 255, 255, 0.78); font: inherit; filter: none; box-shadow: none;
+}
+.demo-opt:hover { background: rgba(255, 255, 255, 0.07); filter: none; }
+.demo-opt.sel { background: rgba(82, 254, 191, 0.12); color: var(--mint); }
+.demo-opt-label { font-size: 12.5px; font-weight: 600; }
+.demo-opt-sub { font-size: 11px; color: rgba(255, 255, 255, 0.50); line-height: 1.4; }
+.demo-opt.sel .demo-opt-sub { color: rgba(82, 254, 191, 0.70); }
+.demo-opt-real {
+  font-size: 10px; letter-spacing: .3px; color: #f2c98a; text-transform: uppercase;
+  margin-top: 2px;
+}
+.demo-opt-covers {
+  font-size: 10px; letter-spacing: .3px; color: rgba(255, 255, 255, 0.35);
+  text-transform: uppercase; margin-top: 2px;
+}
+.demo-pop-foot {
+  font-size: 10.5px; line-height: 1.5; color: rgba(255, 255, 255, 0.40);
+  padding: 8px; border-top: 1px solid rgba(255, 255, 255, 0.08); margin-top: 4px;
+}
+
 /* Sidebar — signed-in identity + sign out */
 .sidebar .signed-in {
   display: flex; flex-direction: column; gap: 7px; padding: 12px 10px 10px;
@@ -395,3 +865,591 @@ tr.clickable:hover { background: var(--surface-hover); }
   .inbox { grid-template-columns: 1fr; height: auto; }
   .inbox-list { max-height: 44vh; border-right: none; border-bottom: 1px solid var(--border); }
 }
+
+/* ============================================================================
+   Campaigns — audience, scoring, channels, capacity.
+   Everything the campaign surfaces need, as classes rather than inline style,
+   so they inherit the same rhythm, radii and hues as the rest of the console.
+   ========================================================================== */
+
+/* Step rail: the campaign workflow is an ordered set of decisions, so number it. */
+.steps { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin: 14px 0 22px; overflow-x: auto; scrollbar-width: none; }
+.steps::-webkit-scrollbar { display: none; }
+.step {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 9px;
+  padding: 10px 16px 11px; margin-bottom: -1px; background: none; border: 0;
+  border-bottom: 2px solid transparent; border-radius: 0; cursor: pointer;
+  font: inherit; font-size: 13px; font-weight: 500; color: var(--muted);
+  filter: none; box-shadow: none; white-space: nowrap; transition: color .12s, border-color .12s;
+}
+.step:hover { color: var(--text); background: none; filter: none; }
+.step.active { color: var(--text); font-weight: 600; border-bottom-color: var(--jade); }
+.step-n {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: 50%; font-size: 11px; font-weight: 700;
+  background: var(--panel-2); color: var(--faint); border: 1px solid var(--border);
+}
+.step.active .step-n { background: var(--jade); color: #fff; border-color: var(--jade); }
+.step.done .step-n { background: var(--accent-dim); color: var(--jade); border-color: transparent; }
+
+/* Card header used across the campaign panels */
+.card-h { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 4px; }
+.card-h h3 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -.2px; }
+.card-note { color: var(--muted); font-size: 12.5px; line-height: 1.5; margin: 4px 0 0; max-width: 62ch; }
+.card-meta { color: var(--faint); font-size: 12px; text-align: right; white-space: nowrap; }
+.card-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 16px; }
+.hint { color: var(--faint); font-size: 11.5px; line-height: 1.5; }
+
+/* Selectable option cards (audience type, membership mode) */
+.opt-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.opt {
+  display: flex; flex-direction: column; gap: 3px; text-align: left;
+  padding: 12px 14px; border-radius: var(--radius-sm); cursor: pointer;
+  background: var(--panel); border: 1px solid var(--border-strong);
+  font: inherit; color: var(--text); filter: none; box-shadow: none; transition: border-color .12s, background .12s;
+}
+.opt:hover { background: var(--panel-2); filter: none; }
+.opt.on { border-color: var(--jade); background: var(--accent-dim); box-shadow: var(--focus-ring); }
+.opt-t { font-weight: 600; font-size: 13px; }
+.opt-d { font-size: 11.5px; color: var(--muted); line-height: 1.45; }
+
+/* Inline labelled field, for the dense control rows */
+.f { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--muted); }
+.f input, .f select { font-size: 13px; }
+.f-num { width: 74px; }
+.f-check { display: inline-flex; align-items: flex-start; gap: 8px; cursor: pointer; font-size: 13px; }
+.f-check input { width: auto; margin-top: 3px; }
+.f-check span { line-height: 1.45; }
+.f-check .hint { display: block; }
+
+/* Priority score chip + trend */
+.score { display: inline-flex; align-items: center; justify-content: center; min-width: 34px; padding: 3px 8px;
+  border-radius: 7px; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
+  border: 1px solid var(--border-strong); color: var(--text); background: var(--panel-2); }
+.score.hot  { color: #a01b1b; border-color: rgba(220, 38, 38, .35); background: rgba(220, 38, 38, .07); }
+.score.warm { color: var(--amber); border-color: rgba(184, 121, 31, .35); background: rgba(184, 121, 31, .08); }
+.score.cool { color: var(--muted); }
+.trend { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.trend.up { color: var(--green); }
+.trend.down { color: var(--red); }
+
+/* Campaign brief — describe the campaign, the form fills itself in.
+   Sits above the fields it sets, so the cause is directly above the effect. */
+.brief-teaser { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 0 0 14px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.brief {
+  border: 1px solid var(--border-strong); border-radius: 10px; padding: 12px 14px;
+  margin-bottom: 16px; background: var(--panel-2);
+}
+.brief.dropping { border-color: var(--jade); background: var(--accent-dim); }
+.brief textarea { font: inherit; font-size: 13px; padding: 9px 11px;
+  border-radius: 8px; border: 1px solid var(--border-strong); background: var(--panel); }
+.brief .badge .x { background: none; border: 0; padding: 0 0 0 6px; cursor: pointer;
+  color: inherit; font-size: 13px; line-height: 1; }
+.brief-examples { display: flex; flex-direction: column; gap: 5px; margin-top: 10px; }
+.brief-examples button {
+  text-align: left; font-size: 11.5px; line-height: 1.45; color: var(--muted);
+  background: none; border: 1px dashed var(--border-strong); border-radius: 7px;
+  padding: 6px 9px; cursor: pointer;
+}
+.brief-examples button:hover { color: var(--text); border-style: solid; filter: none; }
+.brief-q { margin-top: 12px; padding: 10px 12px; border-radius: 8px;
+  background: var(--panel); border: 1px solid var(--border-strong); }
+.brief-q-h { font-size: 13px; font-weight: 600; }
+.brief-notes { margin: 10px 0 0; padding-left: 18px; font-size: 11.5px; color: var(--muted); }
+.brief-notes.warn { color: var(--amber); }
+/* Drop an event list in. The counts under the mapping are the decision, so they
+   get the visual weight, not the file picker. */
+.dropzone {
+  border: 1.5px dashed var(--border-strong); border-radius: 10px; padding: 18px 16px;
+  text-align: center; cursor: pointer; background: var(--panel-2);
+  transition: border-color .12s ease, background .12s ease;
+}
+.dropzone:hover, .dropzone.on { border-color: var(--jade); background: var(--accent-dim); }
+.map-grid { display: grid; gap: 10px; margin-top: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); }
+.map-grid select { width: 100%; }
+.map-grid .req { color: var(--red); }
+.import-counts { display: flex; flex-wrap: wrap; gap: 22px; margin: 14px 0 2px;
+  padding: 12px 14px; border-radius: 9px; background: var(--panel-2); }
+.import-count .v { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.import-count .v[data-tone="good"] { color: var(--green); }
+.import-count .l { font-size: 11px; color: var(--muted); }
+.import-count .s { font-size: 10.5px; color: var(--faint); margin-top: 2px; }
+
+/* Marks a field the configurator set. A provenance mark, never a lock. */
+.from-brief { color: var(--jade); font-size: 10px; line-height: 1; }
+.brief-note { display: flex; gap: 8px; align-items: flex-start; max-width: 680px;
+  margin-top: 10px; padding: 9px 12px; border-radius: 8px; font-size: 12.5px;
+  line-height: 1.5; color: var(--text); background: var(--accent-dim);
+  border-left: 2px solid var(--jade); }
+
+/* The money scale — aggregate signal as $ to $$$$$.
+   COUNT is how much is here, COLOUR is how ready they are, and the two are
+   independent: $$$$$ in the cool "open" hue is a big unworked opportunity, $ in hot
+   is a small inbound one. Deliberately quiet — no legend anywhere, the tooltip does
+   the explaining. Unearned glyphs stay in place at low opacity so the rating reads
+   as a position on a scale rather than a variable-length string. */
+.money-wrap { position: relative; display: inline-block; }
+.money { display: inline-flex; gap: 0; font-weight: 800; font-size: 13px;
+  letter-spacing: -0.5px; line-height: 1; user-select: none;
+  background: none; border: 0; padding: 2px 1px; cursor: pointer; border-radius: 5px; }
+.money:hover { background: rgba(15, 28, 24, 0.05); filter: none; }
+.money:hover .on { transform: translateY(-1px); }
+.money .off { color: var(--text); opacity: 0.13; }
+.money .on { transition: transform .12s ease, opacity .15s ease; }
+/* Click: the earned glyphs tumble in one at a time, left to right. */
+.money.ringing .on { animation: coin .42s cubic-bezier(.2, 1.5, .4, 1) both;
+  animation-delay: calc(var(--i) * 55ms); }
+@keyframes coin {
+  0%   { transform: translateY(-9px) scale(.55) rotate(-18deg); opacity: 0; }
+  60%  { transform: translateY(2px) scale(1.22) rotate(4deg); opacity: 1; }
+  100% { transform: translateY(0) scale(1) rotate(0); opacity: 1; }
+}
+
+/* The receipt: how the number was earned, printed a line at a time. */
+.receipt {
+  position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; min-width: 208px;
+  padding: 10px 12px 9px; border-radius: 4px; background: var(--panel);
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 10px 26px rgba(15, 28, 24, 0.16);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+  animation: unroll .22s ease-out both;
+}
+@keyframes unroll { from { opacity: 0; transform: translateY(-6px) scaleY(.86);
+  transform-origin: top; } to { opacity: 1; transform: none; } }
+.receipt-h { font-size: 9.5px; letter-spacing: .12em; color: var(--muted);
+  padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px dashed var(--border-strong); }
+.receipt-line { display: flex; justify-content: space-between; gap: 14px;
+  padding: 2px 0; color: var(--muted); white-space: nowrap;
+  animation: print .2s ease-out both; animation-delay: calc(90ms + var(--i) * 55ms); }
+.receipt-line b { color: var(--text); font-variant-numeric: tabular-nums; }
+.receipt-line b.up { color: var(--green); }
+.receipt-line b.down { color: var(--red); }
+.receipt-line.total { color: var(--text); font-weight: 700; }
+.receipt-rule { border-top: 1px dashed var(--border-strong); margin: 6px 0; }
+.receipt-foot { margin-top: 7px; padding-top: 6px; font-size: 10px; line-height: 1.45;
+  color: var(--muted); white-space: normal; border-top: 1px dashed var(--border-strong);
+  animation: print .2s ease-out both; animation-delay: calc(90ms + var(--i) * 55ms); }
+@keyframes print { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; } }
+.receipt-tag { margin-top: 8px; padding-top: 7px; border-top: 1px dashed var(--border-strong);
+  font-size: 9px; letter-spacing: .1em; text-transform: uppercase; text-align: center;
+  color: var(--faint); animation: print .2s ease-out both;
+  animation-delay: calc(90ms + var(--i) * 55ms); }
+@media (prefers-reduced-motion: reduce) {
+  .money.ringing .on, .receipt, .receipt-line, .receipt-foot, .receipt-tag {
+    animation: none;
+  }
+}
+.money.heat-cold .on    { color: var(--muted); }
+.money.heat-open .on    { color: #e08585; }               /* opportunity, not ready */
+.money.heat-warming .on { color: var(--amber); }
+.money.heat-hot .on     { color: var(--green);
+  text-shadow: 0 0 10px rgba(82, 254, 191, 0.55); }       /* the one that glows */
+
+/* Channel recommendation — small outlined glyphs, on/off */
+.chan { display: inline-flex; gap: 4px; }
+.chan i {
+  display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px;
+  border-radius: 6px; border: 1px solid var(--border); color: var(--faint); background: var(--panel);
+}
+.chan i.on { border-color: var(--jade); color: var(--jade); background: var(--accent-dim); }
+.chan svg { width: 13px; height: 13px; }
+
+/* Campaign membership tags — membership lives on the person */
+.tags { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.tag {
+  display: inline-block; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 600;
+  border: 1px solid var(--border-strong); color: var(--muted); background: var(--panel-2);
+}
+.tag.cur { color: var(--jade); border-color: var(--jade); background: var(--accent-dim); }
+.tag.merged { color: var(--amber); border-color: rgba(184, 121, 31, .4); background: rgba(184, 121, 31, .08); }
+
+/* Band mix bar (campaign list) */
+.mix { display: flex; height: 5px; border-radius: 3px; overflow: hidden; background: var(--border); margin-bottom: 4px; }
+.mix span { display: block; }
+.mix .hot { background: var(--red); }
+.mix .warm { background: var(--amber); }
+.mix .cool { background: var(--border-strong); }
+
+/* Capacity meters */
+.meters { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.meter-v { font-size: 26px; font-weight: 700; letter-spacing: -.5px; margin: 8px 0; font-variant-numeric: tabular-nums; }
+.meter-v small { font-size: 14px; font-weight: 400; color: var(--muted); }
+.meter-bar { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.meter-bar span { display: block; height: 100%; border-radius: 3px; transition: width .4s; }
+.meter-ok span { background: var(--cta); }
+.meter-warn span { background: var(--amber); }
+.meter-bad span { background: var(--red); }
+
+/* Rank column on the hot list */
+.rank { color: var(--faint); font-variant-numeric: tabular-nums; font-size: 12px; }
+.acct-name { font-weight: 600; }
+.acct-dom { color: var(--faint); font-size: 11px; }
+
+/* Column picker popover */
+.col-pop {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 31;
+  width: 300px; max-height: 420px; overflow-y: auto; padding: 16px 18px;
+  box-shadow: var(--shadow-md);
+}
+.col-list { display: grid; gap: 2px; margin-bottom: 4px; }
+.col-list .f-check { padding: 3px 0; }
+.col-list .f-check .hint { display: block; }
+
+/* Funnel — the end-to-end chain on Analytics. Horizontal on wide screens so the
+   stages read left-to-right as a sequence; stacked when there isn't room. */
+.funnel { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+.fstage {
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px 16px; box-shadow: var(--shadow); min-width: 0;
+}
+.fstage-h { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.fstage-l { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .7px; color: var(--faint); }
+.fstage-c { font-size: 11.5px; font-weight: 700; color: var(--jade); font-variant-numeric: tabular-nums; }
+.fstage-c.worst { color: var(--red); }
+.fstage-v { font-size: 24px; font-weight: 700; letter-spacing: -.5px; margin: 6px 0 8px; font-variant-numeric: tabular-nums; }
+.fstage-bar { height: 5px; border-radius: 3px; background: var(--border); overflow: hidden; margin-bottom: 8px; }
+.fstage-bar span { display: block; height: 100%; border-radius: 3px; background: var(--cta); }
+.fstage .hint { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* Tier marks for separately-sold agents/add-ons. Understated on purpose: present
+   enough to point at in a demo, quiet enough to ignore while working. */
+.addon {
+  display: inline-block; padding: 1px 7px; border-radius: 4px;
+  font-size: 9.5px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase;
+  border: 1px solid var(--border-strong); color: var(--faint); background: var(--panel-2);
+  vertical-align: middle; cursor: help; white-space: nowrap;
+}
+.addon-advanced { color: var(--jade); border-color: rgba(34, 130, 111, .3); background: var(--accent-dim); }
+.addon-custom { color: var(--violet); border-color: rgba(109, 93, 211, .3); background: rgba(109, 93, 211, .07); }
+.addon-pro { color: var(--blue); border-color: rgba(47, 109, 181, .3); background: rgba(47, 109, 181, .07); }
+.addon + .addon { margin-left: 4px; }
+
+/* Contact link + phone reveal */
+.clink { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; }
+.clink a { display: inline-flex; align-items: center; gap: 4px; font-weight: 500; }
+.clink a svg { opacity: 0; transition: opacity .12s; flex: 0 0 auto; }
+.clink a:hover svg, tr:hover .clink a svg { opacity: .55; }
+.clink-t { color: var(--faint); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.phone-reveal {
+  display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px;
+  font: inherit; font-size: 11.5px; font-weight: 500; border-radius: 6px;
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--muted);
+  cursor: pointer; filter: none; box-shadow: none;
+}
+.phone-reveal:hover { color: var(--jade); border-color: var(--jade); background: var(--accent-dim); filter: none; }
+.phone { font-variant-numeric: tabular-nums; font-size: 12.5px; white-space: nowrap; }
+
+/* Home: the signals widget spans the full grid so the drill-down has room */
+.home-widget.wide { grid-column: 1 / -1; }
+.home-sig-contacts { display: grid; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
+.home-sig-row { display: flex; align-items: center; gap: 10px; justify-content: space-between; font-size: 12.5px; }
+.home-sig-row .who { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+
+/* Evergreen reviews on Home. A campaign in review is not sending, so it sits
+   above the outcome numbers rather than inside the widget grid. */
+.review-strip { margin-bottom: 20px; padding: 12px 14px; border-radius: 10px;
+  background: var(--accent-dim); border: 1px solid rgba(34, 130, 111, 0.28); }
+.review-strip-h { font-size: 12.5px; font-weight: 600; margin-bottom: 8px; }
+.review-row { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap;
+  padding: 7px 10px; border-radius: 7px; background: var(--panel);
+  text-decoration: none; color: var(--text); font-size: 12.5px; margin-bottom: 6px; }
+.review-row:last-child { margin-bottom: 0; }
+.review-row:hover { background: #fff; box-shadow: 0 2px 8px rgba(15, 28, 24, 0.07); }
+.review-name { font-weight: 600; }
+.review-cta { margin-left: auto; color: var(--jade); font-weight: 600; }
+.review-panel { border-color: rgba(34, 130, 111, 0.35);
+  box-shadow: inset 3px 0 0 var(--jade); margin-bottom: 18px; }
+
+/* Signal definitions. The strength slider is the one control that matters here —
+   it is the only number saying how much a signal is worth against the others. */
+.strength { width: 96px; accent-color: var(--jade); }
+tr.row-off { opacity: .5; }
+tr.row-off:hover { opacity: .8; }
+
+/* Campaign-created celebration. Pointer-events pass through except the card, so it
+   can never block the campaign it is celebrating. */
+.money-rain { position: fixed; inset: 0; z-index: 90; pointer-events: none;
+  overflow: hidden; }
+.money-rain .bill { position: absolute; top: -8%; font-weight: 800;
+  color: var(--green); text-shadow: 0 0 12px rgba(82, 254, 191, 0.5);
+  animation: fall linear both; }
+@keyframes fall {
+  0%   { transform: translateY(-10vh) rotate(0deg); }
+  100% { transform: translateY(112vh) rotate(320deg); }
+}
+.money-rain-card {
+  position: absolute; left: 50%; top: 34%; transform: translate(-50%, -50%);
+  pointer-events: auto; cursor: pointer; text-align: center;
+  padding: 22px 34px; border-radius: 14px; background: var(--panel);
+  border: 1px solid rgba(34, 130, 111, 0.4);
+  box-shadow: 0 18px 50px rgba(15, 28, 24, 0.22);
+  animation: pop .34s cubic-bezier(.2, 1.5, .4, 1) both;
+}
+@keyframes pop {
+  from { opacity: 0; transform: translate(-50%, -46%) scale(.9); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+.money-rain-glyphs { display: flex; gap: 1px; justify-content: center;
+  font-size: 30px; font-weight: 800; letter-spacing: -1px; color: var(--green);
+  text-shadow: 0 0 16px rgba(82, 254, 191, 0.6); }
+.money-rain-glyphs span { animation: coin .42s cubic-bezier(.2, 1.5, .4, 1) both;
+  animation-delay: calc(120ms + var(--i) * 80ms); }
+.money-rain-line { margin-top: 8px; font-size: 19px; font-weight: 700; }
+.money-rain-sub { margin-top: 3px; font-size: 12.5px; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) {
+  .money-rain-card, .money-rain-glyphs span { animation: none; }
+}
+
+/* Campaign channel plan. Ads carries a roadmap tag rather than being hidden —
+   the plan is the useful thing to record even before the agent exists. */
+.chan-plan { display: grid; gap: 8px; }
+.chan-opt { display: flex; gap: 9px; align-items: flex-start; padding: 9px 11px;
+  border: 1px solid var(--border); border-radius: 9px; cursor: pointer;
+  background: var(--panel); }
+.chan-opt:hover { border-color: var(--border-strong); }
+.chan-opt.on { border-color: rgba(34, 130, 111, 0.45); background: var(--accent-dim); }
+.chan-opt input { width: auto; margin-top: 2px; accent-color: var(--jade); }
+.chan-opt-body { min-width: 0; }
+.chan-opt-t { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.chan-opt-d { display: block; font-size: 11px; color: var(--muted); line-height: 1.45; }
+.chan-reach { display: block; margin-top: 4px; font-size: 11px; color: var(--jade);
+  font-weight: 600; }
+.chan-roadmap, .chan-badge-roadmap { font-size: 9px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--violet); border: 1px solid var(--violet);
+  border-radius: 4px; padding: 1px 4px; font-weight: 700; }
+.badge.chan-badge-roadmap { color: var(--violet); border-color: var(--violet);
+  background: rgba(109, 93, 211, 0.07); text-transform: none; letter-spacing: 0;
+  font-size: 11px; font-weight: 500; }
+
+/* Row actions on the call list. Two sections, visually separated, because
+   "not a fit here" and "never contact again" must never be one click apart. */
+.act-wrap { position: relative; display: inline-block; }
+.act-btn { padding: 2px 8px; line-height: 1.1; letter-spacing: 1px; }
+.act-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 60;
+  width: 320px; padding: 10px 12px; border-radius: 10px; background: var(--panel);
+  border: 1px solid var(--border-strong); box-shadow: 0 14px 34px rgba(15,28,24,.18);
+  text-align: left; }
+.act-sec { font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--muted); margin: 4px 0 6px; padding-top: 6px;
+  border-top: 1px solid var(--hairline); }
+.act-sec:first-of-type { border-top: 0; padding-top: 0; }
+.act-sec.danger { color: var(--red); border-top-color: rgba(220,38,38,.25);
+  margin-top: 12px; }
+.act-row { display: flex; gap: 5px; flex-wrap: wrap; align-items: center;
+  margin-bottom: 5px; }
+.act-lbl { font-size: 11px; color: var(--muted); min-width: 54px; }
+.act-menu button { font-size: 11.5px; padding: 3px 8px; border-radius: 6px;
+  border: 1px solid var(--border-strong); background: var(--panel-2);
+  color: var(--text); cursor: pointer; }
+.act-menu button:hover { background: #fff; filter: none; }
+.act-menu button.act-warn { color: var(--amber); border-color: rgba(184,121,31,.4); }
+.act-menu button.act-danger { color: #fff; background: var(--red);
+  border-color: var(--red); }
+.act-menu textarea { width: 100%; margin-top: 6px; font: inherit; font-size: 11.5px;
+  padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border-strong); }
+.act-foot { margin-top: 8px; font-size: 10.5px; color: var(--muted); line-height: 1.45; }
+.badge.engagement-suppressed { color: var(--red); border-color: rgba(220,38,38,.45);
+  background: rgba(220,38,38,.06); }
+.badge.engagement-paused { color: var(--amber); border-color: rgba(184,121,31,.45);
+  background: rgba(184,121,31,.07); }
+.btn-link { display: inline-flex; align-items: center; text-decoration: none; }
+
+/* The row you arrived at from a deep link. Fades after landing so it marks the
+   destination without permanently colouring the table. */
+tr.row-focus > td { background: var(--accent-dim); }
+tr.row-focus > td:first-child { box-shadow: inset 3px 0 0 var(--jade); }
+
+/* Content attached to a CTA play. Add/remove is the point, so both are visible
+   controls rather than something hidden behind an edit mode. */
+.play-content { margin-top: 10px; padding: 9px 11px; border-radius: 8px;
+  background: var(--panel-2); border: 1px solid var(--border); }
+.play-content-h { display: flex; justify-content: space-between; align-items: center;
+  gap: 10px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 7px; }
+.play-content-empty { font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+.content-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  padding: 4px 8px; border-radius: 7px; font-size: 11.5px; background: var(--panel);
+  border: 1px solid var(--border-strong); }
+.content-chip.anon { border-style: dashed; }
+.content-chip-k { color: var(--violet); font-weight: 700; }
+.content-metric { color: var(--muted); }
+.content-link { color: var(--jade); text-decoration: none; font-weight: 600;
+  white-space: nowrap; }
+.content-link:hover { text-decoration: underline; }
+.content-anon { font-size: 9px; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--amber); border: 1px solid var(--amber); border-radius: 4px;
+  padding: 0 3px; font-weight: 700; cursor: help; }
+.content-chip .x { background: none; border: 0; padding: 0 0 0 2px; cursor: pointer;
+  color: var(--muted); font-size: 14px; line-height: 1; }
+.content-chip .x:hover { color: var(--red); }
+.play-picker { margin-top: 9px; padding-top: 9px; border-top: 1px dashed var(--border-strong);
+  display: grid; gap: 6px; }
+.play-pick { text-align: left; font-size: 11.5px; line-height: 1.45; padding: 7px 9px;
+  border-radius: 7px; border: 1px solid var(--border-strong); background: var(--panel);
+  cursor: pointer; color: var(--text); }
+.play-pick:hover { border-color: var(--jade); filter: none; }
+.play-pick-story { display: block; color: var(--muted); margin-top: 2px; }
+
+/* Where content can come from, shown at the point of adding it. A connected repo
+   gets a tick; the rest are still linkable, which the note says outright. */
+.repo-strip { display: flex; gap: 5px; flex-wrap: wrap; align-items: center;
+  margin-top: 10px; padding-top: 9px; border-top: 1px dashed var(--border-strong); }
+.repo-strip-h { font-size: 10px; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--muted); margin-right: 2px; }
+.repo-chip { font-size: 10.5px; padding: 2px 6px; border-radius: 5px;
+  border: 1px dashed var(--border-strong); color: var(--muted); cursor: help; }
+.repo-chip.on { border-style: solid; border-color: var(--jade); color: var(--jade);
+  background: var(--accent-dim); font-weight: 600; }
+.repo-note { flex-basis: 100%; font-size: 10.5px; color: var(--faint);
+  line-height: 1.45; margin-top: 3px; }
+
+/* The contact's campaigns, on the outreach drawer. Membership is a property of the
+   person, so it sits with them rather than only inside whichever campaign is open. */
+.contact-campaigns { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap;
+  margin-top: 10px; }
+.contact-campaigns .k { font-size: 11px; color: var(--muted); text-transform: uppercase;
+  letter-spacing: .06em; }
+.badge.camp-tag { text-decoration: none; color: var(--text); }
+.badge.camp-tag:hover { border-color: var(--jade); color: var(--jade); }
+.reply-open { color: inherit; text-decoration: none; }
+.reply-open:hover { color: var(--jade); }
+
+/* A merged sequence is the interesting case — two campaigns folded into one
+   schedule — so it reads differently from a plain single-campaign cadence. */
+.badge.seq-merged { color: var(--violet); border-color: var(--violet);
+  background: rgba(109, 93, 211, 0.07); }
+
+/* Inbound is a different kind of campaign, not a variant of outbound — it reads
+   differently so nobody mistakes one for the other at a glance. */
+.badge.badge-inbound { color: var(--blue); border-color: var(--blue);
+  background: rgba(47, 109, 181, 0.08); font-weight: 600; }
+
+/* One-line campaign chip for dense tables. The stacked variant is right on a
+   campaign's own screens; here it made every row a different height. */
+.tag.one-line { max-width: 100%; display: inline-block; }
+/* Truncate in place rather than widening the column. */
+td.trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Outreach on/off. A switch, not a delete: nothing is removed, the pipeline just
+   stops contacting them — and that is reversible, so the control looks reversible. */
+.switch { position: relative; width: 32px; height: 18px; border-radius: 999px;
+  border: 1px solid var(--jade); background: var(--jade); cursor: pointer;
+  padding: 0; transition: background .14s ease, border-color .14s ease; }
+.switch .knob { position: absolute; top: 1px; left: 15px; width: 14px; height: 14px;
+  border-radius: 50%; background: #fff; transition: left .14s ease; }
+.switch.off { background: var(--panel-2); border-color: var(--border-strong); }
+.switch.off .knob { left: 1px; background: var(--muted); }
+.switch:disabled { opacity: .5; cursor: default; }
+.switch:hover:not(:disabled) { filter: brightness(1.05); }
+
+/* Matched but switched off. Not a failure state — an informed exclusion — so it
+   reads as a note rather than a warning. */
+.off-targets { margin: 8px 0 10px; padding: 8px 10px; border-radius: 7px;
+  font-size: 12px; line-height: 1.5; background: var(--panel-2);
+  border-left: 2px solid var(--border-strong); }
+
+/* Exclusions on the Audience tab. Presented as a reversible record, not a
+   graveyard — the reason someone was excluded may not hold in a year. */
+.excl-h { font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted); margin: 12px 0 6px; }
+.excl-h.danger { color: var(--red); }
+.excl-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+.excl-list li { display: flex; gap: 9px; align-items: center; flex-wrap: wrap;
+  padding: 7px 10px; border-radius: 7px; background: var(--panel-2);
+  border: 1px solid var(--border); font-size: 12.5px; }
+.excl-list li > button { margin-left: auto; }
+.excl-note { font-style: italic; }
+.excl-when { font-size: 11px; }
+
+/* Fixed-layout table with badge content. `table-layout: fixed` sizes the columns
+   but does NOT stop an inline-block badge painting over the next one — which is
+   how "sales-leadership" ended up sitting on top of the Status column. Clipping at
+   the cell is what actually holds the grid. */
+table.fit td, table.fit th { overflow: hidden; }
+table.fit td > .badge, table.fit td > .tag, table.fit td .row > .badge {
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  vertical-align: bottom;
+}
+
+/* Secondary line under a primary value — persona under a name, age under a
+   sequence. Cheaper than a column, and it stops the labels that matter being
+   truncated to make room for the ones that don't. */
+.sub-line { font-size: 11px; line-height: 1.3; margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trunc-1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------------------------------------------------------------------------
+   Cross-highlighting (components/crossHighlight.jsx)
+
+   Analytics and Trends put several widgets on one screen that are all cuts of
+   the SAME rows — a stage bar, an attributed-deal table and a motion tile are
+   three views of one set of deals. Reading across them by eye is the work the
+   page was leaving to the user, so picking a value in one widget marks the
+   matching part of every other one and dims the rest.
+
+   Deliberately HIGHLIGHT, not filter: a stage that contributes nothing to the
+   selection is itself the finding, and removing the row would hide it. Nothing
+   here changes a number — only which parts are shown as belonging together.
+   --------------------------------------------------------------------------- */
+.xh-pick { cursor: pointer; }
+.xh-off { opacity: .3; transition: opacity .12s; }
+tr.xh-pick:hover > td { background: var(--surface-hover); }
+tr.xh-on > td { background: var(--accent-dim); }
+tr.xh-on > td:first-child { box-shadow: inset 3px 0 0 var(--jade); }
+tr.xh-off > td { opacity: .32; }
+/* Rows keep their own hover affordance while dimmed — a dimmed row is still
+   clickable, and losing the cue makes the page feel frozen rather than focused. */
+tr.xh-off:hover > td { opacity: .62; }
+
+/* Non-table marks: stat tiles, stage bars, legend swatches. */
+/* A selectable tile is a real <button>, so the global button styling (gradient
+   fill, centred bold 14px) has to be unwound back to tile styling. */
+button.stat { display: block; width: 100%; text-align: left; font: inherit; color: inherit; }
+button.stat:hover { filter: none; }
+button.stat:active { transform: none; }
+.stat.xh-pick:hover { border-color: var(--border-strong); }
+.stat.xh-on { border-color: var(--jade); box-shadow: var(--shadow), inset 0 0 0 1px var(--jade); }
+.stage-row.xh-on { font-weight: 600; }
+.stage-row.xh-on .stage-bar > span { background: var(--jade-deep); }
+.stage-row.xh-pick:hover .stage-name { color: var(--jade); }
+
+/* The selection strip. Says what is highlighted, what it adds up to, and how to
+   get out — a highlight with no legible exit reads as a broken page. */
+.selbar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 14px; margin-bottom: 16px; border-radius: var(--radius-sm);
+  background: var(--accent-dim); border: 1px solid rgba(34, 130, 111, 0.28);
+  font-size: 12.5px; color: var(--text);
+}
+.selbar .selbar-k { color: var(--muted); }
+.selbar .selbar-v { font-weight: 700; }
+.selbar .selbar-sum { color: var(--muted); }
+.selbar .grow { flex: 1; }
+.selbar button {
+  background: none; border: 1px solid var(--border-strong); color: var(--muted);
+  padding: 3px 10px; font-size: 11.5px; border-radius: 999px; font-weight: 600;
+}
+.selbar button:hover { color: var(--jade); border-color: var(--jade); filter: none; }
+.xh-hint { color: var(--faint); font-size: 11.5px; }
+
+/* Column highlight. Picking a funnel STAGE tints the column it decomposes into,
+   and dims nothing: the other columns are the context that makes the highlighted
+   one readable as a share rather than as a bare number. */
+th.col-on, td.col-on { background: var(--accent-dim); }
+th.col-on { color: var(--jade); }
+/* A picked ROW inside a tinted column still reads as the row's highlight. */
+tr.xh-on > td.col-on { background: rgba(34, 130, 111, 0.2); }
+
+/* Tables that live inside a side-by-side panel have far less room than a
+   full-width one: "By priority band" is five columns in ~316px and was
+   overflowing its panel by 60px, clipped by its neighbour. Tighter cells buy the
+   width back, and the scroll container makes a spill impossible rather than
+   unlikely. */
+.panel-scroll { overflow-x: auto; }
+table.tight th, table.tight td { padding: 7px 8px; }
+table.tight th { letter-spacing: .3px; white-space: nowrap; }
+table.tight th:first-child, table.tight td:first-child { padding-left: 0; }
+table.tight th:last-child, table.tight td:last-child { padding-right: 0; }

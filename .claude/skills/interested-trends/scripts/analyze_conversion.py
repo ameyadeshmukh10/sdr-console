@@ -63,6 +63,67 @@ def write_csv(path, header, rows):
         w.writerows(rows)
 
 
+def build_rate_series(hist_path):
+    """True interested-rate over time, differenced from append-only snapshots.
+
+    Bison only ever reports lifetime-to-date counts, so a cumulative rate barely
+    moves once volume builds up and hides recent performance. Differencing
+    consecutive snapshots gives the rate for the leads contacted *in that window*
+    — the number that answers "is the AI SDR getting better?".
+
+    With fewer than two snapshots there is nothing to difference; the payload says
+    so explicitly rather than drawing a one-point line.
+    """
+    if not hist_path.exists():
+        return {"available": False, "snapshots": 0,
+                "note": "No snapshot history yet. Every fetch_campaign_stats.py run "
+                        "appends one; two are needed before a rate trend exists."}
+    by_snap = defaultdict(lambda: {"interested": 0, "contacted": 0, "unique_replies": 0})
+    for line in hist_path.open():
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        s = by_snap[r.get("fetched_at")]
+        s["interested"] += r.get("interested") or 0
+        s["contacted"] += r.get("total_leads_contacted") or 0
+        s["unique_replies"] += r.get("unique_replies") or 0
+
+    snaps = sorted(by_snap.items())
+    points, prev = [], None
+    for at, cur in snaps:
+        pt = {"fetched_at": at, "cum_interested": cur["interested"],
+              "cum_contacted": cur["contacted"],
+              "cum_interested_rate_pct": rate(cur["interested"], cur["contacted"])}
+        if prev:
+            d_i = cur["interested"] - prev["interested"]
+            d_c = cur["contacted"] - prev["contacted"]
+            d_r = cur["unique_replies"] - prev["unique_replies"]
+            # Counts can go backwards if a campaign is deleted or leads are purged;
+            # a negative window is not a rate, so leave it null rather than invent one.
+            pt.update({
+                "new_contacted": d_c, "new_interested": d_i, "new_replies": d_r,
+                "window_interested_rate_pct": rate(d_i, d_c) if d_c > 0 and d_i >= 0 else None,
+                "window_reply_rate_pct": rate(d_r, d_c) if d_c > 0 and d_r >= 0 else None,
+            })
+        points.append(pt)
+        prev = cur
+
+    return {
+        "available": len(points) >= 2,
+        "snapshots": len(points),
+        "points": points,
+        "note": "window_* rates are differenced between consecutive snapshots = the "
+                "rate for leads first contacted in that window. cum_* is "
+                "lifetime-to-date and will look flat by comparison."
+        if len(points) >= 2 else
+        "Only one snapshot so far — showing it as a baseline. Run "
+        "fetch_campaign_stats.py again later to get a trend.",
+    }
+
+
 def main():
     camp_path = STATS_DIR / "campaigns.jsonl"
     step_path = STATS_DIR / "step_stats.jsonl"
@@ -137,6 +198,7 @@ def main():
         "by_offer_type": by_offer,
         "by_geo": by_geo,
         "by_step": by_step,
+        "rate_series": build_rate_series(STATS_DIR / "campaigns_history.jsonl"),
     }
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUT_DIR / "conversion.json").write_text(json.dumps(conversion, indent=2, ensure_ascii=False))

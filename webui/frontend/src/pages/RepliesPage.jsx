@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api } from '../api.js'
 import { Spinner, ErrorBanner, num } from '../components/ui.jsx'
 import InboxList from '../components/replies/InboxList.jsx'
@@ -19,6 +20,11 @@ const MIN_CONF = 0.50  // only interested/referral above this confidence surface
 // reclassify / draft with the chosen reply agent / approve & send in-thread).
 // HubSpot logging happens automatically in the background (hourly) — no button.
 export default function RepliesPage() {
+  const [params, setParams] = useSearchParams()
+  const focusReply = params.get('reply')
+  const focusCampaign = params.get('campaign')
+  const [scopeIds, setScopeIds] = useState(null)   // reply ids for focusCampaign
+  const [scopeName, setScopeName] = useState(null)
   const [queue, setQueue] = useState(null)
   const [drafts, setDrafts] = useState(null)
   const [agents, setAgents] = useState([{ id: 'standard', label: 'Standard Reply Agent', description: '' }])
@@ -211,6 +217,22 @@ export default function RepliesPage() {
     catch (e) { setMsg({ err: true, text: e.message }) }
   }
 
+  useEffect(() => {
+    if (!focusCampaign) { setScopeIds(null); setScopeName(null); return }
+    api.campaignReplies(focusCampaign)
+      .then((d) => setScopeIds(new Set((d.replies || []).map((r) => String(r.reply_id)))))
+      .catch(() => setScopeIds(new Set()))
+    api.campaign(focusCampaign)
+      .then((d) => setScopeName(d?.campaign?.name || null))
+      .catch(() => {})
+  }, [focusCampaign])
+
+  function clearScope() {
+    params.delete('reply'); params.delete('campaign')
+    setParams(params, { replace: true })
+    setScopeIds(null); setScopeName(null)
+  }
+
   // ---- Partition into inbox sections --------------------------------------
   const items = queue?.items || []
   const dismissedItems = queue?.dismissed || []
@@ -218,11 +240,20 @@ export default function RepliesPage() {
     () => Object.fromEntries((drafts?.items || []).map((d) => [String(d.reply_id), d])), [drafts])
   const draftFor = (it) => draftBy[String(it.reply_id)]
 
+  // Arrived from a campaign's Replies tab, or from one row on it. Scoping happens
+  // here rather than server-side because the queue is already loaded and the scope
+  // is a VIEW, not a different dataset — "show everything" has to be one click, and
+  // a filtered inbox that doesn't say it is filtered reads as a lost reply.
   const inChannel = (it) => channelFilter === 'all' || (it.channel || 'email') === channelFilter
+  const inScope = (it) => {
+    if (focusReply) return String(it.reply_id) === focusReply
+    if (scopeIds) return scopeIds.has(String(it.reply_id))
+    return true
+  }
   const conf = (it) => it.classifier?.confidence || 0
   const isInterested = (it) => !!it.classifier?.interested && (conf(it) > MIN_CONF || !!it.reclassified)
 
-  const visible = items.filter(inChannel)
+  const visible = items.filter((it) => inChannel(it) && inScope(it))
   // Follow up = we replied (or parked) and are waiting on the lead. A reply that
   // arrives after our follow-up comes back flagged post_followup and routes to
   // Possible for review, whatever the classifier said.
@@ -275,6 +306,18 @@ export default function RepliesPage() {
   return (
     <div>
       <h1 className="page-title">Replies</h1>
+
+      {(focusReply || focusCampaign) && (
+        <div className="banner info" style={{ marginBottom: 14 }}>
+          {focusReply
+            ? 'Showing one reply.'
+            : `Showing replies from ${scopeName || 'one campaign'}${
+              scopeIds ? ` — ${scopeIds.size}` : ''}.`}
+          <button className="linklike" style={{ marginLeft: 8 }} onClick={clearScope}>
+            Show the whole inbox
+          </button>
+        </div>
+      )}
       <p className="page-sub">
         Every reply from the email and LinkedIn inboxes, classified by Claude.
         Review, tag, dismiss what you've handled in the CRM, and send AI-drafted follow-ups in the

@@ -1,0 +1,25 @@
+{
+  "suggestions": {
+    "email:1": {
+      "subject": "a signal play for {{company}}",
+      "body": "{{first_name}} \u2014 saw {{company}} is scaling the sales team.\n\nI put together a signal play off your hiring and tech-stack signals. Accounts working those signals progress about 4.4x faster than ones that don't.\n\nWorth 15 minutes for me to walk you through it?"
+    },
+    "email:2": {
+      "subject": "your current run rate",
+      "body": "{{first_name}} \u2014 one more angle.\n\nOur AI SDR ships its own email and LinkedIn infrastructure, so nothing about your current stack or process changes. It runs alongside and adds 2-5x more meetings on top of your existing run rate.\n\nWorth 15 minutes? I'll calculate {{company}}'s run rate and estimate what it would add."
+    },
+    "email:3": {
+      "subject": "how Memgraph activated their signals",
+      "body": "{{first_name}} \u2014 Memgraph had more in-market accounts surfacing than the team could work. The signals were already there; nobody had capacity to act on them.\n\nTheir AI SDR now works those the moment they appear.\n\nWant to grab 15 minutes to map {{company}}'s signal sets and find the highest-yield ones?"
+    },
+    "email:4": {
+      "subject": "should I close your file?",
+      "body": "{{first_name}} \u2014 I haven't heard back, so I'll assume the timing is wrong.\n\nBefore I close your file: worth 15 minutes to walk through a one-page playbook of 3 AI-SDR plays for your team? Yours either way."
+    }
+  },
+  "default": {
+    "subject": "a quick idea for {{company}}",
+    "body": "{{first_name}} \u2014 I put together something specific to {{company}} off the signals we track.\n\nWorth 15 minutes for me to walk you through it?"
+  },
+  "note": "Demo sample copy \u2014 served instead of calling the model."
+}

@@ -1,0 +1,25 @@
+{
+  "contact_id": "demo-100067",
+  "persona": "sales-leadership",
+  "variant": "value-give",
+  "signal": "announced a $24M Series B to expand its go-to-market team",
+  "tech_signals": "HubSpot · Apollo · Google Ads pixel",
+  "hiring_signals": "22 open roles · 5 sales: BDR; AE; Sales Manager",
+  "cta_play": "signal-play",
+  "demo": true,
+  "email": {
+    "subject1": "a signal play for Sable Security",
+    "body1": "Lena, saw Sable Security announced a $24M Series B to expand its go-to-market team.\n\nMost VPs we talk to are being asked to grow pipeline while the hiring plan is frozen.\n\nWe run an AI SDR that researches each account and writes the first touches, so your reps start from a warm list instead of a raw one.\n\nI built a signal play for Sable Security — want me to send it over?",
+    "subject2": "covering the gap while you hire",
+    "body2": "Lena, following up on Sable Security.\n\n5 sales: BDR; AE; Sales Manager — the ramp window is where pipeline usually slips.\n\nOn top of HubSpot we add 2-5x the touch volume without changing how the team works.\n\nOpen to a look at the run rate?",
+    "subject3": "how Memgraph did it",
+    "body3": "Lena, last bit of proof for Sable Security.\n\nMemgraph mapped their intent signals to the accounts worth a first touch and ran our AI SDR to $2.7M in pipeline.\n\nWant the same mapping for Sable Security?",
+    "subject4": "should I close your file?",
+    "body4": "Lena, I'll stop reaching out on this one. If hitting the number without adding headcount is still open, the offer stands."
+  },
+  "linkedin": {
+    "li_connect": "Lena, saw Sable Security announced a $24M Series B to expand its go-to-market team. We work with teams on hitting the number without adding headcount.",
+    "li_msg1": "Thanks for connecting, Lena. I built a signal play for Sable Security — want me to send it over?",
+    "li_msg2": "Lena, one more nudge — Memgraph ran the same play to $2.7M in pipeline. Worth 20 minutes?"
+  }
+}

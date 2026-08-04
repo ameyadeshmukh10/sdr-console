@@ -1,0 +1,47 @@
+{
+  "demo": true,
+  "lists": [
+    {
+      "list_id": "2198",
+      "name": "ICP \u2014 GTM leadership (US B2B tech)",
+      "object_type_id": "0-1",
+      "size": 1240,
+      "processing_type": "DYNAMIC"
+    },
+    {
+      "list_id": "2204",
+      "name": "ICP \u2014 Series B+ SaaS, 50-500 employees",
+      "object_type_id": "0-1",
+      "size": 860,
+      "processing_type": "DYNAMIC"
+    },
+    {
+      "list_id": "2211",
+      "name": "Event follow-up \u2014 SaaStr attendees",
+      "object_type_id": "0-1",
+      "size": 312,
+      "processing_type": "STATIC"
+    },
+    {
+      "list_id": "2216",
+      "name": "Re-engage \u2014 no reply in 90 days",
+      "object_type_id": "0-1",
+      "size": 2480,
+      "processing_type": "DYNAMIC"
+    },
+    {
+      "list_id": "3301",
+      "name": "Target accounts \u2014 data infrastructure",
+      "object_type_id": "0-2",
+      "size": 180,
+      "processing_type": "DYNAMIC"
+    },
+    {
+      "list_id": "3308",
+      "name": "Target accounts \u2014 fintech expansion",
+      "object_type_id": "0-2",
+      "size": 95,
+      "processing_type": "STATIC"
+    }
+  ]
+}

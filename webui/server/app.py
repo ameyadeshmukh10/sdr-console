@@ -44,6 +44,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
+import config_edit
+import connectors
+import demo_mode
+
 # webui/server/app.py -> webui/server -> webui -> project root
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA = PROJECT_ROOT / "data"
@@ -52,6 +56,19 @@ GEN_DIR = DATA / "outreach" / "generated"
 CONTACTS_JSONL = DATA / "outreach" / "contacts.jsonl"
 CAMPAIGN_STATS = DATA / "campaign-stats"
 ENV_PATH = PROJECT_ROOT / ".env"
+
+
+def R(path):
+    """Resolve a data path for READING, honoring this request's demo profile.
+
+    Live data by default. When a demo profile is active for the current request
+    thread, the path is remapped into `data/demo/<profile>/…` so the whole console
+    reads from that synthetic tree. Apply this at read sites ONLY — writers and
+    background jobs must keep using the bare constants so they always act on
+    reality (see demo_mode's module docstring).
+    """
+    return demo_mode.resolve(DATA, demo_mode.active(), path)
+
 
 SCRIPTS = PROJECT_ROOT / ".claude" / "skills"
 HUBSPOT_PULL = SCRIPTS / "sdr-pipeline" / "scripts" / "hubspot_pull.py"
@@ -83,12 +100,18 @@ REPLY_STATE = DATA / "interested-replies" / "reply_state.json"
 AUTOSYNC_STATUS_PATH = DATA / "interested-replies" / ".autosync_status.json"
 BUILD_PLAY = SCRIPTS / "signal-playbook" / "scripts" / "build_play.py"
 SIGNAL_PLAYS_DIR = DATA / "signal-plays"
+# Config-edit audit log + pre-change snapshots. On the data volume so a revert
+# survives a restart, and never demo-scoped — config edits are always for real.
+CONFIG_HISTORY = DATA / "config-history"
 ANALYZE = SCRIPTS / "interested-trends" / "scripts"
 TRENDS_DIR = DATA / "interested-replies" / "analysis"
 REPLIES_LAST_RUN = DATA / "interested-replies" / "last_run.json"
 REVIEW_QUEUE = DATA / "interested-replies" / "review_queue.json"
 LI_REVIEW_QUEUE = DATA / "interested-replies" / "li_review_queue.json"
 BATCH_JOBS_DIR = DATA / "outreach" / "batch-jobs"
+# Daily hot-target snapshot. A file, not a live query, so the report is stable for a
+# working day; the campaign sweep rebuilds it once every 24h.
+HOT_LIST_PATH = DATA / "outreach" / "hot-list.json"
 
 # In-process pipeline-DB access for the HeyReach webhook path. The server's own
 # db_connect() is read-only (mode=ro); persisting webhook events needs writes, so that
@@ -99,6 +122,28 @@ import batch_db as pipeline_db        # noqa: E402
 import heyreach_activity              # noqa: E402
 import mongo_store                    # noqa: E402  (lazy pymongo — safe without it)
 import orchestration_config           # noqa: E402  (no I/O at import; parses on request)
+import campaigns_api                  # noqa: E402  (imports batch_db + campaigns; stdlib only)
+import demo_actions                   # noqa: E402  (simulated CRM/Clay sources for demo mode)
+import tiers                          # noqa: E402  (static packaging registry)
+import reports                        # noqa: E402  (ad-hoc report builder)
+import campaign_brief                 # noqa: E402  (lazy Anthropic client — safe with no key)
+import connector_store                # noqa: E402  (console-set credentials on the volume)
+
+
+def _demo_db():
+    """The active demo profile's own pipeline.db, or None when live."""
+    return demo_mode.db_path(DATA, demo_mode.active())
+
+
+def _demo_dir():
+    p = demo_mode.active()
+    return (DATA / demo_mode.DEMO_SUBDIR / p) if p else None
+
+
+# Campaign writes route to the demo profile's DB when one is active. Injected here
+# rather than imported inside campaigns_api so that module stays CLI-usable.
+campaigns_api.demo_db_path = _demo_db
+campaigns_api.demo_dir_path = _demo_dir
 
 PERSONA_ENV = {
     "sales-leadership": "BISON_CAMPAIGN_SALES_LEADERSHIP",
@@ -159,6 +204,27 @@ def derive_cta(asset):
 # ----------------------------------------------------------------------------
 # Tiny .env reader (no python-dotenv dependency).
 # ----------------------------------------------------------------------------
+def crm_link_config():
+    """How to deep-link a contact into the CRM.
+
+    A contact id in this console is the HubSpot record id, so the only missing piece
+    is the portal. Without a link, "call this person" means copying a name into
+    another tab — which is where a prioritised call list stops being used.
+    """
+    import os
+    env = read_env()
+    portal = (env.get("HUBSPOT_PORTAL_ID") or "").strip()
+    if not portal:
+        return {"available": False, "reason": "HUBSPOT_PORTAL_ID not set"}
+    return {
+        "available": True, "portal_id": portal, "provider": "hubspot",
+        # {id} is substituted client-side; kept as a template so a different CRM is
+        # a config change rather than a frontend edit.
+        "contact_url": f"https://app.hubspot.com/contacts/{portal}/contact/{{id}}",
+        "company_url": f"https://app.hubspot.com/contacts/{portal}/company/{{id}}",
+    }
+
+
 def read_env():
     """Config the web UI reads (campaign IDs, HeyReach config, …). Merges the .env file
     (local dev) with the process environment (Railway/Docker, where there is NO .env file —
@@ -297,7 +363,7 @@ def default_campaign_id():
 # Read-only SQLite access. mode=ro still sees committed WAL data.
 # ----------------------------------------------------------------------------
 def db_connect():
-    uri = f"file:{DB_PATH}?mode=ro"
+    uri = f"file:{R(DB_PATH)}?mode=ro"
     conn = sqlite3.connect(uri, uri=True, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA query_only=1")
@@ -353,6 +419,48 @@ def db_batches(status=None, limit=None):
     return {"batches": batches, "total": total}
 
 
+# The 4-email + 3-LinkedIn template every sequence follows. Used to turn "N touches
+# logged" into "step N of 4", so the UI can say which messages have actually gone out.
+EMAIL_STEPS = 4
+LINKEDIN_STEPS = 3
+
+
+def db_sequence_progress():
+    """{contact_id: {email_sent, li_sent, replied, last_sent_at}} from the activity ledger.
+
+    There is no per-STEP send record anywhere — HubSpot activity rows carry a channel
+    and a direction, not a step number. But sends happen in template order, so a count
+    of logged outbound touches maps to "steps 1..N sent, the rest still staged". That
+    inference is stated wherever it surfaces; it is not a per-message confirmation.
+
+    Only rows that were actually logged count ('logged' status) — a failed log attempt
+    means we don't know whether the send happened, and guessing would be worse.
+    """
+    out = {}
+    try:
+        with db_connect() as conn:
+            for r in conn.execute(
+                "SELECT contact_id, channel, event_type, COUNT(*) n, MAX(event_ts) last_ts "
+                "FROM hubspot_activity_log "
+                "WHERE contact_id IS NOT NULL AND status = 'logged' "
+                "GROUP BY contact_id, channel, event_type"):
+                cid = str(r["contact_id"])
+                row = out.setdefault(cid, {"email_sent": 0, "li_sent": 0,
+                                           "replied": False, "last_sent_at": None})
+                if r["event_type"] == "outbound":
+                    if (r["channel"] or "email") == "linkedin":
+                        row["li_sent"] += r["n"]
+                    else:
+                        row["email_sent"] += r["n"]
+                    if r["last_ts"] and (row["last_sent_at"] or "") < r["last_ts"]:
+                        row["last_sent_at"] = r["last_ts"]
+                elif r["event_type"] == "inbound":
+                    row["replied"] = True
+    except sqlite3.Error:
+        return {}
+    return out
+
+
 def db_contact_meta():
     """contact_id -> full contact record from the DB (authoritative for ALL contacts,
     incl. ones sourced via Clay that never went through contacts.jsonl)."""
@@ -360,7 +468,7 @@ def db_contact_meta():
     with db_connect() as conn:
         for r in conn.execute(
             "SELECT contact_id, first_name, last_name, email, title, company, linkedin_url, "
-            "persona, domain, variant, status, error, batch_id FROM contacts"):
+            "persona, domain, variant, status, error, batch_id, updated_at FROM contacts"):
             out[r["contact_id"]] = dict(r)
     return out
 
@@ -370,16 +478,24 @@ def db_contact_meta():
 # or automatically when the generated dir grows newer than the last build.
 # ----------------------------------------------------------------------------
 class OutreachIndex:
-    def __init__(self):
+    def __init__(self, profile=None):
+        # One index per demo profile (None = live). Bound at construction rather
+        # than read per-call so a build started on one thread can't have its paths
+        # swapped underneath it by a differently-scoped request.
+        self.profile = profile
         self.rows = []
         self.built_at = 0.0
         self.dir_mtime = 0.0
         self.lock = threading.Lock()
 
+    def _p(self, path):
+        return demo_mode.resolve(DATA, self.profile, path)
+
     def _load_contacts_jsonl(self):
         meta = {}
-        if CONTACTS_JSONL.is_file():
-            for line in CONTACTS_JSONL.read_text().splitlines():
+        contacts_jsonl = self._p(CONTACTS_JSONL)
+        if contacts_jsonl.is_file():
+            for line in contacts_jsonl.read_text().splitlines():
                 line = line.strip()
                 if not line:
                     continue
@@ -399,9 +515,11 @@ class OutreachIndex:
                 db_meta = db_contact_meta()
             except sqlite3.Error:
                 db_meta = {}
+            progress = db_sequence_progress()
             rows = []
-            if GEN_DIR.is_dir():
-                for fp in GEN_DIR.glob("*.json"):
+            gen_dir = self._p(GEN_DIR)
+            if gen_dir.is_dir():
+                for fp in gen_dir.glob("*.json"):
                     try:
                         asset = json.loads(fp.read_text())
                     except (json.JSONDecodeError, OSError):
@@ -424,6 +542,12 @@ class OutreachIndex:
                         "cta_type": derive_cta(asset),
                         "status": dbm.get("status", ""),
                         "batch_id": dbm.get("batch_id"),
+                        "updated_at": dbm.get("updated_at") or "",
+                        # Sequence progress — how far through the 4+3 template this
+                        # contact actually is (see db_sequence_progress).
+                        "seq": progress.get(cid) or {
+                            "email_sent": 0, "li_sent": 0, "replied": False,
+                            "last_sent_at": None},
                     })
             # sort populated companies first (blanks last), then by name
             rows.sort(key=lambda r: (r["company"].strip() == "", r["company"].lower(), r["last_name"].lower()))
@@ -434,7 +558,7 @@ class OutreachIndex:
 
     def _current_dir_mtime(self):
         try:
-            return GEN_DIR.stat().st_mtime
+            return self._p(GEN_DIR).stat().st_mtime
         except OSError:
             return 0.0
 
@@ -457,8 +581,51 @@ class OutreachIndex:
         signal = get("signal").lower()
         q = get("q").lower()
         group_by = get("group_by")
+        # Explicit id filters, so a link FROM a campaign or a contact lands on the
+        # already-filtered slice rather than the whole list plus instructions.
+        contact = get("contact")
+        # on | off — how else would you ever find the person you excluded a year
+        # ago? An exclusion you cannot list is an exclusion you cannot undo.
+        outreach_state = get("outreach")
+        off_ids, off_rows = None, {}
+        if outreach_state in ("on", "off"):
+            try:
+                with db_connect() as _c:
+                    # The full contact record, not just the id: this index only holds
+                    # people with GENERATED COPY, and most of the pipeline has none.
+                    # Filtering the index alone would have shown an empty exclusion
+                    # list while people really were excluded — the exact failure this
+                    # screen exists to prevent.
+                    for r in _c.execute(
+                            "SELECT contact_id, first_name, last_name, email, title, "
+                            "       company, persona, status, engagement_state, "
+                            "       paused_until, engagement_note, engagement_updated_at "
+                            "FROM contacts WHERE engagement_state IS NOT NULL "
+                            "  AND engagement_state != 'active'"):
+                        off_rows[str(r["contact_id"])] = dict(r)
+                off_ids = set(off_rows)
+            except sqlite3.Error:
+                off_ids, off_rows = set(), {}
+        contact_ids = None
+        campaign = get("campaign")
+        if campaign:
+            try:
+                with db_connect() as _c:
+                    contact_ids = {str(m["contact_id"]) for m in
+                                   pipeline_db.campaign_members(_c, int(campaign),
+                                                                limit=5000)}
+            except (ValueError, sqlite3.Error):
+                contact_ids = set()
 
         def matches(r):
+            if contact and str(r["contact_id"]) != contact:
+                return False
+            if off_ids is not None:
+                is_off = str(r["contact_id"]) in off_ids
+                if (outreach_state == "off") != is_off:
+                    return False
+            if contact_ids is not None and str(r["contact_id"]) not in contact_ids:
+                return False
             if persona and r["persona"] != persona:
                 return False
             if status and r["status"] != status:
@@ -508,8 +675,62 @@ class OutreachIndex:
             page_size = min(200, max(1, int(get("page_size") or 50)))
         except ValueError:
             page_size = 50
+        # Viewing the excluded: include people who have no generated copy. They are
+        # still contacts, still excluded, and still the ones you came here to find.
+        if outreach_state == "off":
+            have = {str(r["contact_id"]) for r in filtered}
+            for cid, row in off_rows.items():
+                if cid in have:
+                    continue
+                filtered.append({
+                    "contact_id": cid,
+                    "first_name": row.get("first_name") or "",
+                    "last_name": row.get("last_name") or "",
+                    "email": row.get("email") or "", "title": row.get("title") or "",
+                    "company": row.get("company") or "", "signal": "",
+                    "persona": row.get("persona") or "", "cta_type": "",
+                    "status": row.get("status") or "", "batch_id": None,
+                    "updated_at": "", "seq": None, "no_copy": True,
+                })
+            filtered.sort(key=lambda r: ((r.get("company") or "").strip() == "",
+                                         (r.get("company") or "").lower(),
+                                         (r.get("last_name") or "").lower()))
+
         start = (page - 1) * page_size
         items = filtered[start:start + page_size]
+
+        # Which campaigns each of these people is in. Attached to the PAGE SLICE at
+        # query time rather than baked into the index: membership changes constantly
+        # while the copy does not, so an index rebuilt on file mtime would serve
+        # stale campaign tags. One query for 50 rows is cheap.
+        #
+        # This is what makes the list contact-centric: the same person appears once,
+        # carrying every campaign working them, so an overlap is visible here rather
+        # than only from inside whichever campaign you happened to open.
+        if items:
+            try:
+                ids = [str(r["contact_id"]) for r in items]
+                with db_connect() as conn:
+                    tags = pipeline_db.contact_campaign_tags(conn, ids)
+                    # Whether outreach is switched on for this person. Same field the
+                    # enroll gate reads, so the toggle on this list is the real
+                    # thing rather than a display state.
+                    ph = ",".join("?" * len(ids))
+                    eng = {str(x["contact_id"]): dict(x) for x in conn.execute(
+                        f"SELECT contact_id, engagement_state, paused_until, "
+                        f"engagement_note FROM contacts WHERE contact_id IN ({ph})",
+                        ids)}
+                for r in items:
+                    r["campaigns"] = tags.get(str(r["contact_id"]), [])
+                    r["overlapping"] = len(r["campaigns"]) > 1
+                    e = eng.get(str(r["contact_id"])) or {}
+                    r["engagement_state"] = e.get("engagement_state") or "active"
+                    r["paused_until"] = e.get("paused_until")
+                    r["engagement_note"] = e.get("engagement_note")
+            except sqlite3.Error:
+                for r in items:
+                    r["campaigns"], r["overlapping"] = [], False
+                    r["engagement_state"] = "active"
 
         return {
             "total": len(filtered),
@@ -521,23 +742,58 @@ class OutreachIndex:
         }
 
 
+# The live index. Writers and the startup build always use this one directly;
+# reads go through index() so a demo request sees its own profile's index.
 INDEX = OutreachIndex()
+_INDEXES = {None: INDEX}
+_INDEXES_LOCK = threading.Lock()
+
+
+def index():
+    """The outreach index for this request's demo profile (live by default)."""
+    profile = demo_mode.active()
+    if profile is None:
+        return INDEX
+    with _INDEXES_LOCK:
+        idx = _INDEXES.get(profile)
+        if idx is None:
+            idx = _INDEXES[profile] = OutreachIndex(profile)
+    return idx
 
 
 def outreach_detail(contact_id):
-    fp = GEN_DIR / f"{contact_id}.json"
+    fp = R(GEN_DIR) / f"{contact_id}.json"
     if not fp.is_file():
         return None
     try:
         asset = json.loads(fp.read_text())
     except (json.JSONDecodeError, OSError):
         return None
-    jm = INDEX._load_contacts_jsonl().get(str(contact_id), {})
+    jm = index()._load_contacts_jsonl().get(str(contact_id), {})
     dbm = db_contact_meta().get(str(contact_id), {})
+    # Every campaign this person is in, not just the one you came from. Membership
+    # lives on the PERSON: a contact worked by three campaigns looks unrelated on
+    # each screen unless all three travel with them, and nobody notices they are
+    # being triple-touched. Never fatal — copy must render without the campaign
+    # tables (an older profile, a stale volume).
+    campaigns, engagement = [], None
+    try:
+        with db_connect() as conn:
+            campaigns = pipeline_db.contact_campaign_tags(
+                conn, [str(contact_id)]).get(str(contact_id), [])
+            row = conn.execute(
+                "SELECT engagement_state, paused_until, engagement_note "
+                "FROM contacts WHERE contact_id=?", (str(contact_id),)).fetchone()
+            if row and (row["engagement_state"] or "active") != "active":
+                engagement = dict(row)
+    except sqlite3.Error:
+        pass
 
     def meta(k):  # contacts.jsonl first, DB fallback (sourced contacts are DB-only)
         return jm.get(k) or dbm.get(k) or ""
     return {
+        "campaigns": campaigns,
+        "engagement": engagement,
         "contact": {
             "contact_id": str(contact_id),
             "first_name": meta("first_name"),
@@ -556,6 +812,41 @@ def outreach_detail(contact_id):
         "cta_type": derive_cta(asset),
         "email": asset.get("email", {}),
         "linkedin": asset.get("linkedin", {}),
+        "sequence": _message_states(str(contact_id), dbm.get("status", "")),
+    }
+
+
+def _message_states(contact_id, contact_status):
+    """Per-message state for one contact: sent | staged | draft.
+
+    Three states, because "not sent" hides a real distinction:
+      draft  — copy exists but the contact was never enrolled, so nothing is queued
+      staged — enrolled, so the step is queued in Bison/HeyReach but hasn't gone yet
+      sent   — a logged outbound touch on that channel covers this step
+    Step-level attribution is inferred from the COUNT of logged touches (sends run in
+    template order); `inferred: true` says so rather than implying per-message proof.
+    """
+    prog = db_sequence_progress().get(contact_id) or {}
+    email_sent = int(prog.get("email_sent") or 0)
+    li_sent = int(prog.get("li_sent") or 0)
+    enrolled = contact_status == "enrolled"
+
+    def state(n, sent_count):
+        if n <= sent_count:
+            return "sent"
+        return "staged" if enrolled else "draft"
+
+    return {
+        "enrolled": enrolled,
+        "replied": bool(prog.get("replied")),
+        "last_sent_at": prog.get("last_sent_at"),
+        "inferred": True,
+        "email": [{"step": n, "key": f"body{n}", "state": state(n, email_sent)}
+                  for n in range(1, EMAIL_STEPS + 1)],
+        "linkedin": [{"step": n, "key": k, "state": state(n, li_sent)}
+                     for n, k in enumerate(("li_connect", "li_msg1", "li_msg2"), start=1)],
+        "email_sent": email_sent, "email_total": EMAIL_STEPS,
+        "li_sent": li_sent, "li_total": LINKEDIN_STEPS,
     }
 
 
@@ -576,10 +867,10 @@ def read_jsonl(path):
 
 
 def analytics_payload():
-    campaigns = read_jsonl(CAMPAIGN_STATS / "campaigns.jsonl")
-    steps = read_jsonl(CAMPAIGN_STATS / "step_stats.jsonl")
+    campaigns = read_jsonl(R(CAMPAIGN_STATS) / "campaigns.jsonl")
+    steps = read_jsonl(R(CAMPAIGN_STATS) / "step_stats.jsonl")
     last_run = {}
-    lr = CAMPAIGN_STATS / "last_run.json"
+    lr = R(CAMPAIGN_STATS) / "last_run.json"
     if lr.is_file():
         try:
             last_run = json.loads(lr.read_text())
@@ -624,7 +915,13 @@ def linkedin_analytics_payload():
     """Live HeyReach (LinkedIn) analytics for the configured campaign: the lead
     funnel (GetById progressStats) + connection/message/reply metrics
     (GetOverallStats). Degrades to {error}/{configured:false} so the Analytics
-    page never breaks on a HeyReach hiccup."""
+    page never breaks on a HeyReach hiccup.
+
+    In demo mode this comes from the profile's linkedin.json fixture — never from
+    the live HeyReach account, which a demo must not touch or reveal."""
+    if demo_mode.is_demo():
+        fx = _read_json(R(DATA / "linkedin.json"))
+        return fx if fx else {"configured": False}
     env = read_env()
     raw = (env.get("HEYREACH_CAMPAIGN_ID") or "").strip()
     cid = int(raw) if raw.isdigit() else None
@@ -694,9 +991,33 @@ def run_script_streaming(args, on_stderr_line=None, timeout=3600):
             "stderr": "".join(err_chunks)}
 
 
-def do_ingest(list_id):
+def _ingest_limit(body):
+    """How many new contacts a pull may add. None = the whole list ("Maximum").
+
+    Absent, null, 0, "max"/"all" and anything unparseable all mean uncapped — a
+    malformed cap must not silently pull one contact and read as an empty list."""
+    raw = body.get("limit")
+    if raw is None or (isinstance(raw, str) and raw.strip().lower() in
+                       ("", "max", "maximum", "all")):
+        return None
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def do_ingest(list_id, limit=None):
+    """Pull a HubSpot list into the pipeline and batch it.
+
+    `limit` caps how many NEW contacts the pull adds; None means the whole list
+    (what the Source tab calls "Maximum"). The cap lives in hubspot_pull.py so the
+    CLI and the console agree on what a limit counts."""
     pre = db_status()
-    pull = run_script([str(HUBSPOT_PULL), str(list_id)], timeout=600)
+    args = [str(HUBSPOT_PULL), str(list_id)]
+    if limit:
+        args += ["--limit", str(int(limit))]
+    pull = run_script(args, timeout=600)
     if pull["returncode"] != 0:
         return {"ok": False, "stage": "pull", "pull": pull}
     init = run_script([str(SDR_BATCHES), "init"], timeout=600)
@@ -709,17 +1030,37 @@ def do_ingest(list_id):
     new_contacts = int(m.group(1)) if m else (post["total_contacts"] - pre["total_contacts"])
     new_batches = int(m.group(2)) if m else (
         sum(post["batches_by_status"].values()) - sum(pre["batches_by_status"].values()))
+    # How many more the list still holds under a cap, so "run it again" is an
+    # informed choice rather than a guess. Absent when the pull was uncapped.
+    held = re.search(r"held back (\d+) more that qualify", pull["stdout"])
     return {
         "ok": True,
         "pull": pull, "init": init,
         "new_contacts": new_contacts, "new_batches": new_batches,
+        "limit": limit,
+        "remaining_in_crm": int(held.group(1)) if held else None,
         "pending_batches": db_batches(status="pending")["batches"],
         "status": post,
     }
 
 
 def do_hubspot_lists(query, list_type=None):
-    """Search HubSpot lists by name. list_type in {contact, company} or None (both)."""
+    """Search HubSpot lists by name. list_type in {contact, company} or None (both).
+
+    In demo mode this is served from the profile's hubspot_lists.json: shelling out
+    would hit the real portal (which a demo must not touch) and, with no token, dump
+    the script's traceback straight into the Use view.
+    """
+    if demo_mode.is_demo():
+        fx = _read_json(R(DATA / "hubspot_lists.json")) or {}
+        rows = fx.get("lists") or []
+        q = (query or "").strip().lower()
+        if list_type in ("contact", "company"):
+            want = "0-1" if list_type == "contact" else "0-2"
+            rows = [r for r in rows if r.get("object_type_id") == want]
+        if q:
+            rows = [r for r in rows if q in (r.get("name") or "").lower()]
+        return {"ok": True, "lists": rows}
     args = [str(HUBSPOT_LISTS), "search", query or ""]
     if list_type in ("contact", "company"):
         args += ["--type", list_type]
@@ -740,7 +1081,15 @@ AUTOSYNC_STATUS = {}
 
 def _autosync_status():
     """Last autosync outcome for the UI — from memory, falling back to the file
-    mirror so a restart doesn't blank the indicator until the next cycle."""
+    mirror so a restart doesn't blank the indicator until the next cycle.
+
+    Profile-scoped in demo mode: the in-memory status belongs to the live process
+    and its background threads, so surfacing it in a demo would show the host's
+    HubSpot health (often a red "sync issue") inside a dataset that has nothing to
+    do with HubSpot.
+    """
+    if demo_mode.is_demo():
+        return _read_json(R(AUTOSYNC_STATUS_PATH)) or {}
     return AUTOSYNC_STATUS or (_read_json(AUTOSYNC_STATUS_PATH) or {})
 
 
@@ -848,7 +1197,18 @@ _AISDR_SYNC_STATE = {"started_at": None, "last_result": None}
 def aisdr_analytics_payload():
     """Aggregates for the Analytics tiles. Never raises: unconfigured -> a
     {"configured": false} hint, unreachable -> {"configured": true, "error": ...}
-    (same degradation contract as linkedin_analytics_payload)."""
+    (same degradation contract as linkedin_analytics_payload).
+
+    Attribution lives in Mongo, not under data/, so R() cannot scope it to a demo
+    profile — and these are REAL deal names and amounts. Report it as absent in demo
+    mode rather than letting live pipeline value show up under a banner that says
+    everything on screen is synthetic.
+
+    A demo profile may ship an aisdr.json fixture; it is served instead of touching
+    Mongo, so the tiles tell the attribution story without exposing real deals."""
+    if demo_mode.is_demo():
+        fx = _read_json(R(DATA / "aisdr.json"))
+        return fx if fx else {"configured": False}
     if not mongo_store.mongo_configured():
         return {"configured": False}
     try:
@@ -859,6 +1219,10 @@ def aisdr_analytics_payload():
 
 def aisdr_sync_status_payload():
     """Sync-run state for the UI: is one running now + the last run's summary."""
+    if demo_mode.is_demo():   # see aisdr_analytics_payload — served from the profile
+        fx = _read_json(R(DATA / "aisdr_status.json"))
+        return fx if fx else {"configured": False, "running": False,
+                              "started_at": None, "last_result": None}
     out = {"configured": mongo_store.mongo_configured(),
            "running": _AISDR_SYNC_LOCK.locked(),
            "started_at": _AISDR_SYNC_STATE["started_at"],
@@ -979,9 +1343,14 @@ def unenrollment_status_payload():
             "description": "everworker_tag=false in HubSpot: never enroll; stop "
                            "active Email Bison + HeyReach sequences.",
             "enabled": enabled,
+            # Declared, not probed, in demo mode — a profile represents a working
+            # deployment, so the host's absent keys must not render as an
+            # unconfigured safety gate. Same rule as _tech_status/_hiring_status.
             "channels": {
-                "bison": {"configured": bool(env.get("EMAILBISON_API_KEY"))},
-                "heyreach": {"configured": bool(env.get("HEYREACH_API_KEY"))},
+                "bison": {"configured": demo_mode.is_demo()
+                          or bool(env.get("EMAILBISON_API_KEY"))},
+                "heyreach": {"configured": demo_mode.is_demo()
+                             or bool(env.get("HEYREACH_API_KEY"))},
             },
             "last_run": last or None,
             "counts": counts,
@@ -1160,8 +1529,9 @@ def _parse_enroll(stdout):
 def _enrich_enroll_rows(rows):
     """Attach contact_id/name/company/signal/cta_type to each row by email so the
     UI can show the actual copy under review (joins the in-memory outreach index)."""
-    INDEX.maybe_rebuild()
-    by_email = {r["email"].lower(): r for r in INDEX.rows if r.get("email")}
+    idx = index()
+    idx.maybe_rebuild()
+    by_email = {r["email"].lower(): r for r in idx.rows if r.get("email")}
     for row in rows:
         m = by_email.get((row.get("email") or "").lower())
         if m:
@@ -1241,13 +1611,785 @@ def _read_json(path):
     return None
 
 
+def connectors_payload():
+    """Setup → Connectors. Demo statuses are declared by the profile, never probed
+    from the host, so a demo shows a deliberate configuration and never reveals
+    which credentials the machine happens to hold."""
+    profile = demo_mode.active()
+    declared = None
+    if profile:
+        decl = _read_json(R(DATA / "connectors.json")) or {}
+        if isinstance(decl.get("connected"), list):
+            declared = decl["connected"]
+    out = connectors.connectors_payload(read_env(), PROJECT_ROOT,
+                                        demo_profile=profile, demo_connected=declared)
+    # What each connector needs in order to be wired up from here. Field METADATA
+    # and presence only — connector_store.describe never returns a secret, and in a
+    # demo the store is not consulted at all, so a demo can neither read nor reveal
+    # a real credential.
+    env = {} if profile else read_env()
+    for item in out["connectors"]:
+        cid = item["id"]
+        if not item["integrated"]:
+            continue
+        if connector_store.configurable(cid):
+            item["fields"] = ([] if profile
+                              else connector_store.describe(DATA, env, cid))
+            item["configurable"] = True
+        else:
+            item["configurable"] = False
+            item["connect_via"] = connector_store.NO_FIELDS.get(cid)
+    out["writable"] = not profile
+    out["storage_note"] = (
+        "Credentials entered here are stored on the persistent volume "
+        "(data/connectors) and take effect immediately, without a redeploy. They "
+        "override the matching environment variable."
+    )
+    return out
+
+
+def _home_deltas():
+    """Week-over-week movement from the append-only campaign snapshots.
+
+    Bison reports lifetime-to-date counts, so a delta needs two snapshots. Picks the
+    newest snapshot and the most recent one at least 6 days older; returns None when
+    there isn't enough history rather than inventing a comparison.
+    """
+    path = R(CAMPAIGN_STATS) / "campaigns_history.jsonl"
+    if not path.is_file():
+        return None
+    by_snap = {}
+    try:
+        for line in path.open():
+            if not line.strip():
+                continue
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            at = r.get("fetched_at")
+            if not at:
+                continue
+            agg = by_snap.setdefault(at, {"contacted": 0, "interested": 0, "replies": 0})
+            agg["contacted"] += r.get("total_leads_contacted") or 0
+            agg["interested"] += r.get("interested") or 0
+            agg["replies"] += r.get("unique_replies") or 0
+    except OSError:
+        return None
+    snaps = sorted(by_snap.items())
+    if len(snaps) < 2:
+        return None
+    latest_at, latest = snaps[-1]
+    # Walk back for a snapshot at least ~a week older; fall back to the previous one.
+    prev_at, prev = snaps[-2]
+    for at, agg in reversed(snaps[:-1]):
+        if (latest_at[:10] > at[:10]) and (latest_at[:10][:7] != at[:10][:7]
+                                           or int(latest_at[8:10]) - int(at[8:10]) >= 6):
+            prev_at, prev = at, agg
+            break
+    return {
+        "since": prev_at, "until": latest_at,
+        "contacted": latest["contacted"] - prev["contacted"],
+        "interested": latest["interested"] - prev["interested"],
+        "replies": latest["replies"] - prev["replies"],
+    }
+
+
+def home_payload():
+    """One assembled summary for the Home view.
+
+    Deliberately one endpoint rather than eight parallel calls from the page: fewer
+    round trips, deltas need cross-source maths anyway, and every section degrades
+    independently — a broken source nulls its own widget instead of erroring Home.
+    """
+    out = {"sections": {}, "errors": {}}
+
+    def section(name, fn):
+        try:
+            out["sections"][name] = fn()
+        except Exception as e:  # noqa: BLE001 — Home must always render
+            out["sections"][name] = None
+            out["errors"][name] = f"{type(e).__name__}: {e}"[:160]
+
+    # --- row 1: what the worker produced ---------------------------------
+    def outcome():
+        an = analytics_payload() or {}
+        totals = an.get("totals") or {}
+        ai = aisdr_analytics_payload() or {}
+        return {
+            "pipeline_attributed": ai.get("total_pipeline") if ai.get("configured") is not False else None,
+            "deals_created": ai.get("deals_created") if ai.get("configured") is not False else None,
+            "interested": totals.get("total_interested"),
+            "contacted": totals.get("total_contacted"),
+            "replies": totals.get("total_replies"),
+            "leads": totals.get("total_leads"),
+            "interested_rate_pct": totals.get("overall_interested_rate_pct"),
+            "reply_rate_pct": totals.get("overall_reply_rate_pct"),
+            "deltas": _home_deltas(),
+            "last_synced": an.get("fetched_at"),
+        }
+
+    # --- row 2: what needs a human --------------------------------------
+    def queue():
+        items = []
+        for path, channel in ((R(REVIEW_QUEUE), "email"), (R(LI_REVIEW_QUEUE), "linkedin")):
+            q = _read_json(path) or {}
+            for it in (q.get("items") or []):
+                items.append({
+                    "reply_id": it.get("reply_id"),
+                    "channel": it.get("channel") or channel,
+                    "from_name": it.get("from_name"),
+                    "company": (it.get("from_email") or "").split("@")[-1],
+                    "intent": (it.get("classifier") or {}).get("intent"),
+                    "date_received": it.get("date_received"),
+                })
+        items.sort(key=lambda i: i.get("date_received") or "", reverse=True)
+
+        prog = progress_payload() or {}
+        pending_batches = sum(1 for b in (prog.get("active_batches") or [])
+                              if b.get("status") == "pending")
+        # Total matters as well as missing: "all accounts covered" and "no accounts
+        # cached yet" are different states and must not render the same way.
+        # Coverage alone says little once every account is scanned ("12/12" three
+        # times over). What matters for the copy is how many accounts yielded a
+        # USABLE HOOK: a researched news angle (email 1), non-zero sales roles
+        # (email 2 opens on it), and a detected GTM stack (the no-disruption /
+        # signal-activation plays). Accounts with none of the three fall back to
+        # generic copy — that is the number worth acting on.
+        #
+        # Derived from the stored display lines, which have the same format whether
+        # the row came from a live scan or a demo profile: hiring_signals reads
+        # "14 open roles · 4 sales: SDR; AE" (the " sales:" only appears when the
+        # subset is non-empty), and a failed/empty tech scan stores the literal
+        # "No signals detected".
+        sig = None
+        try:
+            with db_connect() as conn:
+                row = conn.execute(
+                    "SELECT COUNT(*) total,"
+                    " SUM(signal IS NOT NULL AND TRIM(signal) != '') research,"
+                    " SUM(tech_signals IS NOT NULL"
+                    "     AND tech_signals != 'No signals detected') tech_hook,"
+                    " SUM(hiring_signals LIKE '% sales:%') hiring_hook,"
+                    " SUM(tech_signals IS NULL OR hiring_signals IS NULL) unscanned,"
+                    " SUM((signal IS NULL OR TRIM(signal) = '')"
+                    "     AND (tech_signals IS NULL"
+                    "          OR tech_signals = 'No signals detected')"
+                    "     AND hiring_signals NOT LIKE '% sales:%') no_hook"
+                    " FROM account_signals").fetchone()
+                sig = {k: (row[k] or 0) for k in
+                       ("total", "research", "tech_hook", "hiring_hook",
+                        "unscanned", "no_hook")}
+                # The most recently researched accounts, with the contact count so
+                # the widget can link straight to that account's slice of Outreach.
+                # This is the story the coverage bars alone never told: WHICH
+                # accounts we just learned something about.
+                sig["recent"] = [{
+                    "company": r["company_name"] or r["domain"],
+                    "domain": r["domain"],
+                    "signal": r["signal"],
+                    "tech": None if r["tech_signals"] == "No signals detected"
+                            else r["tech_signals"],
+                    # Only a NON-EMPTY sales subset is a hook (same rule the copy
+                    # uses) — "3 open roles · 0 sales" is not something to show.
+                    "hiring": (r["hiring_signals"]
+                               if (r["hiring_signals"] or "").find(" sales:") > -1
+                               else None),
+                    "checked_at": r["researched_at"],
+                    "contacts": r["n_contacts"] or 0,
+                } for r in conn.execute(
+                    "SELECT s.domain, s.company_name, s.signal, s.tech_signals,"
+                    "       s.hiring_signals, s.researched_at,"
+                    "       (SELECT COUNT(*) FROM contacts c WHERE c.domain = s.domain)"
+                    "         AS n_contacts"
+                    " FROM account_signals s"
+                    " WHERE s.signal IS NOT NULL AND TRIM(s.signal) != ''"
+                    " ORDER BY COALESCE(s.researched_at, s.updated_at) DESC"
+                    " LIMIT 8")]
+                # Drill-down: the actual people at each of those accounts, best
+                # first. A signal you cannot act on from where you read it is a
+                # notification, not a work surface — so the widget carries the
+                # contact, their score, their number and a link into the CRM.
+                doms = [r["domain"] for r in sig["recent"]]
+                if doms:
+                    ph = ",".join("?" * len(doms))
+                    by_dom = {}
+                    # One row per CONTACT. A person in two campaigns has two
+                    # membership rows, and joining straight through listed them
+                    # twice — so the best-scoring membership is picked per contact.
+                    for c in conn.execute(
+                            "SELECT c.contact_id, c.first_name, c.last_name, c.title,"
+                            "       c.domain, c.phone, c.mobile_phone, c.persona,"
+                            "       MAX(m.priority_score) AS priority_score,"
+                            "       MAX(m.score_band) AS score_band,"
+                            "       MAX(m.state) AS state"
+                            "  FROM contacts c"
+                            "  LEFT JOIN campaign_members m ON m.contact_id = c.contact_id"
+                            f" WHERE c.domain IN ({ph})"
+                            "  GROUP BY c.contact_id"
+                            "  ORDER BY priority_score IS NULL, priority_score DESC,"
+                            "           c.last_name", doms):
+                        by_dom.setdefault(c["domain"], [])
+                        if len(by_dom[c["domain"]]) < 4:
+                            by_dom[c["domain"]].append(dict(c))
+                    for r in sig["recent"]:
+                        r["people"] = by_dom.get(r["domain"], [])
+        except sqlite3.Error:
+            pass
+        return {
+            "replies_waiting": len(items),
+            "replies_top": items[:3],
+            "generated_ready": prog.get("generated_ready"),
+            "pending_batches": pending_batches,
+            "signals_missing": (sig or {}).get("unscanned"),
+            "signals": sig,
+        }
+
+    # --- row 3: is it improving -----------------------------------------
+    def trend():
+        t = trends_payload() or {}
+        conv = t.get("conversion") or {}
+        rs = conv.get("rate_series") or {}
+        points = [{"at": (p.get("fetched_at") or "")[:10],
+                   "rate": p.get("window_interested_rate_pct")}
+                  for p in (rs.get("points") or [])
+                  if p.get("window_interested_rate_pct") is not None]
+        # Per-step numbers, not a generated sentence: Home should be a miniature of
+        # the Trends view, using the same figures the sequence chart plots.
+        steps = [{"step": k,
+                  "contacted": v.get("contacted"),
+                  "interested": v.get("interested"),
+                  "rate": v.get("interested_rate_pct")}
+                 for k, v in sorted((conv.get("by_step") or {}).items(),
+                                    key=lambda kv: str(kv[0]))]
+        return {
+            "available": len(points) >= 2,
+            "points": points,
+            "latest": points[-1]["rate"] if points else None,
+            "previous": points[-2]["rate"] if len(points) >= 2 else None,
+            "overall_rate": (conv.get("overall") or {}).get("interested_rate_pct"),
+            "steps": steps,
+            "total_interested": t.get("total_interested"),
+        }
+
+    # --- row 4: pipeline state ------------------------------------------
+    def pipeline():
+        st = db_status() or {}
+        prog = progress_payload() or {}
+        return {
+            "contacts_by_status": st.get("contacts_by_status") or {},
+            "total_contacts": st.get("total_contacts"),
+            "by_persona": st.get("by_persona") or {},
+            "batches_by_status": st.get("batches_by_status") or {},
+            "active_batches": len(prog.get("active_batches") or []),
+        }
+
+    # --- row 5: only what actually needs attention -----------------------
+    def attention():
+        alerts = []
+        try:
+            conn_state = connectors_payload() or {}
+            for cid in (conn_state.get("summary") or {}).get("needs_attention") or []:
+                alerts.append({"level": "error", "link": "/diagram",
+                               "text": f"{cid} needs reconnecting — the stored "
+                                       "authorization can no longer be refreshed."})
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            un = unenrollment_status_payload() or {}
+            for r in (un.get("rules") or []):
+                c = r.get("counts") or {}
+                if c.get("available") and (c.get("failed") or 0) > 0:
+                    alerts.append({"level": "warn", "link": "/pipeline",
+                                   "text": f"{c['failed']} suppression action(s) failed "
+                                           f"on {r.get('name')} — they retry next sweep."})
+            if un.get("enabled") is False:
+                alerts.append({"level": "warn", "link": "/pipeline",
+                               "text": "The suppression sweeper is disabled — flagged "
+                                       "contacts are not being stopped automatically."})
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if (system_status_payload() or {}).get("volume_suspect"):
+                alerts.append({"level": "error", "link": "/diagram",
+                               "text": "The data directory looks non-persistent — "
+                                       "everything recorded here resets on redeploy."})
+        except Exception:  # noqa: BLE001
+            pass
+        return {"alerts": alerts}
+
+    # --- the call list: who to work next, strongest signal first -----------
+    def campaigns():
+        """Active campaigns + the top of the priority-ordered call list.
+
+        The widget's one destination is the Use view's Campaigns tab. It answers
+        "who do I call next", which is the only campaign question worth putting on
+        a dashboard — everything else about a campaign belongs on the campaign."""
+        with db_connect() as conn:
+            cp = campaigns_api.campaigns_payload(conn)
+            if not cp.get("available"):
+                return None
+            rows = cp.get("campaigns") or []
+            active = [c for c in rows if c.get("status") == "active"]
+            cl = campaigns_api.call_list_payload(conn, limit=6)
+        waiting = sum((c.get("counts") or {}).get("by_state", {}).get("qualified", 0)
+                      for c in rows)
+        bands = {}
+        for c in rows:
+            for band, n in ((c.get("counts") or {}).get("by_band") or {}).items():
+                bands[band] = bands.get(band, 0) + n
+        return {
+            "total": len(rows),
+            "active": len(active),
+            "waiting": waiting,          # qualified but not yet sent to
+            "bands": bands,
+            "signals_30d": cp.get("signal_counts") or {},
+            "call_list": [{
+                "contact_id": m.get("contact_id"),
+                "name": f"{m.get('first_name') or ''} {m.get('last_name') or ''}".strip(),
+                "title": m.get("title"),
+                "company": m.get("company") or m.get("domain"),
+                "persona": m.get("persona"),
+                "score": m.get("priority_score"),
+                "band": m.get("score_band"),
+                "signal": (m.get("signal_snapshot") or {}).get("summary"),
+                "campaign": m.get("campaign_name"),
+            } for m in (cl.get("contacts") or [])],
+        }
+
+    # --- evergreen campaigns waiting on a decision -------------------------
+    def reviews():
+        """Evergreen cycles that have ended and are asking before they run again.
+
+        On Home because it is the one campaign state where NOTHING happens until a
+        human acts — an evergreen campaign sitting in review is silently not
+        sending, and a queue nobody is shown is a queue nobody works. Returns None
+        when empty so the widget disappears rather than sitting there empty."""
+        with db_connect() as conn:
+            rp = campaigns_api.reviews_payload(conn)
+        items = rp.get("reviews") or []
+        return {"reviews": items} if items else None
+
+    section("outcome", outcome)
+    section("queue", queue)
+    section("trend", trend)
+    section("pipeline", pipeline)
+    section("campaigns", campaigns)
+    section("reviews", reviews)
+    section("attention", attention)
+    return out
+
+
+def campaign_outreach_payload(campaign_id, limit=500):
+    """The written copy for this campaign's members.
+
+    Lives here rather than in campaigns_api because it joins two things that only
+    app.py holds: the campaign's membership and the generated-copy index.
+
+    Members WITHOUT copy are included, not filtered out. "Which of these has the
+    agent actually written to?" is the question this tab exists to answer, and a
+    list that silently dropped the un-written ones would answer it wrongly by
+    omission — it would look complete when it was partial."""
+    try:
+        with db_connect() as conn:
+            members = pipeline_db.campaign_members(conn, campaign_id, limit=limit)
+    except sqlite3.Error as e:
+        return {"available": False, "error": str(e), "contacts": []}
+    # maybe_rebuild(), not a bare .rows read: the index is lazy PER PROFILE, so the
+    # first request in a demo (or after new copy lands) would otherwise see an empty
+    # index and report every contact as un-written. `query()` does this for the
+    # app-wide view; reading .rows directly skipped it.
+    idx = index()
+    idx.maybe_rebuild()
+    written = {str(r["contact_id"]): r for r in idx.rows}
+
+    # The SEQUENCE this person is actually on. A contact in two campaigns does not
+    # get two cadences — touch_plan merges every campaign's steps into one
+    # de-conflicted timeline (see the overlap note in campaigns.py), so "which
+    # sequence is this?" has a different answer for them than for a single-campaign
+    # contact, and the screen has to say which.
+    #
+    # Only computed for OVERLAPPING contacts: for everyone else the answer is just
+    # this campaign's own step count, and touch_plan per row would be a query per
+    # contact for an answer already known.
+    try:
+        with db_connect() as conn:
+            own_steps = len(pipeline_db.get_steps(conn, campaign_id))
+    except sqlite3.Error:
+        own_steps = 0
+    plans = {}
+    overlapped = [m for m in members if m.get("overlapping")][:200]
+    if overlapped:
+        try:
+            import campaigns as _camp
+            with db_connect() as conn:
+                for m in overlapped:
+                    try:
+                        plans[str(m["contact_id"])] = _camp.touch_plan(
+                            conn, str(m["contact_id"]))
+                    except Exception:  # noqa: BLE001 — one bad row must not blank the tab
+                        pass
+        except Exception:  # noqa: BLE001
+            pass
+
+    rows = []
+    for m in members:
+        cid = str(m["contact_id"])
+        w = written.get(cid)
+        tp = plans.get(cid)
+        camps = m.get("all_campaigns") or []
+        rows.append({
+            "contact_id": cid,
+            "name": f"{m.get('first_name') or ''} {m.get('last_name') or ''}".strip(),
+            "title": m.get("title"), "company": m.get("company") or m.get("domain"),
+            "persona": m.get("persona"), "state": m.get("state"),
+            "priority_score": m.get("priority_score"), "score_band": m.get("score_band"),
+            "has_copy": bool(w),
+            "signal": (w or {}).get("signal") or (m.get("signal_snapshot") or {}).get("summary"),
+            "cta_type": (w or {}).get("cta_type"),
+            "seq": (w or {}).get("seq"),
+            # Every campaign working this person, so an overlap is visible on the row
+            # rather than only after opening them.
+            "campaigns": camps,
+            "campaign_count": len(camps) or 1,
+            "sequence": {
+                "merged": bool(tp and tp.get("overlapping")),
+                "touches": len(tp["touches"]) if tp else own_steps,
+                "campaigns": len(tp["campaigns"]) if tp else 1,
+                "conflicts": tp.get("conflicts") if tp else 0,
+                "span_days": tp.get("span_days") if tp else None,
+            },
+        })
+    merged = sum(1 for r in rows if r["sequence"]["merged"])
+    return {
+        "available": True,
+        "contacts": rows,
+        "written": sum(1 for r in rows if r["has_copy"]),
+        "total": len(rows),
+        "merged": merged,
+        "own_steps": own_steps,
+    }
+
+
+def campaign_excluded_payload(campaign_id, limit=300):
+    """Who is out of this campaign, and why — with enough to put them back.
+
+    Two different exclusions, kept apart because undoing them is different:
+
+      LOCAL   dropped from THIS campaign ("not a fit here"). Restoring is a
+              campaign-level action and affects nothing else.
+      GLOBAL  outreach switched off for the person everywhere. They still MATCH —
+              they show in the campaign's target count — they are simply never
+              added. Restoring is a person-level decision.
+
+    The whole point is that both are reversible and findable a year later, when the
+    reason they were excluded may no longer hold.
+    """
+    out = {"available": True, "local": [], "global": []}
+    try:
+        with db_connect() as conn:
+            for r in conn.execute(
+                    "SELECT m.contact_id, m.outcome, m.note, m.updated_at, "
+                    "       c.first_name, c.last_name, c.title, c.company, c.domain "
+                    "FROM campaign_members m LEFT JOIN contacts c USING (contact_id) "
+                    "WHERE m.campaign_id=? AND m.state='removed' "
+                    "ORDER BY m.updated_at DESC LIMIT ?", (campaign_id, limit)):
+                d = dict(r)
+                d["name"] = f"{d.pop('first_name', '') or ''} {d.pop('last_name', '') or ''}".strip()
+                out["local"].append(d)
+            # Globally-off people who are IN this campaign, or would match it. The
+            # membership ones are the actionable list; the rest surface through the
+            # match preview's off_targets.
+            for r in conn.execute(
+                    "SELECT c.contact_id, c.first_name, c.last_name, c.title, "
+                    "       c.company, c.domain, c.engagement_state, c.paused_until, "
+                    "       c.engagement_note, c.engagement_updated_at "
+                    "FROM contacts c JOIN campaign_members m USING (contact_id) "
+                    "WHERE m.campaign_id=? AND c.engagement_state IS NOT NULL "
+                    "  AND c.engagement_state != 'active' LIMIT ?", (campaign_id, limit)):
+                d = dict(r)
+                d["name"] = f"{d.pop('first_name', '') or ''} {d.pop('last_name', '') or ''}".strip()
+                out["global"].append(d)
+    except sqlite3.Error as e:
+        return {"available": False, "error": str(e), "local": [], "global": []}
+    return out
+
+
+def campaign_replies_payload(campaign_id, limit=500):
+    """Replies from this campaign's contacts.
+
+    Matched on EMAIL, because a reply arrives from a mailbox and carries no campaign
+    id — Bison's reply record knows the address, not which console campaign put the
+    contact there. Matching on the member's email is the only join available, and it
+    is exact: an address is either one of this campaign's members or it isn't.
+    """
+    try:
+        with db_connect() as conn:
+            members = pipeline_db.campaign_members(conn, campaign_id, limit=limit)
+    except sqlite3.Error as e:
+        return {"available": False, "error": str(e), "replies": []}
+    by_email = {(m.get("email") or "").strip().lower(): m for m in members if m.get("email")}
+    if not by_email:
+        return {"available": True, "replies": [], "total": 0}
+
+    queue = review_queue_payload() or {}
+    drafts = {str(d.get("reply_id")): d
+              for d in ((followup_drafts_payload() or {}).get("items") or [])}
+    out = []
+    for it in (queue.get("items") or []):
+        addr = (it.get("from_email") or "").strip().lower()
+        m = by_email.get(addr)
+        if not m:
+            continue
+        d = drafts.get(str(it.get("reply_id"))) or {}
+        out.append({
+            "reply_id": it.get("reply_id"),
+            "contact_id": m.get("contact_id"),
+            "channel": it.get("channel") or "email",
+            "from_name": it.get("from_name") or
+                         f"{m.get('first_name') or ''} {m.get('last_name') or ''}".strip(),
+            "from_email": it.get("from_email"),
+            "company": m.get("company") or m.get("domain"),
+            "intent": (it.get("classifier") or {}).get("intent"),
+            "date_received": it.get("date_received"),
+            "snippet": (it.get("body") or it.get("snippet") or "")[:400],
+            "draft_status": d.get("status"),
+        })
+    out.sort(key=lambda r: r.get("date_received") or "", reverse=True)
+    return {"available": True, "replies": out, "total": len(out),
+            "members_with_email": len(by_email)}
+
+
+def _demo_draft_followups(handler):
+    """Serve the profile's pre-written follow-up drafts as if they were just drafted.
+
+    Reads only `interested-replies/followup_drafts.json` from the active profile — no
+    model call, no file write, no outbound request. This is what lets a demo show the
+    agent drafting a reply, which is the moment the product is actually about.
+    """
+    payload = _read_json(R(FOLLOWUP_DRAFTS)) or {"items": []}
+    items = payload.get("items") or []
+    return {"ok": True, "drafted": len(items), "kept": 0,
+            "stdout": f"drafted {len(items)} follow-ups from the demo profile",
+            "returncode": 0}
+
+
+# Regenerated demo drafts, held in PROCESS MEMORY only — keyed (profile, reply_id).
+# The UI refetches the drafts file after a regenerate, and demo mode must not write,
+# so the override is applied on read instead. Nothing persists past a restart, which
+# is the right lifetime for a demo.
+_DEMO_DRAFTS = {}
+_DEMO_DRAFTS_LOCK = threading.Lock()
+
+
+def _demo_regenerate_draft(handler):
+    """Swap in the next pre-written alternate for one reply, so 'regenerate' shows a
+    genuinely different message instead of appearing to do nothing."""
+    body = handler._read_body()
+    rid = str(body.get("reply_id") or "")
+    profile = demo_mode.active()
+    payload = _read_json(R(FOLLOWUP_DRAFTS)) or {}
+    for it in (payload.get("items") or []):
+        if str(it.get("reply_id")) != rid:
+            continue
+        variants = [it.get("draft") or ""] + list(it.get("demo_alternates") or [])
+        variants = [v for v in variants if v]
+        if not variants:
+            return {"ok": False, "error": "that reply has no draft in this profile"}
+        key = (profile, rid)
+        with _DEMO_DRAFTS_LOCK:
+            nxt = (_DEMO_DRAFTS.get(key, {}).get("idx", 0) + 1) % len(variants)
+            _DEMO_DRAFTS[key] = {"idx": nxt, "draft": variants[nxt]}
+        return {"ok": True, "reply_id": rid, "draft": variants[nxt],
+                "agent": body.get("agent") or it.get("agent") or "standard",
+                "intent": it.get("intent"), "regenerated": True}
+    return {"ok": False, "error": "no draft for that reply in this demo profile"}
+
+
+def _demo_suggest_step_copy(handler):
+    """Demo answer for the campaign copy suggester.
+
+    A demo has no ANTHROPIC_API_KEY, and "copy suggestions need an API key" is
+    exactly the kind of not-configured notice a demo must never show — the product
+    being demonstrated IS the agent writing copy. So the draft comes from the
+    profile's own fixture and nothing is generated, called or written.
+
+    Fixture: data/demo/<id>/campaign_copy.json
+      {"suggestions": {"email:2": {"subject": "...", "body": "..."}},
+       "default": {"subject": "...", "body": "..."}}
+    """
+    body = handler._read_body()
+    step = body.get("step_no")
+    channel = str(body.get("channel") or "email")
+    fx = _read_json(R(DATA / "campaign_copy.json")) or {}
+    key = f"{channel}:{step}"
+    draft = (fx.get("suggestions") or {}).get(key) or fx.get("default")
+    if not draft:
+        return {"ok": False, "error": "no sample copy for that step in this demo profile"}
+    return {"step_no": step, "channel": channel, "cta_key": body.get("cta_key"),
+            "subject": draft.get("subject", ""), "body": draft.get("body", ""),
+            "demo": True}
+
+
+def _demo_describe_report(handler):
+    """Demo answer for report-by-description.
+
+    A demo has no ANTHROPIC_API_KEY, and "needs an API key" is exactly the
+    not-configured notice a demo must never show. Matches the request against
+    the profile's `report_recipes.json` by keyword and runs the matching SPEC —
+    so the table shown is genuinely computed from the profile's data, not a
+    canned screenshot. An unmatched request says so rather than inventing one."""
+    body = handler._read_body()
+    desc = str(body.get("description") or "").strip().lower()
+    fx = _read_json(R(DATA / "report_recipes.json")) or {}
+    best, score = None, 0
+    for r in (fx.get("recipes") or []):
+        hits = sum(1 for k in (r.get("keywords") or []) if k in desc)
+        if hits > score:
+            best, score = r, hits
+    if not best:
+        return {"ok": False, "error": (
+            "This demo answers a set of example questions — try asking about hot "
+            "contacts, signals by type, campaign performance, or credit spend.")}
+    with db_connect() as conn:
+        out = reports.run(conn, best["spec"])
+    out["demo"] = True
+    out["matched"] = best.get("label")
+    return out
+
+
+def _demo_campaign_brief(handler):
+    """Demo answer for the campaign brief configurator.
+
+    A demo has no ANTHROPIC_API_KEY, and an agent that configures a campaign from a
+    meeting note is the product — "needs an API key" is the one notice a demo must
+    never show there. So the profile answers it from `campaign_brief.json`:
+
+      {"clarify": {...one question, with per-option config overlays...},
+       "recipes": [{"keywords": [...], "summary": ..., "config": {...}, "notes": []}],
+       "default": {"summary": ..., "config": {...}}}
+
+    It behaves like the real thing in the way that matters: the FIRST call comes
+    back with a clarifying question and only a partial configuration, and the
+    answer to that question changes the rest of the form. Answering is what
+    completes the config — a fixture that returned everything at once would demo a
+    form-filler rather than a configurator.
+
+    Every field still goes through campaign_brief.validate_config, so a fixture
+    cannot put a value on the form that the create endpoint would then reject.
+    """
+    body = handler._read_body()
+    text = " ".join([str(body.get("text") or "")]
+                    + [str(a.get("name") or "") + " " + str(a.get("text") or "")[:2000]
+                       for a in (body.get("attachments") or [])]).lower()
+    answers = body.get("answers") or {}
+    fx = _read_json(R(DATA / "campaign_brief.json")) or {}
+
+    best, score = None, 0
+    for r in (fx.get("recipes") or []):
+        hits = sum(1 for k in (r.get("keywords") or []) if k in text)
+        if hits > score:
+            best, score = r, hits
+    best = best or fx.get("default")
+    if not best:
+        return {"ok": False, "error": (
+            "This demo configures a set of example campaigns — try describing a "
+            "closed-lost re-engagement, a funding-and-hiring push, or a "
+            "competitive-displacement campaign.")}
+
+    raw = dict(best.get("config") or {})
+    notes = list(best.get("notes") or [])
+    clarify = best.get("clarify") or fx.get("clarify") or {}
+    questions = []
+    if clarify and clarify.get("id") not in answers:
+        # Hold back the fields this question decides, so the form visibly completes
+        # when it is answered rather than the answer being cosmetic.
+        for k in (clarify.get("decides") or []):
+            raw.pop(k, None)
+        questions = [clarify]
+    else:
+        chosen = answers.get((clarify or {}).get("id"))
+        for o in (clarify.get("options") or []):
+            if o.get("label") == chosen:
+                raw = _merge_config(raw, o.get("config") or {})
+                if o.get("note"):
+                    notes.append(o["note"])
+                break
+
+    conn = db_connect()
+    try:
+        config, warnings = campaign_brief.validate_config(raw, conn)
+        qs = campaign_brief.validate_questions(questions, conn)
+    finally:
+        conn.close()
+    return {
+        "summary": best.get("summary", ""),
+        "config": config, "questions": qs,
+        "notes": notes[:6], "warnings": warnings, "demo": True,
+    }
+
+
+def _merge_config(base, overlay):
+    """Overlay wins, one level deep so a partial signal_query does not wipe the rest."""
+    out = dict(base)
+    for k, v in (overlay or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = {**out[k], **v}
+        else:
+            out[k] = v
+    return out
+
+
+# POST paths a demo may answer from its own fixtures (see the guard in do_POST).
+# Everything irreversible is deliberately absent.
+_DEMO_FIXTURE_POSTS = {
+    "/api/replies/followup/draft": _demo_draft_followups,
+    "/api/replies/followup/regenerate": _demo_regenerate_draft,
+    "/api/campaigns/brief": _demo_campaign_brief,
+}
+
+# Same contract, for paths that carry an id. Checked after the exact map.
+_DEMO_FIXTURE_POST_PATTERNS = [
+    (re.compile(r"^/api/campaigns/\d+/suggest$"), _demo_suggest_step_copy),
+]
+
+
+def _demo_fixture_handler(path):
+    fn = _DEMO_FIXTURE_POSTS.get(path)
+    if fn:
+        return fn
+    for rx, handler in _DEMO_FIXTURE_POST_PATTERNS:
+        if rx.match(path):
+            return handler
+    return None
+
+
+def demo_profiles_payload():
+    """Demo profiles available on disk, for the sidebar switcher.
+
+    Unauthenticated-safe in content (labels only), but still behind the auth gate
+    like every other read. `active` is whatever this request asked for, echoed back
+    so the client can detect a profile that vanished under it.
+    """
+    return {
+        "profiles": demo_mode.list_profiles(DATA),
+        "active": demo_mode.active(),
+        "areas": list(demo_mode.KNOWN_AREAS),
+    }
+
+
 def trends_payload():
-    summary = _read_json(TRENDS_DIR / "summary.json")
-    conversion = _read_json(TRENDS_DIR / "conversion.json")
-    cohorts = _read_json(TRENDS_DIR / "cohorts.json")
-    last_run = _read_json(REPLIES_LAST_RUN) or {}
+    """Trends artifacts, from live data or the active demo profile (see R())."""
+    src = R(TRENDS_DIR)
+    summary = _read_json(src / "summary.json")
+    conversion = _read_json(src / "conversion.json")
+    cohorts = _read_json(src / "cohorts.json")
+    last_run = _read_json(R(REPLIES_LAST_RUN)) or {}
     return {
         "available": summary is not None,
+        "demo": demo_mode.active(),
+        # Planted-effect documentation, present only in synthetic profiles.
+        "ground_truth": _read_json(src / "ground_truth.json"),
         "fetched_at": last_run.get("fetched_at"),
         "total_interested": last_run.get("total_interested"),
         "summary": summary,
@@ -2347,8 +3489,8 @@ def review_queue_payload():
     list, each item carrying a `channel`. Counts are summed across channels.
     Per-lead console state and the merged conversation thread are attached at
     read time so they survive scans rewriting the queue files."""
-    email = _read_json(REVIEW_QUEUE) or {}
-    li = _read_json(LI_REVIEW_QUEUE) or {}
+    email = _read_json(R(REVIEW_QUEUE)) or {}
+    li = _read_json(R(LI_REVIEW_QUEUE)) or {}
     if not email and not li:
         return {"available": False, "items": []}
     for it in (email.get("items") or []):
@@ -2619,8 +3761,18 @@ def do_draft_followups():
 
 
 def followup_drafts_payload():
-    payload = _read_json(FOLLOWUP_DRAFTS) or {"items": []}
-    payload["available"] = FOLLOWUP_DRAFTS.is_file()
+    path = R(FOLLOWUP_DRAFTS)          # profile-scoped: demo must not read live drafts
+    payload = _read_json(path) or {"items": []}
+    payload["available"] = path.is_file()
+    profile = demo_mode.active()
+    if profile:
+        with _DEMO_DRAFTS_LOCK:
+            overrides = {rid: v["draft"] for (prof, rid), v in _DEMO_DRAFTS.items()
+                         if prof == profile}
+        for it in (payload.get("items") or []):
+            alt = overrides.get(str(it.get("reply_id")))
+            if alt:
+                it["draft"] = alt
     _stamp_handled(payload.get("items"))
     return payload
 
@@ -2934,7 +4086,13 @@ def _age_days(researched_at):
 def _tech_status():
     """(available, reason) for technographic detection. Mirrors the Mongo
     'configured' degrade: import lazily, never raise, never block boot — the
-    server must come up without dnspython installed."""
+    server must come up without dnspython installed.
+
+    In demo mode capability is DECLARED, not probed. A demo profile represents a
+    fully-configured deployment, so it must not report the host's missing optional
+    dependencies or absent API keys as broken features."""
+    if demo_mode.is_demo():
+        return True, None
     try:
         import tech_signals as T  # noqa: E402  (PIPELINE_SCRIPTS is on sys.path)
         return T.tech_available()
@@ -2945,7 +4103,9 @@ def _tech_status():
 def _hiring_status():
     """(available, reason) for hiring detection. Same degrade contract as
     _tech_status — without PROSPEO_API_KEY the feature reports unavailable and
-    the server keeps running."""
+    the server keeps running. Declared, not probed, in demo mode (see _tech_status)."""
+    if demo_mode.is_demo():
+        return True, None
     try:
         import hiring_signals as H  # noqa: E402  (PIPELINE_SCRIPTS is on sys.path)
         return H.hiring_available()
@@ -3308,6 +4468,31 @@ class Handler(BaseHTTPRequestHandler):
     def _error(self, code, msg):
         self._json({"ok": False, "error": msg}, code=code)
 
+    def _demo_header(self):
+        """The requested demo profile id, or None. Untrusted client input."""
+        v = (self.headers.get("X-Demo-Profile") or "").strip()
+        return v or None
+
+    def _enter_demo_scope(self):
+        """Bind this request's thread to the requested demo profile.
+
+        False (and no binding) if the client named a profile that doesn't exist —
+        better a clear 400 than silently serving live data to something that
+        believes it is in a demo. Always paired with demo_mode.clear() in a finally.
+        """
+        requested = self._demo_header()
+        demo_mode.clear()
+        if requested is None:
+            return True
+        if not demo_mode.profile_exists(DATA, requested):
+            # The profile listing must never fail on a stale id: it is the very
+            # call the client uses to discover its selection is gone and fall back
+            # to live. 400-ing it would leave the console permanently wedged on a
+            # deleted profile with no way back through the UI.
+            return urlparse(self.path).path == "/api/demo/profiles"
+        demo_mode.set_active(requested)
+        return True
+
     def _public_base(self):
         """The scheme+host the browser used to reach us, honoring the reverse
         proxy's X-Forwarded-* headers (Railway terminates TLS upstream, so the
@@ -3365,6 +4550,8 @@ class Handler(BaseHTTPRequestHandler):
         if (path.startswith("/api/") and path not in _EXEMPT_GET
                 and not verify_token(bearer_from_headers(self.headers))):
             return self._error(401, "authentication required")
+        if not self._enter_demo_scope():
+            return self._error(400, "unknown demo profile")
         try:
             if path == "/api/health":
                 return self._json({"ok": True})
@@ -3377,7 +4564,8 @@ class Handler(BaseHTTPRequestHandler):
                 limit = (params.get("limit", [""])[0] or None)
                 return self._json(db_batches(status=status, limit=limit))
             if path == "/api/orchestration/config":
-                return self._json(orchestration_config.orchestration_config_payload())
+                return self._json(orchestration_config.orchestration_config_payload(
+                    demo=demo_mode.is_demo()))
             if path == "/api/analytics":
                 return self._json(analytics_payload())
             if path == "/api/analytics/linkedin":
@@ -3392,6 +4580,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(progress_payload())
             if path == "/api/trends":
                 return self._json(trends_payload())
+            if path == "/api/demo/profiles":
+                return self._json(demo_profiles_payload())
+            if path == "/api/connectors":
+                return self._json(connectors_payload())
+            if path == "/api/home":
+                return self._json(home_payload())
+            if path == "/api/config/scopes":
+                return self._json(config_edit.scopes_payload(PROJECT_ROOT, CONFIG_HISTORY))
+            if path == "/api/config/file":
+                scope = (params.get("scope", [""])[0] or "").strip()
+                if scope not in config_edit.SCOPES:
+                    return self._error(404, "unknown config scope")
+                return self._json({"scope": scope,
+                                   "files": config_edit.read_scope(PROJECT_ROOT, scope)})
             if path == "/api/replies/queue":
                 return self._json(review_queue_payload())
             if path == "/api/replies/followup/drafts":
@@ -3408,7 +4610,7 @@ class Handler(BaseHTTPRequestHandler):
                 slug = path[len("/api/plays/"):-len("/html")]
                 if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,80}", slug or ""):
                     return self._error(400, "bad slug")
-                d = SIGNAL_PLAYS_DIR / slug
+                d = R(SIGNAL_PLAYS_DIR) / slug
                 html = next(iter(sorted(d.glob("*.html"))), None) if d.is_dir() else None
                 if not html:
                     return self._error(404, f"no play html for {slug}")
@@ -3423,6 +4625,118 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(signals_payload())
             if path == "/api/signals/detail":
                 return self._json(signals_detail(params.get("domain", [""])[0]))
+            if path == "/api/signals/events":
+                days = (params.get("days", ["90"])[0] or "90")
+                with db_connect() as conn:
+                    return self._json(campaigns_api.signal_events_payload(
+                        conn, days=int(days) if days.isdigit() else 90))
+            if path == "/api/campaigns":
+                with db_connect() as conn:
+                    return self._json(campaigns_api.campaigns_payload(conn))
+            if path == "/api/campaigns/calllist":
+                cid = (params.get("campaign_id", [""])[0] or "").strip()
+                limit = (params.get("limit", ["100"])[0] or "100")
+                # 'all' is the every-state sentinel. It can't be spelled as an empty
+                # value: parse_qs drops blanks, so `state=` arrives indistinguishable
+                # from an absent param and would silently fall back to 'qualified'.
+                state = params.get("state", ["qualified"])[0]
+                # Clamped: the client can ask for the whole list so its sort covers
+                # everything, but not for an unbounded response.
+                with db_connect() as conn:
+                    return self._json(campaigns_api.call_list_payload(
+                        conn, campaign_id=int(cid) if cid.isdigit() else None,
+                        limit=min(int(limit), 5000) if limit.isdigit() else 100,
+                        state="" if state == "all" else state))
+            if path.startswith("/api/campaigns/discover/status/"):
+                job_id = path[len("/api/campaigns/discover/status/"):]
+                try:
+                    return self._json(campaigns_api.discover_status(job_id))
+                except LookupError as e:
+                    return self._error(404, str(e))
+            if path.startswith("/api/campaigns/enrich/status/"):
+                job_id = path[len("/api/campaigns/enrich/status/"):]
+                try:
+                    return self._json(campaigns_api.enrich_status(job_id))
+                except LookupError as e:
+                    return self._error(404, str(e))
+            if path == "/api/campaigns/audiences":
+                return self._json(campaigns_api.audiences_payload())
+            if path == "/api/campaigns/imports":
+                return self._json(campaigns_api.imports_payload())
+            if path == "/api/signals/definitions":
+                with db_connect() as conn:
+                    return self._json(campaigns_api.signal_defs_payload(conn))
+            if path == "/api/references":
+                with db_connect() as conn:
+                    out = campaigns_api.references_payload(conn)
+                # Where content can come from, from the SAME inventory Setup renders,
+                # so the two surfaces cannot disagree about what is connected.
+                profile = demo_mode.active()
+                declared = None
+                if profile:
+                    decl = _read_json(R(DATA / "connectors.json")) or {}
+                    if isinstance(decl.get("connected"), list):
+                        declared = decl["connected"]
+                out["repositories"] = connectors.content_repositories(
+                    {} if profile else read_env(), PROJECT_ROOT,
+                    demo_profile=profile, demo_connected=declared)
+                return self._json(out)
+            if path.startswith("/api/campaigns/") and path.endswith("/outreach"):
+                cid = path[len("/api/campaigns/"):-len("/outreach")]
+                if cid.isdigit():
+                    return self._json(campaign_outreach_payload(int(cid)))
+            if path.startswith("/api/campaigns/") and path.endswith("/replies"):
+                cid = path[len("/api/campaigns/"):-len("/replies")]
+                if cid.isdigit():
+                    return self._json(campaign_replies_payload(int(cid)))
+            if path.startswith("/api/campaigns/") and path.endswith("/excluded"):
+                cid = path[len("/api/campaigns/"):-len("/excluded")]
+                if cid.isdigit():
+                    return self._json(campaign_excluded_payload(int(cid)))
+            if path == "/api/campaigns/reviews":
+                with db_connect() as conn:
+                    return self._json(campaigns_api.reviews_payload(conn))
+            if path == "/api/campaigns/hotlist":
+                # R() so a demo profile serves its own snapshot, not live targets.
+                with db_connect() as conn:
+                    return self._json(campaigns_api.hot_list_payload(
+                        conn, R(HOT_LIST_PATH)))
+            if path == "/api/capacity":
+                days = (params.get("days", ["30"])[0] or "30")
+                with db_connect() as conn:
+                    return self._json(campaigns_api.capacity_payload(
+                        conn, days=int(days) if days.isdigit() else 30))
+            if path == "/api/crm/fields":
+                with db_connect() as conn:
+                    return self._json(campaigns_api.crm_fields_payload(conn))
+            if path == "/api/reports/schema":
+                return self._json(reports.schema_payload())
+            if path == "/api/tiers":
+                # Static packaging registry — which features are separately-sold
+                # agents/add-ons, for the tier badges. CRM linking rides along
+                # because both are app-wide config the client needs exactly once,
+                # and a second app-boot request for one field isn't worth it.
+                return self._json({**tiers.payload(), "crm": crm_link_config()})
+            if path == "/api/buyer-group":
+                with db_connect() as conn:
+                    return self._json(campaigns_api.buyer_group_payload(conn))
+            if path == "/api/analytics/campaigns":
+                with db_connect() as conn:
+                    return self._json(campaigns_api.campaign_analytics_payload(conn))
+            if path == "/api/analytics/funnel":
+                # Joined to the Bison snapshot so the funnel spans our own stages
+                # AND the send-side ones in a single chain.
+                with db_connect() as conn:
+                    return self._json(campaigns_api.funnel_payload(
+                        conn, analytics=analytics_payload()))
+            if path.startswith("/api/campaigns/"):
+                rest = path[len("/api/campaigns/"):]
+                if rest.isdigit():
+                    with db_connect() as conn:
+                        payload = campaigns_api.campaign_detail_payload(conn, int(rest))
+                    if payload.get("error") == "not found":
+                        return self._error(404, f"no campaign {rest}")
+                    return self._json(payload)
             if path.startswith("/api/signals/tech/status/"):
                 job_id = path[len("/api/signals/tech/status/"):]
                 job = TECH_JOBS.get(job_id)
@@ -3501,7 +4815,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True, "list_id": list_id,
                                    **read_source_progress(list_id)})
             if path == "/api/outreach":
-                return self._json(INDEX.query(params))
+                return self._json(index().query(params))
             if path.startswith("/api/outreach/"):
                 cid = path[len("/api/outreach/"):]
                 detail = outreach_detail(cid)
@@ -3514,6 +4828,106 @@ class Handler(BaseHTTPRequestHandler):
             return self._serve_static(path)
         except Exception as e:  # noqa: BLE001 - surface errors to the client
             return self._error(500, f"{type(e).__name__}: {e}")
+        finally:
+            demo_mode.clear()
+
+    def _demo_ingest(self):
+        """Simulated 'pull a list from HubSpot' — reads the profile's own CRM pool.
+
+        Same response shape as do_ingest() so the Source tab is byte-identical in a
+        demo; nothing leaves the process and nothing lands outside the profile."""
+        body = self._read_body()
+        return demo_actions.simulate_crm_pull(
+            _demo_dir(), _demo_db(), str(body.get("list_id", "")).strip(),
+            limit=_ingest_limit(body))
+
+    def _signals_post(self, path):
+        """Signal definitions — what counts as a signal in this deployment.
+
+        Configuration, not code (see crm_signals.py). Preview writes nothing; save
+        validates the rule before it can ever run, so a definition that reaches the
+        table is one the evaluator will accept."""
+        try:
+            if path == "/api/signals/definitions":
+                return self._json(campaigns_api.save_signal_def(self._read_body()))
+            if path == "/api/signals/definitions/preview":
+                return self._json(campaigns_api.preview_signal_rule(self._read_body()))
+            rest = path[len("/api/signals/definitions/"):]
+            kind, _, action = rest.partition("/")
+            if action == "delete":
+                return self._json(campaigns_api.delete_signal_def(kind))
+            if action == "run":
+                return self._json(campaigns_api.run_signal_rule(kind, self._read_body()))
+            return self._error(404, f"no signal route {path}")
+        except LookupError as e:
+            return self._error(404, str(e))
+        except ValueError as e:
+            return self._error(400, str(e))
+
+    def _campaigns_post(self, path):
+        """Dispatch the campaign write surface.
+
+        POST /api/campaigns                    create (seeds the default cadence)
+        POST /api/campaigns/<id>               patch the definition
+        POST /api/campaigns/<id>/delete
+        POST /api/campaigns/<id>/steps         upsert one sequence step
+        POST /api/campaigns/<id>/steps/delete
+        POST /api/campaigns/<id>/qualify       {dry_run?} apply the signal query
+        POST /api/campaigns/<id>/suggest       draft copy for one step
+        POST /api/campaigns/brief              configure a campaign from a description
+        """
+        body = self._read_body()
+        rest = path[len("/api/campaigns"):].strip("/")
+        try:
+            if rest == "audience/preview":
+                return self._json(campaigns_api.audience_preview(body))
+            if rest == "brief":
+                return self._json(campaigns_api.brief(body, PROJECT_ROOT))
+            if rest == "audience/upload":
+                return self._json(campaigns_api.import_preview(body, PROJECT_ROOT))
+            if rest == "audience/import":
+                return self._json(campaigns_api.import_commit(
+                    body, PROJECT_ROOT, SCRIPTS / "sdr-pipeline" / "scripts"))
+            if rest == "hotlist/refresh":
+                return self._json(campaigns_api.refresh_hot_list())
+            if not rest:
+                return self._json(campaigns_api.create_campaign(body))
+            head, _, action = rest.partition("/")
+            if not head.isdigit():
+                return self._error(404, f"no campaign route {path}")
+            cid = int(head)
+            if not action:
+                return self._json(campaigns_api.update_campaign(cid, body))
+            if action == "delete":
+                return self._json(campaigns_api.delete_campaign(cid))
+            if action == "steps":
+                return self._json(campaigns_api.upsert_step(cid, body))
+            if action == "steps/delete":
+                return self._json(campaigns_api.delete_step(cid, body))
+            if action == "qualify":
+                return self._json(campaigns_api.qualify(cid, body))
+            if action == "discover":
+                return self._json(campaigns_api.discover(cid, body))
+            if action == "enrich":
+                return self._json(campaigns_api.enrich(cid, body))
+            if action == "rescore":
+                return self._json(campaigns_api.rescore(cid, body))
+            if action == "relaunch":
+                return self._json(campaigns_api.relaunch(cid, body))
+            if action == "suggest":
+                return self._json(campaigns_api.suggest_step_copy(cid, body, PROJECT_ROOT))
+            return self._error(404, f"no campaign route {path}")
+        except campaigns_api.Discovering as e:
+            return self._error(409, str(e))
+        except LookupError as e:
+            return self._error(404, str(e))
+        except ValueError as e:
+            return self._error(400, str(e))
+        except RuntimeError as e:
+            # no API key / model returned nothing usable — same contract as
+            # /api/config/propose, which 501s when the key is absent
+            msg = str(e)
+            return self._error(501 if "ANTHROPIC_API_KEY" in msg else 502, msg)
 
     def do_POST(self):
         parsed = urlparse(self.path)
@@ -3522,6 +4936,72 @@ class Handler(BaseHTTPRequestHandler):
         if (path.startswith("/api/") and path not in _EXEMPT_POST
                 and not verify_token(bearer_from_headers(self.headers))):
             return self._error(401, "authentication required")
+        # Demo mode is read-only. Every POST here either mutates local state or
+        # reaches OUT — enrolling leads, writing to HubSpot, sending via
+        # Bison/HeyReach. Refusing the whole verb is the guarantee that a demo can
+        # never touch a real prospect.
+        #
+        # The one carve-out: a short allowlist of actions a demo answers ENTIRELY
+        # FROM ITS OWN FIXTURES. These are intercepted here, before any dispatch, so
+        # no script runs, nothing is written and no external service is called — the
+        # handler can only read the profile. Anything irreversible (approve/send,
+        # enroll, sync, config apply) stays refused.
+        # Demo mode: A DEMO MAY WRITE TO ITS OWN DATASET AND NOTHING ELSE.
+        #
+        # This used to refuse every POST. That was the right instinct expressed as
+        # the wrong invariant — it also made the demo unable to show the product's
+        # central act, building and running a campaign. What must never happen is an
+        # OUTWARD EFFECT: mailing a prospect, writing to the customer's CRM, spending
+        # a credit, calling the model. Writing to the profile's own synthetic sqlite
+        # has none of those properties.
+        #
+        # Two allowlists, both exact-match or regex so a new sibling endpoint is
+        # refused by default: `_demo_fixture_handler` answers purely from fixtures,
+        # `demo_mode.writable` permits a write scoped to the profile's own DB (with
+        # simulated stand-ins for HubSpot/Clay/Prospeo — see demo_actions.py).
+        if path.startswith("/api/") and path != "/api/login" and self._demo_header():
+            _fixture = _demo_fixture_handler(path)
+            if _fixture and self._enter_demo_scope():
+                try:
+                    return self._json(_fixture(self))
+                finally:
+                    demo_mode.clear()
+            if demo_mode.writable(path) and self._enter_demo_scope():
+                try:
+                    if path == "/api/ingest":
+                        return self._json(self._demo_ingest())
+                    if path == "/api/buyer-group":
+                        return self._json(campaigns_api.update_buyer_group(self._read_body()))
+                    if path == "/api/reports/run":
+                        # SELECT-only against the profile's own DB.
+                        with db_connect() as conn:
+                            return self._json(reports.run(conn, self._read_body().get("spec")))
+                    if path == "/api/reports/describe":
+                        return self._json(_demo_describe_report(self))
+                    # Signal definitions are local config; the rules read the
+                    # profile's own contacts and its simulated CRM.
+                    if path.startswith("/api/signals/definitions"):
+                        return self._signals_post(path)
+                    if path == "/api/references":
+                        return self._json(campaigns_api.save_reference(self._read_body()))
+                    if path == "/api/references/attach":
+                        return self._json(campaigns_api.set_cta_reference(self._read_body()))
+                    if path == "/api/calllist/member":
+                        return self._json(campaigns_api.update_member(self._read_body()))
+                    if path == "/api/calllist/engagement":
+                        return self._json(campaigns_api.update_engagement(self._read_body()))
+                    return self._campaigns_post(path)
+                except campaigns_api.Discovering as e:
+                    return self._error(409, str(e))
+                except LookupError as e:
+                    return self._error(404, str(e))
+                except ValueError as e:
+                    return self._error(400, str(e))
+                finally:
+                    demo_mode.clear()
+            return self._error(
+                409, "not available in demo mode — this would reach a real prospect, "
+                     "CRM or paid service. Switch back to live data to run it.")
         try:
             if path == "/api/login":
                 body = self._read_body()
@@ -3536,9 +5016,97 @@ class Handler(BaseHTTPRequestHandler):
                 list_id = str(body.get("list_id", "")).strip()
                 if not list_id:
                     return self._error(400, "list_id required")
-                return self._json(do_ingest(list_id))
+                return self._json(do_ingest(list_id, _ingest_limit(body)))
             if path == "/api/analytics/refresh":
                 return self._json(do_refresh())
+            # -- customer proof attached to offers ---------------------------
+            if path == "/api/references":
+                return self._json(campaigns_api.save_reference(self._read_body()))
+            if path == "/api/references/attach":
+                return self._json(campaigns_api.set_cta_reference(self._read_body()))
+            # -- working the call list ---------------------------------------
+            # Campaign-level vs person-level, kept as separate endpoints because
+            # they are separate decisions with different blast radii.
+            if path == "/api/calllist/member":
+                return self._json(campaigns_api.update_member(self._read_body()))
+            if path == "/api/calllist/engagement":
+                return self._json(campaigns_api.update_engagement(self._read_body()))
+            # -- signal definitions: what counts as a signal here ------------
+            if path.startswith("/api/signals/definitions"):
+                return self._signals_post(path)
+            # -- connectors: wire a system up from Setup --------------------
+            # Writes land on the volume and take effect in-process immediately.
+            # Refused in demo mode by the blanket POST guard above, which is the
+            # point: a demo must never learn or store a real credential.
+            if path.startswith("/api/connectors/"):
+                rest = path[len("/api/connectors/"):]
+                cid, _, action = rest.partition("/")
+                if not connectors.is_integrated(cid):
+                    return self._error(404, f"unknown connector {cid}")
+                if action == "test":
+                    return self._json(connectors.test_connection(
+                        cid, read_env(), PROJECT_ROOT))
+                if not connector_store.configurable(cid):
+                    return self._error(400, f"{cid} is not configured with keys")
+                body = self._read_body()
+                if action == "disconnect":
+                    keys = [f["key"] for f in connector_store.FIELDS[cid]]
+                    connector_store.clear(DATA, keys)
+                    return self._json({"ok": True, "cleared": keys})
+                if action:
+                    return self._error(404, f"no connector route {path}")
+                allowed = {f["key"] for f in connector_store.FIELDS[cid]}
+                values = {k: v for k, v in (body.get("values") or {}).items()
+                          if k in allowed}
+                if not values:
+                    return self._error(400, "no recognised fields for this connector")
+                written = connector_store.save(DATA, values)
+                # Verify straight away: a saved key that doesn't work looks exactly
+                # like one that does, and finding out later is the whole problem
+                # this screen exists to fix.
+                test = connectors.test_connection(cid, read_env(), PROJECT_ROOT)
+                return self._json({"ok": True, "saved": written, "test": test})
+            # -- campaigns ------------------------------------------------
+            # All campaign writes land here; demo mode's blanket POST guard above
+            # has already refused them, so a demo can never create or launch one.
+            if path == "/api/campaigns" or path.startswith("/api/campaigns/"):
+                return self._campaigns_post(path)
+            # -- CRM field wiring ------------------------------------------
+            # The CRM is the source of truth: push writes what we compute, pull
+            # reads the CRM value back as authoritative.
+            if path == "/api/crm/fields":
+                try:
+                    return self._json(campaigns_api.update_crm_field(self._read_body()))
+                except LookupError as e:
+                    return self._error(404, str(e))
+                except ValueError as e:
+                    return self._error(400, str(e))
+            if path == "/api/buyer-group":
+                try:
+                    return self._json(campaigns_api.update_buyer_group(self._read_body()))
+                except LookupError as e:
+                    return self._error(404, str(e))
+                except ValueError as e:
+                    return self._error(400, str(e))
+            if path == "/api/reports/run":
+                with db_connect() as conn:
+                    return self._json(reports.run(conn, self._read_body().get("spec")))
+            if path == "/api/reports/describe":
+                body = self._read_body()
+                try:
+                    spec = reports.describe(body.get("description"), PROJECT_ROOT)
+                except reports.SpecError as e:
+                    return self._error(400, str(e))
+                except RuntimeError as e:
+                    msg = str(e)
+                    return self._error(501 if "ANTHROPIC_API_KEY" in msg else 502, msg)
+                with db_connect() as conn:
+                    return self._json(reports.run(conn, spec))
+            if path == "/api/crm/sync":
+                try:
+                    return self._json(campaigns_api.crm_sync_run(self._read_body()))
+                except ValueError as e:
+                    return self._error(400, str(e))
             if path == "/api/enroll/dry-run":
                 return self._json(do_enroll(live=False))
             if path == "/api/enroll/live":
@@ -3546,6 +5114,39 @@ class Handler(BaseHTTPRequestHandler):
                 if body.get("confirm") is not True:
                     return self._error(400, "live enrollment requires confirm=true")
                 return self._json(do_enroll(live=True))
+            if path == "/api/config/propose":
+                # Read-only against the repo: computes a diff, writes nothing.
+                body = self._read_body()
+                try:
+                    prop = config_edit.propose(
+                        PROJECT_ROOT,
+                        str(body.get("scope") or ""),
+                        str(body.get("instruction") or ""),
+                        body.get("attachments") or [])
+                except ValueError as e:
+                    return self._error(400, str(e))
+                except RuntimeError as e:
+                    # No API key / unusable model output — not the caller's fault.
+                    return self._error(501, str(e))
+                return self._json(prop)
+            if path == "/api/config/apply":
+                body = self._read_body()
+                try:
+                    return self._json(config_edit.apply_proposal(
+                        PROJECT_ROOT, CONFIG_HISTORY,
+                        str(body.get("proposal_id") or ""),
+                        actor=verify_token(bearer_from_headers(self.headers))))
+                except ValueError as e:
+                    return self._error(400, str(e))
+            if path == "/api/config/revert":
+                body = self._read_body()
+                try:
+                    return self._json(config_edit.revert(
+                        PROJECT_ROOT, CONFIG_HISTORY,
+                        str(body.get("entry_id") or ""),
+                        actor=verify_token(bearer_from_headers(self.headers))))
+                except ValueError as e:
+                    return self._error(400, str(e))
             if path == "/api/trends/refresh":
                 return self._json(do_trends_refresh())
             if path == "/api/generate":
@@ -3954,6 +5555,59 @@ def _unenrollment_loop():
         time.sleep(interval)
 
 
+def _campaign_sweep_loop():
+    """Re-qualify active ROLLING campaigns every CAMPAIGN_SWEEP_MINUTES (default 60).
+
+    This is what makes membership rolling rather than a list frozen at launch: an
+    account that first shows signal on day 9 of a 30-day window joins on day 9. The
+    sweep also closes campaigns whose window has passed, so the console and the
+    sweeper agree about which are still live.
+
+    Local only — it writes campaign_members and never calls out to HubSpot, Bison or
+    HeyReach, so it is safe to run unattended (enrollment stays a separate,
+    explicitly triggered step). Disable with CAMPAIGN_SWEEP_ENABLED=0.
+
+    Deliberately reads no demo profile: background threads always act on live data
+    (see demo_mode's module docstring)."""
+    env = read_env()
+    if (env.get("CAMPAIGN_SWEEP_ENABLED", "1") or "1").strip().lower() in ("0", "false", "no"):
+        print("[campaigns] rolling sweep disabled (CAMPAIGN_SWEEP_ENABLED=0)", flush=True)
+        return
+    try:
+        interval = max(5, int(env.get("CAMPAIGN_SWEEP_MINUTES", "60") or 60)) * 60
+    except ValueError:
+        interval = 3600
+    # Discovery inside the sweep DOES reach out (DNS, HTTP, and Prospeo credits for
+    # the hiring detector), so it is capped per campaign per sweep and only fires on
+    # each campaign's own cadence (discovery_interval_days, default weekly). 0 makes
+    # discovery a purely manual action.
+    try:
+        disc_limit = max(0, int(env.get("CAMPAIGN_DISCOVERY_LIMIT", "25") or 25))
+    except ValueError:
+        disc_limit = 25
+    print(f"[campaigns] rolling sweep every {interval // 60} min "
+          f"(discovery {'off' if not disc_limit else f'≤{disc_limit} accounts/campaign'})",
+          flush=True)
+    time.sleep(90)  # let the server settle before the first sweep
+    while True:
+        try:
+            import campaigns as _camp
+            conn = pipeline_db.connect()
+            try:
+                res = _camp.sweep(conn, commit=True, discovery_limit=disc_limit)
+            finally:
+                conn.close()
+            added = sum(r.get("added", 0) or 0 for r in res.get("results", []))
+            scanned = sum((r.get("discovered") or {}).get("scanned", 0)
+                          for r in res.get("results", []))
+            if res.get("swept"):
+                print(f"[campaigns] swept {res['swept']} campaign(s), "
+                      f"{added} member(s) added, {scanned} account(s) scanned", flush=True)
+        except Exception as e:  # noqa: BLE001 — the sweeper must never crash the server
+            print(f"[campaigns] sweep error: {type(e).__name__}: {e}", flush=True)
+        time.sleep(interval)
+
+
 def _aisdr_sync_loop():
     """Nightly AI SDR deal-attribution sync at AISDR_SYNC_HOUR (default 0 = midnight)
     US Eastern time. DST-safe: each iteration recomputes the next wall-clock target
@@ -3985,6 +5639,17 @@ def _aisdr_sync_loop():
 
 def main():
     import os
+    # Credentials wired up from the Setup view live on the volume, not in the
+    # service variables. Load them into the environment FIRST: every client below
+    # reads os.environ, and a connector configured in the console has to be live on
+    # the next boot without anyone touching Railway.
+    try:
+        n = connector_store.apply_to_environ(DATA)
+        if n:
+            print(f"[connectors] loaded {n} console-configured credential(s) "
+                  f"from the data volume", flush=True)
+    except Exception as e:  # noqa: BLE001 — never block boot on the store
+        print(f"[connectors] credential store unavailable: {e}", flush=True)
     # $PORT is injected by hosting platforms (Railway); --port overrides for local runs.
     port = int(os.environ.get("PORT", "8787"))
     # Bind localhost for local dev (safe), but all interfaces when a platform sets $PORT
@@ -4020,6 +5685,7 @@ def main():
     threading.Thread(target=_activity_autosync_loop, daemon=True).start()
     threading.Thread(target=_aisdr_sync_loop, daemon=True).start()
     threading.Thread(target=_unenrollment_loop, daemon=True).start()
+    threading.Thread(target=_campaign_sweep_loop, daemon=True).start()
     if Handler.static_dir:
         print(f"[webui] serving frontend from {Handler.static_dir}")
     else:

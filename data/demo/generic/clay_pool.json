@@ -1,0 +1,1066 @@
+[
+  {
+    "domain": "northwind-analytics.example",
+    "company": "Northwind Analytics",
+    "first_name": "Priya",
+    "last_name": "Tanaka",
+    "title": "Chief Revenue Officer",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "northwind-analytics.example",
+    "company": "Northwind Analytics",
+    "first_name": "Mei",
+    "last_name": "Okafor",
+    "title": "Director of BDR",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "northwind-analytics.example",
+    "company": "Northwind Analytics",
+    "first_name": "Iris",
+    "last_name": "Lindqvist",
+    "title": "Director of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "lumenfreight.example",
+    "company": "Lumen Freight",
+    "first_name": "Noah",
+    "last_name": "Ibrahim",
+    "title": "Director of Revenue Operations",
+    "persona": "revops"
+  },
+  {
+    "domain": "lumenfreight.example",
+    "company": "Lumen Freight",
+    "first_name": "Dana",
+    "last_name": "Haddad",
+    "title": "Head of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "lumenfreight.example",
+    "company": "Lumen Freight",
+    "first_name": "Noah",
+    "last_name": "Haddad",
+    "title": "BDR Manager",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "kestrelhealth.example",
+    "company": "Kestrel Health",
+    "first_name": "Tomas",
+    "last_name": "Moreau",
+    "title": "BDR Manager",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "kestrelhealth.example",
+    "company": "Kestrel Health",
+    "first_name": "Omar",
+    "last_name": "Okafor",
+    "title": "Director of Alliances",
+    "persona": "partnerships"
+  },
+  {
+    "domain": "kestrelhealth.example",
+    "company": "Kestrel Health",
+    "first_name": "Priya",
+    "last_name": "Costa",
+    "title": "Head of SDR",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "kestrelhealth.example",
+    "company": "Kestrel Health",
+    "first_name": "Sofia",
+    "last_name": "Okafor",
+    "title": "Head of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "tandemlabs.example",
+    "company": "Tandem Labs",
+    "first_name": "Ravi",
+    "last_name": "Silva",
+    "title": "Director of Revenue Operations",
+    "persona": "revops"
+  },
+  {
+    "domain": "tandemlabs.example",
+    "company": "Tandem Labs",
+    "first_name": "Kwame",
+    "last_name": "Reyes",
+    "title": "Director of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "veritypay.example",
+    "company": "Verity Pay",
+    "first_name": "Alex",
+    "last_name": "Ferreira",
+    "title": "Director of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "veritypay.example",
+    "company": "Verity Pay",
+    "first_name": "Kwame",
+    "last_name": "Tanaka",
+    "title": "Director of Revenue Operations",
+    "persona": "revops"
+  },
+  {
+    "domain": "veritypay.example",
+    "company": "Verity Pay",
+    "first_name": "Mei",
+    "last_name": "Ibrahim",
+    "title": "Head of Sales Operations",
+    "persona": "revops"
+  },
+  {
+    "domain": "orchardretail.example",
+    "company": "Orchard Retail Cloud",
+    "first_name": "Lena",
+    "last_name": "Kaur",
+    "title": "SDR Manager",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "orchardretail.example",
+    "company": "Orchard Retail Cloud",
+    "first_name": "Elliot",
+    "last_name": "Haddad",
+    "title": "Head of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "orchardretail.example",
+    "company": "Orchard Retail Cloud",
+    "first_name": "Kwame",
+    "last_name": "Okafor",
+    "title": "Chief Revenue Officer",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "sablesecurity.example",
+    "company": "Sable Security",
+    "first_name": "Elliot",
+    "last_name": "Moreau",
+    "title": "Partnerships Lead",
+    "persona": "partnerships"
+  },
+  {
+    "domain": "sablesecurity.example",
+    "company": "Sable Security",
+    "first_name": "Lena",
+    "last_name": "Ibrahim",
+    "title": "Director of Alliances",
+    "persona": "partnerships"
+  },
+  {
+    "domain": "aperturerobotics.example",
+    "company": "Aperture Robotics",
+    "first_name": "Kwame",
+    "last_name": "Walsh",
+    "title": "Head of Sales Operations",
+    "persona": "revops"
+  },
+  {
+    "domain": "aperturerobotics.example",
+    "company": "Aperture Robotics",
+    "first_name": "Noah",
+    "last_name": "Kaur",
+    "title": "Director of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "brightsend.example",
+    "company": "Brightsend",
+    "first_name": "Priya",
+    "last_name": "Lindqvist",
+    "title": "Head of Partnerships",
+    "persona": "partnerships"
+  },
+  {
+    "domain": "brightsend.example",
+    "company": "Brightsend",
+    "first_name": "Elliot",
+    "last_name": "Moreau",
+    "title": "Director of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "brightsend.example",
+    "company": "Brightsend",
+    "first_name": "Alex",
+    "last_name": "Walsh",
+    "title": "Chief Revenue Officer",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "cobaltgrid.example",
+    "company": "Cobalt Grid",
+    "first_name": "Jordan",
+    "last_name": "Haddad",
+    "title": "Director of Revenue Operations",
+    "persona": "revops"
+  },
+  {
+    "domain": "cobaltgrid.example",
+    "company": "Cobalt Grid",
+    "first_name": "Alex",
+    "last_name": "Walsh",
+    "title": "Head of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "cobaltgrid.example",
+    "company": "Cobalt Grid",
+    "first_name": "Tomas",
+    "last_name": "Moreau",
+    "title": "BDR Manager",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "meridiantalent.example",
+    "company": "Meridian Talent",
+    "first_name": "Sam",
+    "last_name": "Novak",
+    "title": "RevOps Manager",
+    "persona": "revops"
+  },
+  {
+    "domain": "meridiantalent.example",
+    "company": "Meridian Talent",
+    "first_name": "Noah",
+    "last_name": "Ibrahim",
+    "title": "RevOps Manager",
+    "persona": "revops"
+  },
+  {
+    "domain": "meridiantalent.example",
+    "company": "Meridian Talent",
+    "first_name": "Tomas",
+    "last_name": "Novak",
+    "title": "Director of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "ferroussupply.example",
+    "company": "Ferrous Supply",
+    "first_name": "Noah",
+    "last_name": "Silva",
+    "title": "Partnerships Lead",
+    "persona": "partnerships"
+  },
+  {
+    "domain": "ferroussupply.example",
+    "company": "Ferrous Supply",
+    "first_name": "Dana",
+    "last_name": "Haddad",
+    "title": "Head of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "ferroussupply.example",
+    "company": "Ferrous Supply",
+    "first_name": "Lena",
+    "last_name": "Lindqvist",
+    "title": "SDR Manager",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "halyardlogistics.example",
+    "company": "Halyard Logistics",
+    "first_name": "Jordan",
+    "last_name": "Ferreira",
+    "title": "BDR Manager",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "halyardlogistics.example",
+    "company": "Halyard Logistics",
+    "first_name": "Ravi",
+    "last_name": "Ibrahim",
+    "title": "RevOps Manager",
+    "persona": "revops"
+  },
+  {
+    "domain": "halyardlogistics.example",
+    "company": "Halyard Logistics",
+    "first_name": "Lena",
+    "last_name": "Okafor",
+    "title": "Head of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "halyardlogistics.example",
+    "company": "Halyard Logistics",
+    "first_name": "Iris",
+    "last_name": "Moreau",
+    "title": "Chief Revenue Officer",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "pinegrovebank.example",
+    "company": "Pinegrove Bank",
+    "first_name": "Omar",
+    "last_name": "Haddad",
+    "title": "Director of Revenue Operations",
+    "persona": "revops"
+  },
+  {
+    "domain": "pinegrovebank.example",
+    "company": "Pinegrove Bank",
+    "first_name": "Noah",
+    "last_name": "Moreau",
+    "title": "Sales Ops Lead",
+    "persona": "revops"
+  },
+  {
+    "domain": "pinegrovebank.example",
+    "company": "Pinegrove Bank",
+    "first_name": "Lena",
+    "last_name": "Reyes",
+    "title": "SDR Manager",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "pinegrovebank.example",
+    "company": "Pinegrove Bank",
+    "first_name": "Lena",
+    "last_name": "Okafor",
+    "title": "Head of Sales Operations",
+    "persona": "revops"
+  },
+  {
+    "domain": "steelyarddata.example",
+    "company": "Steelyard Data",
+    "first_name": "Nina",
+    "last_name": "Reyes",
+    "title": "Head of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "steelyarddata.example",
+    "company": "Steelyard Data",
+    "first_name": "Priya",
+    "last_name": "Lindqvist",
+    "title": "Head of SDR",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "steelyarddata.example",
+    "company": "Steelyard Data",
+    "first_name": "Nina",
+    "last_name": "Reyes",
+    "title": "Chief Revenue Officer",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "juniperclinical.example",
+    "company": "Juniper Clinical",
+    "first_name": "Kwame",
+    "last_name": "Moreau",
+    "title": "Head of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "juniperclinical.example",
+    "company": "Juniper Clinical",
+    "first_name": "Iris",
+    "last_name": "Kaur",
+    "title": "SDR Manager",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "juniperclinical.example",
+    "company": "Juniper Clinical",
+    "first_name": "Tomas",
+    "last_name": "Moreau",
+    "title": "SDR Manager",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "juniperclinical.example",
+    "company": "Juniper Clinical",
+    "first_name": "Jordan",
+    "last_name": "Ibrahim",
+    "title": "VP Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "voltaicsystems.example",
+    "company": "Voltaic Systems",
+    "first_name": "Alex",
+    "last_name": "Tanaka",
+    "title": "SDR Manager",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "voltaicsystems.example",
+    "company": "Voltaic Systems",
+    "first_name": "Priya",
+    "last_name": "Okafor",
+    "title": "Head of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "voltaicsystems.example",
+    "company": "Voltaic Systems",
+    "first_name": "Elliot",
+    "last_name": "Ferreira",
+    "title": "Director of BDR",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "redshiftmedia.example",
+    "company": "Redshift Media",
+    "first_name": "Ravi",
+    "last_name": "Reyes",
+    "title": "Head of Sales Operations",
+    "persona": "revops"
+  },
+  {
+    "domain": "redshiftmedia.example",
+    "company": "Redshift Media",
+    "first_name": "Nina",
+    "last_name": "Reyes",
+    "title": "Chief Revenue Officer",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "redshiftmedia.example",
+    "company": "Redshift Media",
+    "first_name": "Mei",
+    "last_name": "Moreau",
+    "title": "Head of Sales Operations",
+    "persona": "revops"
+  },
+  {
+    "domain": "redshiftmedia.example",
+    "company": "Redshift Media",
+    "first_name": "Mei",
+    "last_name": "Reyes",
+    "title": "BDR Manager",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "cobblestonehr.example",
+    "company": "Cobblestone HR",
+    "first_name": "Alex",
+    "last_name": "Moreau",
+    "title": "Sales Ops Lead",
+    "persona": "revops"
+  },
+  {
+    "domain": "cobblestonehr.example",
+    "company": "Cobblestone HR",
+    "first_name": "Sofia",
+    "last_name": "Ibrahim",
+    "title": "Head of Sales Operations",
+    "persona": "revops"
+  },
+  {
+    "domain": "cobblestonehr.example",
+    "company": "Cobblestone HR",
+    "first_name": "Sofia",
+    "last_name": "Tanaka",
+    "title": "SDR Manager",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "arborinsurance.example",
+    "company": "Arbor Insurance",
+    "first_name": "Ravi",
+    "last_name": "Lindqvist",
+    "title": "Director of Alliances",
+    "persona": "partnerships"
+  },
+  {
+    "domain": "arborinsurance.example",
+    "company": "Arbor Insurance",
+    "first_name": "Elliot",
+    "last_name": "Ibrahim",
+    "title": "RevOps Manager",
+    "persona": "revops"
+  },
+  {
+    "domain": "arborinsurance.example",
+    "company": "Arbor Insurance",
+    "first_name": "Iris",
+    "last_name": "Walsh",
+    "title": "Chief Revenue Officer",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "arborinsurance.example",
+    "company": "Arbor Insurance",
+    "first_name": "Dana",
+    "last_name": "Walsh",
+    "title": "VP Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "quarrycompute.example",
+    "company": "Quarry Compute",
+    "first_name": "Tomas",
+    "last_name": "Costa",
+    "title": "SDR Manager",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "quarrycompute.example",
+    "company": "Quarry Compute",
+    "first_name": "Kwame",
+    "last_name": "Haddad",
+    "title": "VP Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "quarrycompute.example",
+    "company": "Quarry Compute",
+    "first_name": "Tomas",
+    "last_name": "Walsh",
+    "title": "RevOps Manager",
+    "persona": "revops"
+  },
+  {
+    "domain": "quarrycompute.example",
+    "company": "Quarry Compute",
+    "first_name": "Elliot",
+    "last_name": "Okafor",
+    "title": "Head of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "beaconlearning.example",
+    "company": "Beacon Learning",
+    "first_name": "Dana",
+    "last_name": "Lindqvist",
+    "title": "VP Channel",
+    "persona": "partnerships"
+  },
+  {
+    "domain": "beaconlearning.example",
+    "company": "Beacon Learning",
+    "first_name": "Omar",
+    "last_name": "Costa",
+    "title": "Head of Sales Operations",
+    "persona": "revops"
+  },
+  {
+    "domain": "tidewaterfoods.example",
+    "company": "Tidewater Foods",
+    "first_name": "Iris",
+    "last_name": "Novak",
+    "title": "Director of Alliances",
+    "persona": "partnerships"
+  },
+  {
+    "domain": "tidewaterfoods.example",
+    "company": "Tidewater Foods",
+    "first_name": "Omar",
+    "last_name": "Novak",
+    "title": "Head of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "tidewaterfoods.example",
+    "company": "Tidewater Foods",
+    "first_name": "Kwame",
+    "last_name": "Costa",
+    "title": "Director of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "ironwoodlegal.example",
+    "company": "Ironwood Legal",
+    "first_name": "Alex",
+    "last_name": "Silva",
+    "title": "VP Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "ironwoodlegal.example",
+    "company": "Ironwood Legal",
+    "first_name": "Iris",
+    "last_name": "Walsh",
+    "title": "RevOps Manager",
+    "persona": "revops"
+  },
+  {
+    "domain": "selkietravel.example",
+    "company": "Selkie Travel",
+    "first_name": "Ravi",
+    "last_name": "Ibrahim",
+    "title": "Chief Revenue Officer",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "selkietravel.example",
+    "company": "Selkie Travel",
+    "first_name": "Iris",
+    "last_name": "Tanaka",
+    "title": "Sales Ops Lead",
+    "persona": "revops"
+  },
+  {
+    "domain": "selkietravel.example",
+    "company": "Selkie Travel",
+    "first_name": "Nina",
+    "last_name": "Okafor",
+    "title": "Director of BDR",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "ampersandretail.example",
+    "company": "Ampersand Retail",
+    "first_name": "Lena",
+    "last_name": "Tanaka",
+    "title": "Director of BDR",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "ampersandretail.example",
+    "company": "Ampersand Retail",
+    "first_name": "Priya",
+    "last_name": "Okafor",
+    "title": "Sales Ops Lead",
+    "persona": "revops"
+  },
+  {
+    "domain": "ampersandretail.example",
+    "company": "Ampersand Retail",
+    "first_name": "Lena",
+    "last_name": "Moreau",
+    "title": "Director of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "northgateenergy.example",
+    "company": "Northgate Energy",
+    "first_name": "Sofia",
+    "last_name": "Reyes",
+    "title": "Head of Sales Operations",
+    "persona": "revops"
+  },
+  {
+    "domain": "northgateenergy.example",
+    "company": "Northgate Energy",
+    "first_name": "Elliot",
+    "last_name": "Tanaka",
+    "title": "RevOps Manager",
+    "persona": "revops"
+  },
+  {
+    "domain": "northgateenergy.example",
+    "company": "Northgate Energy",
+    "first_name": "Jordan",
+    "last_name": "Bennett",
+    "title": "Head of Sales Operations",
+    "persona": "revops"
+  },
+  {
+    "domain": "northgateenergy.example",
+    "company": "Northgate Energy",
+    "first_name": "Iris",
+    "last_name": "Ibrahim",
+    "title": "Director of BDR",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "peregrinefintech.example",
+    "company": "Peregrine Fintech",
+    "first_name": "Tomas",
+    "last_name": "Novak",
+    "title": "VP Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "peregrinefintech.example",
+    "company": "Peregrine Fintech",
+    "first_name": "Lena",
+    "last_name": "Ferreira",
+    "title": "RevOps Manager",
+    "persona": "revops"
+  },
+  {
+    "domain": "peregrinefintech.example",
+    "company": "Peregrine Fintech",
+    "first_name": "Ravi",
+    "last_name": "Lindqvist",
+    "title": "Director of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "lanternhealth.example",
+    "company": "Lantern Health",
+    "first_name": "Jordan",
+    "last_name": "Kaur",
+    "title": "RevOps Manager",
+    "persona": "revops"
+  },
+  {
+    "domain": "lanternhealth.example",
+    "company": "Lantern Health",
+    "first_name": "Kwame",
+    "last_name": "Lindqvist",
+    "title": "SDR Manager",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "foxglovedesign.example",
+    "company": "Foxglove Design",
+    "first_name": "Lena",
+    "last_name": "Silva",
+    "title": "Partnerships Lead",
+    "persona": "partnerships"
+  },
+  {
+    "domain": "foxglovedesign.example",
+    "company": "Foxglove Design",
+    "first_name": "Sam",
+    "last_name": "Silva",
+    "title": "Partnerships Lead",
+    "persona": "partnerships"
+  },
+  {
+    "domain": "foxglovedesign.example",
+    "company": "Foxglove Design",
+    "first_name": "Mei",
+    "last_name": "Walsh",
+    "title": "Chief Revenue Officer",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "basaltsecurity.example",
+    "company": "Basalt Security",
+    "first_name": "Lena",
+    "last_name": "Moreau",
+    "title": "Head of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "basaltsecurity.example",
+    "company": "Basalt Security",
+    "first_name": "Sam",
+    "last_name": "Ferreira",
+    "title": "Chief Revenue Officer",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "basaltsecurity.example",
+    "company": "Basalt Security",
+    "first_name": "Nina",
+    "last_name": "Novak",
+    "title": "Head of Sales Operations",
+    "persona": "revops"
+  },
+  {
+    "domain": "copperlinetelecom.example",
+    "company": "Copperline Telecom",
+    "first_name": "Alex",
+    "last_name": "Ferreira",
+    "title": "Sales Ops Lead",
+    "persona": "revops"
+  },
+  {
+    "domain": "copperlinetelecom.example",
+    "company": "Copperline Telecom",
+    "first_name": "Lena",
+    "last_name": "Kaur",
+    "title": "VP Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "copperlinetelecom.example",
+    "company": "Copperline Telecom",
+    "first_name": "Kwame",
+    "last_name": "Silva",
+    "title": "Director of BDR",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "willowbrooklabs.example",
+    "company": "Willowbrook Labs",
+    "first_name": "Mei",
+    "last_name": "Novak",
+    "title": "Head of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "willowbrooklabs.example",
+    "company": "Willowbrook Labs",
+    "first_name": "Elliot",
+    "last_name": "Bennett",
+    "title": "VP Channel",
+    "persona": "partnerships"
+  },
+  {
+    "domain": "sandpipergames.example",
+    "company": "Sandpiper Games",
+    "first_name": "Priya",
+    "last_name": "Tanaka",
+    "title": "Head of Sales Operations",
+    "persona": "revops"
+  },
+  {
+    "domain": "sandpipergames.example",
+    "company": "Sandpiper Games",
+    "first_name": "Noah",
+    "last_name": "Walsh",
+    "title": "SDR Manager",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "sandpipergames.example",
+    "company": "Sandpiper Games",
+    "first_name": "Noah",
+    "last_name": "Bennett",
+    "title": "Head of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "harborviewrealty.example",
+    "company": "Harborview Realty",
+    "first_name": "Sam",
+    "last_name": "Kaur",
+    "title": "Director of BDR",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "harborviewrealty.example",
+    "company": "Harborview Realty",
+    "first_name": "Elliot",
+    "last_name": "Ibrahim",
+    "title": "Head of Sales Operations",
+    "persona": "revops"
+  },
+  {
+    "domain": "harborviewrealty.example",
+    "company": "Harborview Realty",
+    "first_name": "Dana",
+    "last_name": "Ferreira",
+    "title": "Chief Revenue Officer",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "harborviewrealty.example",
+    "company": "Harborview Realty",
+    "first_name": "Alex",
+    "last_name": "Bennett",
+    "title": "RevOps Manager",
+    "persona": "revops"
+  },
+  {
+    "domain": "kilnmanufacturing.example",
+    "company": "Kiln Manufacturing",
+    "first_name": "Elliot",
+    "last_name": "Haddad",
+    "title": "Head of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "kilnmanufacturing.example",
+    "company": "Kiln Manufacturing",
+    "first_name": "Alex",
+    "last_name": "Tanaka",
+    "title": "Chief Revenue Officer",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "kilnmanufacturing.example",
+    "company": "Kiln Manufacturing",
+    "first_name": "Sofia",
+    "last_name": "Novak",
+    "title": "SDR Manager",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": "fernwaynonprofit.example",
+    "company": "Fernway Nonprofit",
+    "first_name": "Priya",
+    "last_name": "Okafor",
+    "title": "Chief Revenue Officer",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": "fernwaynonprofit.example",
+    "company": "Fernway Nonprofit",
+    "first_name": "Nina",
+    "last_name": "Silva",
+    "title": "Sales Ops Lead",
+    "persona": "revops"
+  },
+  {
+    "domain": null,
+    "first_name": "Jordan",
+    "last_name": "Haddad",
+    "title": "VP Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": null,
+    "first_name": "Alex",
+    "last_name": "Ibrahim",
+    "title": "RevOps Manager",
+    "persona": "revops"
+  },
+  {
+    "domain": null,
+    "first_name": "Noah",
+    "last_name": "Costa",
+    "title": "Director of Revenue Operations",
+    "persona": "revops"
+  },
+  {
+    "domain": null,
+    "first_name": "Tomas",
+    "last_name": "Ferreira",
+    "title": "RevOps Manager",
+    "persona": "revops"
+  },
+  {
+    "domain": null,
+    "first_name": "Dana",
+    "last_name": "Novak",
+    "title": "Sales Ops Lead",
+    "persona": "revops"
+  },
+  {
+    "domain": null,
+    "first_name": "Kwame",
+    "last_name": "Reyes",
+    "title": "BDR Manager",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": null,
+    "first_name": "Dana",
+    "last_name": "Costa",
+    "title": "Head of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": null,
+    "first_name": "Ravi",
+    "last_name": "Walsh",
+    "title": "RevOps Manager",
+    "persona": "revops"
+  },
+  {
+    "domain": null,
+    "first_name": "Elliot",
+    "last_name": "Bennett",
+    "title": "RevOps Manager",
+    "persona": "revops"
+  },
+  {
+    "domain": null,
+    "first_name": "Nina",
+    "last_name": "Ibrahim",
+    "title": "Director of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": null,
+    "first_name": "Lena",
+    "last_name": "Bennett",
+    "title": "RevOps Manager",
+    "persona": "revops"
+  },
+  {
+    "domain": null,
+    "first_name": "Mei",
+    "last_name": "Ferreira",
+    "title": "RevOps Manager",
+    "persona": "revops"
+  },
+  {
+    "domain": null,
+    "first_name": "Iris",
+    "last_name": "Ibrahim",
+    "title": "Chief Revenue Officer",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": null,
+    "first_name": "Kwame",
+    "last_name": "Ibrahim",
+    "title": "Head of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": null,
+    "first_name": "Noah",
+    "last_name": "Novak",
+    "title": "Director of Revenue Operations",
+    "persona": "revops"
+  },
+  {
+    "domain": null,
+    "first_name": "Ravi",
+    "last_name": "Ferreira",
+    "title": "Head of SDR",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": null,
+    "first_name": "Nina",
+    "last_name": "Haddad",
+    "title": "Head of SDR",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": null,
+    "first_name": "Priya",
+    "last_name": "Novak",
+    "title": "BDR Manager",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": null,
+    "first_name": "Priya",
+    "last_name": "Silva",
+    "title": "BDR Manager",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": null,
+    "first_name": "Elliot",
+    "last_name": "Haddad",
+    "title": "SDR Manager",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": null,
+    "first_name": "Tomas",
+    "last_name": "Tanaka",
+    "title": "Director of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": null,
+    "first_name": "Tomas",
+    "last_name": "Haddad",
+    "title": "Director of Sales",
+    "persona": "sales-leadership"
+  },
+  {
+    "domain": null,
+    "first_name": "Tomas",
+    "last_name": "Moreau",
+    "title": "SDR Manager",
+    "persona": "sdr-bdr"
+  },
+  {
+    "domain": null,
+    "first_name": "Sam",
+    "last_name": "Okafor",
+    "title": "Director of BDR",
+    "persona": "sdr-bdr"
+  }
+]

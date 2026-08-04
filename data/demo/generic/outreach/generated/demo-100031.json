@@ -1,0 +1,25 @@
+{
+  "contact_id": "demo-100031",
+  "persona": "sales-leadership",
+  "variant": "value-give",
+  "signal": "named a new CRO from a category leader last quarter",
+  "tech_signals": "Salesforce · Salesloft",
+  "hiring_signals": "14 open roles · 4 sales: SDR; AE; VP Sales",
+  "cta_play": "signal-play",
+  "demo": true,
+  "email": {
+    "subject1": "a signal play for Halyard Logistics",
+    "body1": "Kwame, saw Halyard Logistics named a new CRO from a category leader last quarter.\n\nMost VPs we talk to are being asked to grow pipeline while the hiring plan is frozen.\n\nWe run an AI SDR that researches each account and writes the first touches, so your reps start from a warm list instead of a raw one.\n\nI built a signal play for Halyard Logistics — want me to send it over?",
+    "subject2": "covering the gap while you hire",
+    "body2": "Kwame, following up on Halyard Logistics.\n\n4 sales: SDR; AE; VP Sales — the ramp window is where pipeline usually slips.\n\nOn top of Salesforce we add 2-5x the touch volume without changing how the team works.\n\nOpen to a look at the run rate?",
+    "subject3": "how Memgraph did it",
+    "body3": "Kwame, last bit of proof for Halyard Logistics.\n\nMemgraph mapped their intent signals to the accounts worth a first touch and ran our AI SDR to $2.7M in pipeline.\n\nWant the same mapping for Halyard Logistics?",
+    "subject4": "should I close your file?",
+    "body4": "Kwame, I'll stop reaching out on this one. If hitting the number without adding headcount is still open, the offer stands."
+  },
+  "linkedin": {
+    "li_connect": "Kwame, saw Halyard Logistics named a new CRO from a category leader last quarter. We work with teams on hitting the number without adding headcount.",
+    "li_msg1": "Thanks for connecting, Kwame. I built a signal play for Halyard Logistics — want me to send it over?",
+    "li_msg2": "Kwame, one more nudge — Memgraph ran the same play to $2.7M in pipeline. Worth 20 minutes?"
+  }
+}

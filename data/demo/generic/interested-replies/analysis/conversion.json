@@ -1,0 +1,291 @@
+{
+  "source": "demo profile (make_demo_data.py)",
+  "demo": true,
+  "note": "Rates use the same numerator on both sides of the ratio.",
+  "overall": {
+    "interested": 95,
+    "contacted": 17540,
+    "interested_rate_pct": 0.542
+  },
+  "by_campaign": [
+    {
+      "campaign_name": "Global Webinar (pilot)",
+      "offer_type": "Webinar (pilot)",
+      "geo": "Global",
+      "contacted": 180,
+      "interested": 6,
+      "interested_rate_pct": 3.333,
+      "reply_rate_pct": 8.889
+    },
+    {
+      "campaign_name": "Americas Demo request 1",
+      "offer_type": "Demo request",
+      "geo": "Americas",
+      "contacted": 310,
+      "interested": 8,
+      "interested_rate_pct": 2.581,
+      "reply_rate_pct": 7.419
+    },
+    {
+      "campaign_name": "Unknown Newsletter reply",
+      "offer_type": "Newsletter reply",
+      "geo": "Unknown",
+      "contacted": 40,
+      "interested": 1,
+      "interested_rate_pct": 2.5,
+      "reply_rate_pct": 10.0
+    },
+    {
+      "campaign_name": "Americas Demo request 2",
+      "offer_type": "Demo request",
+      "geo": "Americas",
+      "contacted": 310,
+      "interested": 7,
+      "interested_rate_pct": 2.258,
+      "reply_rate_pct": 7.419
+    },
+    {
+      "campaign_name": "Global Lead magnet (PDF) 1",
+      "offer_type": "Lead magnet (PDF)",
+      "geo": "Global",
+      "contacted": 3034,
+      "interested": 19,
+      "interested_rate_pct": 0.626,
+      "reply_rate_pct": 7.284
+    },
+    {
+      "campaign_name": "Global Lead magnet (PDF) 2",
+      "offer_type": "Lead magnet (PDF)",
+      "geo": "Global",
+      "contacted": 3033,
+      "interested": 19,
+      "interested_rate_pct": 0.626,
+      "reply_rate_pct": 7.287
+    },
+    {
+      "campaign_name": "Global Lead magnet (PDF) 3",
+      "offer_type": "Lead magnet (PDF)",
+      "geo": "Global",
+      "contacted": 3033,
+      "interested": 18,
+      "interested_rate_pct": 0.593,
+      "reply_rate_pct": 7.287
+    },
+    {
+      "campaign_name": "Global Event 1",
+      "offer_type": "Event",
+      "geo": "Global",
+      "contacted": 1200,
+      "interested": 6,
+      "interested_rate_pct": 0.5,
+      "reply_rate_pct": 5.417
+    },
+    {
+      "campaign_name": "Global Event 2",
+      "offer_type": "Event",
+      "geo": "Global",
+      "contacted": 1200,
+      "interested": 6,
+      "interested_rate_pct": 0.5,
+      "reply_rate_pct": 5.417
+    },
+    {
+      "campaign_name": "Americas Persona-targeted 1",
+      "offer_type": "Persona-targeted",
+      "geo": "Americas",
+      "contacted": 2600,
+      "interested": 3,
+      "interested_rate_pct": 0.115,
+      "reply_rate_pct": 2.692
+    },
+    {
+      "campaign_name": "Americas Persona-targeted 2",
+      "offer_type": "Persona-targeted",
+      "geo": "Americas",
+      "contacted": 2600,
+      "interested": 2,
+      "interested_rate_pct": 0.077,
+      "reply_rate_pct": 2.692
+    }
+  ],
+  "by_offer_type": {
+    "Webinar (pilot)": {
+      "interested": 6,
+      "contacted": 180,
+      "unique_replies": 16,
+      "campaigns": 1,
+      "interested_rate_pct": 3.333,
+      "reply_rate_pct": 8.889,
+      "demo_label": "small-n, flattering rate \u2014 low confidence, not yet a winner"
+    },
+    "Newsletter reply": {
+      "interested": 1,
+      "contacted": 40,
+      "unique_replies": 4,
+      "campaigns": 1,
+      "interested_rate_pct": 2.5,
+      "reply_rate_pct": 10.0,
+      "demo_label": "n=1 \u2014 must render as insufficient data, never as a top performer"
+    },
+    "Demo request": {
+      "interested": 15,
+      "contacted": 620,
+      "unique_replies": 46,
+      "campaigns": 2,
+      "interested_rate_pct": 2.419,
+      "reply_rate_pct": 7.419,
+      "demo_label": "high-rate / low-volume \u2014 starved winner"
+    },
+    "Lead magnet (PDF)": {
+      "interested": 56,
+      "contacted": 9100,
+      "unique_replies": 664,
+      "campaigns": 3,
+      "interested_rate_pct": 0.615,
+      "reply_rate_pct": 7.297,
+      "demo_label": "workhorse \u2014 mid rate, most volume"
+    },
+    "Event": {
+      "interested": 12,
+      "contacted": 2400,
+      "unique_replies": 130,
+      "campaigns": 2,
+      "interested_rate_pct": 0.5,
+      "reply_rate_pct": 5.417,
+      "demo_label": "middling \u2014 no strong signal"
+    },
+    "Persona-targeted": {
+      "interested": 5,
+      "contacted": 5200,
+      "unique_replies": 140,
+      "campaigns": 2,
+      "interested_rate_pct": 0.096,
+      "reply_rate_pct": 2.692,
+      "demo_label": "low-rate / high-volume \u2014 kill or rewrite"
+    }
+  },
+  "by_geo": {
+    "Americas": {
+      "interested": 20,
+      "contacted": 5820,
+      "unique_replies": 186,
+      "campaigns": 4,
+      "interested_rate_pct": 0.344,
+      "reply_rate_pct": 3.196
+    },
+    "Global": {
+      "interested": 74,
+      "contacted": 11680,
+      "unique_replies": 810,
+      "campaigns": 6,
+      "interested_rate_pct": 0.634,
+      "reply_rate_pct": 6.935
+    },
+    "Unknown": {
+      "interested": 1,
+      "contacted": 40,
+      "unique_replies": 4,
+      "campaigns": 1,
+      "interested_rate_pct": 2.5,
+      "reply_rate_pct": 10.0
+    }
+  },
+  "by_step": {
+    "1": {
+      "interested": 26,
+      "contacted": 17500,
+      "unique_replies": 438,
+      "interested_rate_pct": 0.149,
+      "reply_rate_pct": 2.5
+    },
+    "2": {
+      "interested": 22,
+      "contacted": 11800,
+      "unique_replies": 236,
+      "interested_rate_pct": 0.186,
+      "reply_rate_pct": 2.0
+    },
+    "3": {
+      "interested": 6,
+      "contacted": 10200,
+      "unique_replies": 133,
+      "interested_rate_pct": 0.059,
+      "reply_rate_pct": 1.3
+    },
+    "4": {
+      "interested": 38,
+      "contacted": 8400,
+      "unique_replies": 202,
+      "interested_rate_pct": 0.452,
+      "reply_rate_pct": 2.4
+    }
+  },
+  "rate_series": {
+    "available": true,
+    "snapshots": 6,
+    "points": [
+      {
+        "fetched_at": "2026-01-31T00:00:00Z",
+        "cum_interested": 17,
+        "cum_contacted": 1800,
+        "cum_interested_rate_pct": 0.944
+      },
+      {
+        "fetched_at": "2026-02-28T00:00:00Z",
+        "cum_interested": 37,
+        "cum_contacted": 4200,
+        "cum_interested_rate_pct": 0.881,
+        "new_contacted": 2400,
+        "new_interested": 20,
+        "new_replies": 144,
+        "window_interested_rate_pct": 0.833,
+        "window_reply_rate_pct": 6.0
+      },
+      {
+        "fetched_at": "2026-03-31T00:00:00Z",
+        "cum_interested": 50,
+        "cum_contacted": 7800,
+        "cum_interested_rate_pct": 0.641,
+        "new_contacted": 3600,
+        "new_interested": 13,
+        "new_replies": 216,
+        "window_interested_rate_pct": 0.361,
+        "window_reply_rate_pct": 6.0
+      },
+      {
+        "fetched_at": "2026-04-30T00:00:00Z",
+        "cum_interested": 63,
+        "cum_contacted": 12000,
+        "cum_interested_rate_pct": 0.525,
+        "new_contacted": 4200,
+        "new_interested": 13,
+        "new_replies": 252,
+        "window_interested_rate_pct": 0.31,
+        "window_reply_rate_pct": 6.0
+      },
+      {
+        "fetched_at": "2026-05-31T00:00:00Z",
+        "cum_interested": 93,
+        "cum_contacted": 15800,
+        "cum_interested_rate_pct": 0.589,
+        "new_contacted": 3800,
+        "new_interested": 30,
+        "new_replies": 228,
+        "window_interested_rate_pct": 0.789,
+        "window_reply_rate_pct": 6.0
+      },
+      {
+        "fetched_at": "2026-06-30T00:00:00Z",
+        "cum_interested": 129,
+        "cum_contacted": 19540,
+        "cum_interested_rate_pct": 0.66,
+        "new_contacted": 3740,
+        "new_interested": 36,
+        "new_replies": 224,
+        "window_interested_rate_pct": 0.963,
+        "window_reply_rate_pct": 5.989
+      }
+    ],
+    "note": "window_* rates are differenced between consecutive snapshots. Note how flat cum_* looks next to them \u2014 that is the point."
+  }
+}

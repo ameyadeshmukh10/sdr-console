@@ -1,0 +1,153 @@
+{
+  "recipes": [
+    {
+      "label": "Hot contacts not yet worked",
+      "keywords": [
+        "hot",
+        "priority",
+        "call",
+        "worked",
+        "top contacts"
+      ],
+      "spec": {
+        "dataset": "contacts",
+        "title": "Hot contacts not yet worked",
+        "columns": [
+          "name",
+          "company",
+          "title",
+          "campaign",
+          "score",
+          "band"
+        ],
+        "filters": [
+          {
+            "column": "band",
+            "op": "eq",
+            "value": "hot"
+          },
+          {
+            "column": "state",
+            "op": "eq",
+            "value": "qualified"
+          }
+        ],
+        "sort": {
+          "column": "score",
+          "dir": "desc"
+        },
+        "limit": 50
+      }
+    },
+    {
+      "label": "Signals by type",
+      "keywords": [
+        "signal",
+        "signals",
+        "fired",
+        "by type",
+        "kind"
+      ],
+      "spec": {
+        "dataset": "signals",
+        "title": "Signals by type",
+        "group_by": "kind",
+        "aggregates": [
+          {
+            "fn": "count",
+            "column": null
+          }
+        ],
+        "sort": {
+          "column": "count",
+          "dir": "desc"
+        },
+        "limit": 20
+      }
+    },
+    {
+      "label": "Campaign performance",
+      "keywords": [
+        "campaign",
+        "campaigns",
+        "performance",
+        "enrolled",
+        "replied"
+      ],
+      "spec": {
+        "dataset": "campaigns",
+        "title": "Campaign performance",
+        "columns": [
+          "name",
+          "status",
+          "accounts",
+          "members",
+          "enrolled",
+          "replied"
+        ],
+        "sort": {
+          "column": "members",
+          "dir": "desc"
+        },
+        "limit": 25
+      }
+    },
+    {
+      "label": "Credit spend by provider",
+      "keywords": [
+        "credit",
+        "credits",
+        "spend",
+        "cost",
+        "provider",
+        "budget"
+      ],
+      "spec": {
+        "dataset": "spend",
+        "title": "Credit spend by provider",
+        "group_by": "provider",
+        "aggregates": [
+          {
+            "fn": "sum",
+            "column": "units"
+          }
+        ],
+        "sort": {
+          "column": "sum_units",
+          "dir": "desc"
+        },
+        "limit": 20
+      }
+    },
+    {
+      "label": "Contacts by company",
+      "keywords": [
+        "company",
+        "companies",
+        "account",
+        "accounts",
+        "by company"
+      ],
+      "spec": {
+        "dataset": "contacts",
+        "title": "Contacts by company",
+        "group_by": "company",
+        "aggregates": [
+          {
+            "fn": "count",
+            "column": null
+          },
+          {
+            "fn": "avg",
+            "column": "score"
+          }
+        ],
+        "sort": {
+          "column": "count",
+          "dir": "desc"
+        },
+        "limit": 30
+      }
+    }
+  ]
+}

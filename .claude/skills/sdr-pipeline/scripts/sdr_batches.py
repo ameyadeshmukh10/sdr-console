@@ -173,6 +173,59 @@ def cmd_setup_variant_campaigns(args):
     return 0
 
 
+def _merge_vars(text, row):
+    """Fill the merge variables a manual step may use. Deliberately tiny: the only
+    two the UI advertises, so a template can never reference a field we don't have."""
+    return (text or "").replace("{{first_name}}", row.get("first_name") or "") \
+                       .replace("{{company}}", row.get("company") or "")
+
+
+def _apply_manual_copy(conn, contact_id, row, email):
+    """Overlay any manual campaign step copy onto the generated email fields.
+
+    A step with copy_mode='manual' is authoritative: its subject/body are what gets
+    sent, merge variables filled, replacing whatever the generator produced for that
+    touch. Steps left on 'generated' are untouched. Returns (email, overridden_steps).
+
+    Best-effort — a lookup failure sends the generated copy unchanged rather than
+    blocking the enrollment."""
+    try:
+        import campaigns as _camp  # noqa: E402 (lazy, mirrors the boot rule)
+        camp = _camp.campaign_for_contact(conn, contact_id)
+        if not camp:
+            return email, []
+        out, overridden = dict(email), []
+        for s in _camp.step_plan(conn, camp["campaign_id"]):
+            if s["channel"] != "email" or s["copy_mode"] != "manual":
+                continue
+            if not (s.get("subject") and s.get("body")):
+                continue  # marked manual but never written — keep the generated copy
+            n = s["step_no"]
+            if not 1 <= n <= 4:
+                continue  # Bison only carries subject1-4/body1-4
+            out[f"subject{n}"] = _merge_vars(s["subject"], row)
+            out[f"body{n}"] = _merge_vars(s["body"], row)
+            overridden.append(n)
+        return out, overridden
+    except Exception as e:  # noqa: BLE001
+        print(f"  [warn] manual copy skipped for {contact_id}: {type(e).__name__}: {e}")
+        return email, []
+
+
+def _campaign_bison_id(conn, contact_id):
+    """The Bison campaign owned by this contact's console campaign, or None.
+
+    Best-effort: a contact that belongs to no campaign (or a campaign with no Bison
+    id bound yet) falls back to the variant/persona routing below, so enrollment
+    keeps working exactly as before for everything outside a campaign."""
+    try:
+        import campaigns as _camp  # noqa: E402 (lazy, mirrors the boot rule)
+        camp = _camp.campaign_for_contact(conn, contact_id)
+        return (camp or {}).get("bison_campaign_id") or None
+    except Exception:  # noqa: BLE001 — routing must never break on the lookup
+        return None
+
+
 def cmd_enroll(args):
     import os
     conn = db.connect()
@@ -192,7 +245,8 @@ def cmd_enroll(args):
         if hr_enabled:
             heyreach = E.HeyReachClient()
     counts = {"enrolled": 0, "no_campaign": 0, "missing_file": 0, "skipped": 0,
-              "suppressed": 0, "linkedin": 0, "no_li": 0, "heyreach_failed": 0}
+              "suppressed": 0, "linkedin": 0, "no_li": 0, "heyreach_failed": 0,
+              "manual_steps": 0}
 
     # Suppression gate: contacts RevOps tagged everworker_tag=false must never
     # enroll. Live HubSpot check first, local unenrollment ledger as fallback.
@@ -227,13 +281,21 @@ def cmd_enroll(args):
             counts["missing_file"] += 1
             continue
         asset = json.loads(p.read_text())
-        # route by instruction variant (one campaign per variant); persona is the fallback
-        variant = asset.get("variant") or r["variant"] or "value-give"
-        campaign = E.bison_campaign_for_variant(variant) or E.bison_campaign_for(r["persona"])
+        # Campaign membership wins when the contact is in one: a console campaign
+        # owns its Bison campaign 1:1, which is what lets Bison's stats roll straight
+        # up to it. Variant -> persona -> default stays the fallback chain for
+        # contacts that predate campaigns or belong to none.
+        campaign = _campaign_bison_id(conn, r["contact_id"])
+        if not campaign:
+            variant = asset.get("variant") or r["variant"] or "value-give"
+            campaign = E.bison_campaign_for_variant(variant) or E.bison_campaign_for(r["persona"])
         if not campaign:
             counts["no_campaign"] += 1
             continue
-        tasks.append((r, campaign, E.bison_custom_vars(asset["email"])))
+        email, manual_steps = _apply_manual_copy(conn, r["contact_id"], r, asset["email"])
+        if manual_steps:
+            counts["manual_steps"] += len(manual_steps)
+        tasks.append((r, campaign, E.bison_custom_vars(email)))
         if hr_enabled:
             if r["linkedin_url"]:
                 cf = {k: (asset.get("linkedin") or {}).get(k, "") for k in E.LI_KEYS}
@@ -292,8 +354,21 @@ def cmd_enroll(args):
                 counts["skipped"] += 1
             print(f"  [skip] campaign {campaign} attach failed ({len(lead_ids)} leads): {str(e)[:120]}")
             continue
-        for r, _ in items:
+        # Meter the send allowance this enrollment consumes. One enrolled lead = one
+        # email sequence against the monthly ceiling; the LinkedIn side is metered
+        # below, per lead actually pushed to HeyReach. Report-only — nothing here
+        # blocks the enrollment, it makes the consumption visible on the Use view.
+        db.record_usage(conn, "bison", "email-enroll", len(items), "sends",
+                        ref=str(campaign))
+        for r, lead_id in items:
             db.set_contact_status(conn, r["contact_id"], "enrolled")
+            # Record the enrollment against every campaign this contact belongs to.
+            # Previously the campaign id and lead id were discarded here and only
+            # contacts.status='enrolled' survived, so nothing downstream could say
+            # which campaign a send belonged to.
+            for camp_id in db.campaign_ids_for_contact(conn, r["contact_id"]):
+                db.set_member_state(conn, camp_id, r["contact_id"], "enrolled",
+                                    bison_lead_id=lead_id)
             counts["enrolled"] += 1
             if r["contact_id"] in hr_pairs:
                 hr_batch.append(hr_pairs[r["contact_id"]])
@@ -313,6 +388,11 @@ def cmd_enroll(args):
                 counts["heyreach_failed"] += len(chunk)
                 print(f"  [skip] HEYREACH add of {len(chunk)} leads failed: {str(e)[:120]}")
         counts["linkedin"] = added
+        # LinkedIn allowance is the tightest constraint in the system (~20 actions
+        # per connected account per DAY), so every pushed lead is metered.
+        if added:
+            db.record_usage(conn, "heyreach", "li-enroll", added, "sends",
+                            ref=str(hr_campaign))
         print(f"  HEYREACH added {added} leads -> campaign {hr_campaign}")
     elif not hr_enabled:
         print("  HEYREACH disabled (set HEYREACH_CAMPAIGN_ID + HEYREACH_LINKEDIN_ACCOUNT_ID to enable LinkedIn)")

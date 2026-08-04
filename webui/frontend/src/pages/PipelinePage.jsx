@@ -4,6 +4,7 @@ import { Stat, Spinner, ErrorBanner, Badge, num } from '../components/ui.jsx'
 import EnrollPanel from '../components/EnrollPanel.jsx'
 import GenerateJobPanel from '../components/GenerateJobPanel.jsx'
 import BatchJobPanel from '../components/BatchJobPanel.jsx'
+import SuppressionRules from '../components/SuppressionRules.jsx'
 
 // Pipeline — live batch progress + UI-triggered copy generation (Anthropic API)
 // + the enrollment gate. Generation runs as a background job; the DB-backed
@@ -194,6 +195,9 @@ export default function PipelinePage() {
           <EnrollPanel generatedReady={prog.generated_ready} onChanged={poll} />
         </>
       )}
+
+      {/* Safety gate — sits with enrollment because it is what stops it. */}
+      <SuppressionRules />
     </div>
   )
 }

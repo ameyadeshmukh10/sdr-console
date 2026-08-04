@@ -17,7 +17,7 @@ import csv
 import json
 import re
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
@@ -322,6 +322,11 @@ def build_features(record):
         "reply_clean": reply_clean,
         "reply_dow": DOW[dt.weekday()] if dt else None,
         "reply_hour": dt.hour if dt else None,
+        # Kept so the console can put a time axis on any of these features. The
+        # week key is the Monday of the ISO week.
+        "reply_date": dt.date().isoformat() if dt else None,
+        "reply_month": dt.strftime("%Y-%m") if dt else None,
+        "reply_week": (dt.date() - timedelta(days=dt.weekday())).isoformat() if dt else None,
         "interested_via": record.get("interested_via"),
         "has_linkedin": bool(cv(record, "linkedin")),
         "has_location": bool(cv(record, "location")),
@@ -393,6 +398,7 @@ def main():
             "avg": round(sum(win_wc) / len(win_wc), 1) if win_wc else None,
             "n": len(win_wc),
         },
+        "timeseries": build_timeseries(feats),
         "crosstabs": {
             "offer_type_x_seniority": _crosstab(genuine, "offer_type", "seniority"),
             "cta_x_reply_intent": _crosstab(
@@ -445,6 +451,83 @@ def _crosstab(feats, a, b):
     for f in feats:
         table[f[a]][f[b]] += 1
     return {k: dict(v) for k, v in table.items()}
+
+
+# ----------------------------------------------------------------- time series
+
+# Dimensions whose mix we track period-over-period. A shift in any of these is a
+# real trend even without a denominator: it says what the replies we win are
+# increasingly made of.
+MIX_DIMS = ("offer_type", "function", "seniority", "reply_intent", "winning_cta")
+
+
+def _month_range(first, last):
+    """Inclusive list of YYYY-MM keys, so gaps plot as zero instead of closing up."""
+    out, y, m = [], int(first[:4]), int(first[5:7])
+    ly, lm = int(last[:4]), int(last[5:7])
+    while (y, m) <= (ly, lm):
+        out.append(f"{y:04d}-{m:02d}")
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return out
+
+
+def _week_range(first, last):
+    out, d = [], datetime.strptime(first, "%Y-%m-%d").date()
+    end = datetime.strptime(last, "%Y-%m-%d").date()
+    while d <= end:
+        out.append(d.isoformat())
+        d += timedelta(days=7)
+    return out
+
+
+def _timeseries(feats, period_key, periods):
+    buckets = defaultdict(list)
+    for f in feats:
+        if f.get(period_key):
+            buckets[f[period_key]].append(f)
+    rows = []
+    for p in periods:
+        group = buckets.get(p, [])
+        genuine = [f for f in group if not f["is_auto_reply"]]
+        row = {
+            "period": p,
+            "replies": len(group),
+            "genuine": len(genuine),
+            "auto": len(group) - len(genuine),
+        }
+        for dim in MIX_DIMS:
+            row[f"by_{dim}"] = dict(Counter(
+                f[dim] for f in genuine if f.get(dim)).most_common())
+        row["by_winning_step"] = dict(Counter(
+            str(f["winning_step"]) for f in genuine if f["winning_step"]).most_common())
+        rows.append(row)
+    return rows
+
+
+def build_timeseries(feats):
+    """Interested replies over time. NUMERATOR ONLY — see the note field.
+
+    Bison reports lifetime-to-date campaign counts, so a true rate-over-time needs
+    differenced snapshots from campaigns_history.jsonl (see analyze_conversion.py).
+    Volume and mix shift are what this dataset alone can honestly support.
+    """
+    dated = [f for f in feats if f.get("reply_date")]
+    if not dated:
+        return {"available": False, "note": "No reply dates in the dataset."}
+    dates = sorted(f["reply_date"] for f in dated)
+    weeks = sorted({f["reply_week"] for f in dated})
+    return {
+        "available": True,
+        "span": {"first": dates[0], "last": dates[-1], "dated_replies": len(dated),
+                 "undated_replies": len(feats) - len(dated)},
+        "months": _timeseries(dated, "reply_month",
+                              _month_range(dates[0][:7], dates[-1][:7])),
+        "weeks": _timeseries(dated, "reply_week", _week_range(weeks[0], weeks[-1])),
+        "mix_dims": list(MIX_DIMS) + ["winning_step"],
+        "note": "Interested-reply COUNTS and mix over time (numerator only). Not a "
+                "conversion rate — sends per period are not in this dataset. Mix "
+                "shares are of genuine (non-auto) replies in the period.",
+    }
 
 
 def _persona_rows(feats):

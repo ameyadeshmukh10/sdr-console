@@ -1,0 +1,21 @@
+{
+  "configured": true,
+  "demo": true,
+  "campaign_id": 4821,
+  "campaign_name": "AI SDR \u2014 LinkedIn touches",
+  "status": "ACTIVE",
+  "funnel": {
+    "totalUsers": 640,
+    "totalUsersFinished": 498,
+    "totalUsersInProgress": 118,
+    "totalUsersPending": 24
+  },
+  "stats": {
+    "connectionsSent": 612,
+    "connectionsAccepted": 214,
+    "messagesSent": 498,
+    "totalMessageReplies": 71,
+    "uniqueLeadsContacted": 604,
+    "autoTaggedInterested": 38
+  }
+}

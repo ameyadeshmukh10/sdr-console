@@ -102,18 +102,46 @@ def suppressed_set(contact_ids, conn=None):
     unenrollment ledger is the fallback (live_ok=False); if that fails too the
     gate is open (fail-open — the 30-minute sweep is the backstop).
     """
+    all_ids = [str(c) for c in contact_ids if c]
+    if not all_ids:
+        return set(), True
+
+    # LOCAL suppression first, and unconditionally. Someone hitting "do not contact"
+    # in the console expects that to hold whether or not HubSpot answers, and it is
+    # a local fact — there is nothing to check remotely. The live tag read below can
+    # only ADD to this set, never clear it: a CRM tag flipped back to "true"
+    # re-permits a CRM-driven suppression, not a decision a human made here.
+    #
+    # Checked against EVERY id, not just the CRM-shaped ones. The digit filter below
+    # exists for HubSpot's sake; applying it here too meant a contact whose id isn't
+    # numeric (imported from a file, created by enrichment, any demo profile) could
+    # be marked do-not-contact and still be enrolled.
+    local = set()
+    try:
+        close = conn is None
+        _c = db.connect() if close else conn
+        try:
+            local = {i for i in all_ids if i in db.suppressed_contact_ids(_c)}
+        finally:
+            if close:
+                _c.close()
+    except Exception as e:  # noqa: BLE001 — never block the gate on a read
+        print(f"[unenroll-gate] local engagement check failed "
+              f"({type(e).__name__}: {str(e)[:120]})", flush=True)
+
     # Digits only: one malformed id would 400 the whole HubSpot batch read and
     # needlessly degrade every other contact's live check to the ledger.
-    ids = [str(c) for c in contact_ids if c and str(c).isdigit()]
+    ids = [i for i in all_ids if i.isdigit()]
     if not ids:
-        return set(), True
+        return local, True
+
     tag = tag_property()
     try:
         from hubspot_client import HubSpotClient  # noqa: E402 (lazy — boot rule)
         client = HubSpotClient()
         rows = client.batch_read_contacts(ids, [tag])
-        return {str(r.get("id")) for r in rows
-                if _is_false((r.get("properties") or {}).get(tag))}, True
+        return local | {str(r.get("id")) for r in rows
+                        if _is_false((r.get("properties") or {}).get(tag))}, True
     except Exception as e:  # noqa: BLE001 - any failure degrades to the ledger
         print(f"[unenroll-gate] live {tag} check unavailable "
               f"({type(e).__name__}: {str(e)[:120]}) — using the local ledger", flush=True)
@@ -126,11 +154,11 @@ def suppressed_set(contact_ids, conn=None):
         finally:
             if close:
                 conn.close()
-        return {i for i in ids if i in ledger}, False
+        return local | {i for i in ids if i in ledger}, False
     except Exception as e:  # noqa: BLE001
         print(f"[unenroll-gate] ledger fallback failed ({type(e).__name__}: "
               f"{str(e)[:120]}) — gate open", flush=True)
-        return set(), False
+        return local, False
 
 
 # --------------------------------------------------------------------------

@@ -78,13 +78,57 @@ def aisdr_analytics(db):
         {"$match": flagged},
         {"$group": {"_id": None, "total": {"$sum": {"$ifNull": ["$amount", 0]}}}},
     ]))
+    # Stage breakdown + the individual deals, so the headline pipeline number can
+    # be substantiated in the UI instead of standing alone. Both are computed from
+    # the same flagged set as total_pipeline, so the parts always sum to the whole.
+    by_stage = []
+    for row in db.deals.aggregate([
+        {"$match": flagged},
+        {"$group": {"_id": {"$ifNull": ["$dealstage_label", "Unknown"]},
+                    "deals": {"$sum": 1},
+                    "amount": {"$sum": {"$ifNull": ["$amount", 0]}}}},
+        {"$sort": {"amount": -1}},
+    ]):
+        by_stage.append({"stage": row["_id"], "deals": row["deals"],
+                         "amount": row["amount"]})
+    deals = [{
+        "id": d.get("_id"),
+        "name": d.get("dealname"),
+        "stage": d.get("dealstage_label") or d.get("dealstage"),
+        "amount": d.get("amount"),
+        "created_at": d.get("createdate"),
+        "owner": d.get("owner_name"),
+        "contacts": len(d.get("contact_ids") or []),
+        "attribution": d.get("ai_sdr_attribution"),
+    } for d in db.deals.find(flagged, {
+        "ai_sdr_attribution": 1,
+        "dealname": 1, "dealstage_label": 1, "dealstage": 1, "amount": 1,
+        "createdate": 1, "owner_name": 1, "contact_ids": 1,
+    }).sort("amount", -1).limit(25)]
+
+    # Split by what can honestly be claimed. `originated` = every qualifying contact
+    # came in cold; `influenced` = at least one arrived inbound, so the deal is real
+    # but is not outbound-created. Deals synced before this split existed have no
+    # ai_sdr_attribution and count as unclassified until the next sweep.
+    by_motion = {}
+    for row in db.deals.aggregate([
+        {"$match": flagged},
+        {"$group": {"_id": {"$ifNull": ["$ai_sdr_attribution", "unclassified"]},
+                    "deals": {"$sum": 1},
+                    "amount": {"$sum": {"$ifNull": ["$amount", 0]}}}},
+    ]):
+        by_motion[row["_id"]] = {"deals": row["deals"], "amount": row["amount"]}
+
     state = get_sync_state(db) or {}
     return {
         "configured": True,
         "deals_created": db.deals.count_documents(flagged),
         "total_pipeline": (total[0]["total"] if total else 0),
+        "by_attribution": by_motion,
         "contacts_emailed": db.contacts.count_documents({}),
         "emails_logged": db.emails.count_documents({}),
+        "by_stage": by_stage,
+        "deals": deals,
         "last_sync_at": state.get("last_run_at"),
         "last_sync_ok": state.get("last_run_ok"),
         "last_error": state.get("last_error"),

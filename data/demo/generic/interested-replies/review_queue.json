@@ -1,0 +1,163 @@
+{
+  "fetched_at": "2026-08-04T05:06:40Z",
+  "demo": true,
+  "scanned_at": "2026-08-04T04:48:40Z",
+  "counts": {
+    "interested": 8,
+    "reviewed": 0
+  },
+  "items": [
+    {
+      "reply_id": 500000,
+      "lead_id": 700000,
+      "sender_email_id": 12,
+      "from_name": "Priya Lindqvist",
+      "from_email": "priya.lindqvist@steelyarddata.example",
+      "subject": "Re: a signal play for Steelyard Data",
+      "campaign_id": 901,
+      "date_received": "2026-08-04T02:06:40Z",
+      "text_body": "Yes \u2014 this is timely. We're adding two AEs next month and pipeline coverage is exactly the gap. Tuesday or Wednesday afternoon both work; send an invite.",
+      "already_interested": true,
+      "channel": "email",
+      "classifier": {
+        "interested": true,
+        "confidence": 0.93,
+        "reason": "Explicit ask for a meeting with availability offered.",
+        "intent": "meeting_request"
+      }
+    },
+    {
+      "reply_id": 500001,
+      "lead_id": 700001,
+      "sender_email_id": 12,
+      "from_name": "Omar Ibrahim",
+      "from_email": "omar.ibrahim@juniperclinical.example",
+      "subject": "Re: a signal play for Juniper Clinical",
+      "campaign_id": 902,
+      "date_received": "2026-08-02T21:06:40Z",
+      "text_body": "Interested. I'd want to understand how it works alongside our existing sequencer before we change anything. Can you do 20 minutes Thursday?",
+      "already_interested": true,
+      "channel": "email",
+      "classifier": {
+        "interested": true,
+        "confidence": 0.89,
+        "reason": "Explicit ask for a meeting with availability offered.",
+        "intent": "meeting_request"
+      }
+    },
+    {
+      "reply_id": 500002,
+      "lead_id": 700002,
+      "sender_email_id": 12,
+      "from_name": "Priya Haddad",
+      "from_email": "priya.haddad@tandemlabs.example",
+      "subject": "Re: a signal play for Tandem Labs",
+      "campaign_id": 903,
+      "date_received": "2026-08-02T04:06:40Z",
+      "text_body": "Can you send over the detail on how the research step works? Specifically what it uses to pick the signal it opens on.",
+      "already_interested": true,
+      "channel": "email",
+      "classifier": {
+        "interested": true,
+        "confidence": 0.81,
+        "reason": "Asking for specific product detail \u2014 warm but not yet a meeting.",
+        "intent": "info_request"
+      }
+    },
+    {
+      "reply_id": 500003,
+      "lead_id": 700003,
+      "sender_email_id": 12,
+      "from_name": "Tomas Lindqvist",
+      "from_email": "tomas.lindqvist@aperturerobotics.example",
+      "subject": "Re: a signal play for Aperture Robotics",
+      "campaign_id": 904,
+      "date_received": "2026-08-01T04:06:40Z",
+      "text_body": "What does this cost at our size (roughly 12 reps)? If it's in range I'll loop in our RevOps lead.",
+      "already_interested": true,
+      "channel": "email",
+      "classifier": {
+        "interested": true,
+        "confidence": 0.86,
+        "reason": "Direct pricing question with a buying-group referral implied.",
+        "intent": "pricing"
+      }
+    },
+    {
+      "reply_id": 500004,
+      "lead_id": 700004,
+      "sender_email_id": 12,
+      "from_name": "Nina Haddad",
+      "from_email": "nina.haddad@aperturerobotics.example",
+      "subject": "Re: a signal play for Aperture Robotics",
+      "campaign_id": 901,
+      "date_received": "2026-07-31T03:06:40Z",
+      "text_body": "Not me \u2014 our SDR manager owns this. Copying them here; they'll pick it up.",
+      "already_interested": true,
+      "channel": "email",
+      "classifier": {
+        "interested": true,
+        "confidence": 0.84,
+        "reason": "Forwarding to the right owner \u2014 interested at the account level.",
+        "intent": "referral"
+      }
+    },
+    {
+      "reply_id": 500005,
+      "lead_id": 700005,
+      "sender_email_id": 12,
+      "from_name": "Kwame Walsh",
+      "from_email": "kwame.walsh@aperturerobotics.example",
+      "subject": "Re: a signal play for Aperture Robotics",
+      "campaign_id": 902,
+      "date_received": "2026-07-29T23:06:40Z",
+      "text_body": "Good timing but not this quarter \u2014 we're mid-migration. Ping me in early October and I'll make time.",
+      "already_interested": true,
+      "channel": "email",
+      "classifier": {
+        "interested": true,
+        "confidence": 0.79,
+        "reason": "Positive sentiment with a concrete future date.",
+        "intent": "positive_later"
+      }
+    },
+    {
+      "reply_id": 500006,
+      "lead_id": 700006,
+      "sender_email_id": 12,
+      "from_name": "Alex Tanaka",
+      "from_email": "alex.tanaka@willowbrooklabs.example",
+      "subject": "Re: a signal play for Willowbrook Labs",
+      "campaign_id": 903,
+      "date_received": "2026-07-28T20:06:40Z",
+      "text_body": "How do you handle deliverability at that volume? That's the part that has burned us before.",
+      "already_interested": true,
+      "channel": "email",
+      "classifier": {
+        "interested": true,
+        "confidence": 0.77,
+        "reason": "Asking for specific product detail \u2014 warm but not yet a meeting.",
+        "intent": "info_request"
+      }
+    },
+    {
+      "reply_id": 500007,
+      "lead_id": 700007,
+      "sender_email_id": 12,
+      "from_name": "Omar Ferreira",
+      "from_email": "omar.ferreira@northwind-analytics.example",
+      "subject": "Re: a signal play for Northwind Analytics",
+      "campaign_id": 904,
+      "date_received": "2026-07-27T23:06:40Z",
+      "text_body": "The hiring point landed \u2014 we have 4 open sales roles and no coverage while they ramp. Let's talk. What does the pilot look like?",
+      "already_interested": true,
+      "channel": "email",
+      "classifier": {
+        "interested": true,
+        "confidence": 0.91,
+        "reason": "Explicit ask for a meeting with availability offered.",
+        "intent": "meeting_request"
+      }
+    }
+  ]
+}

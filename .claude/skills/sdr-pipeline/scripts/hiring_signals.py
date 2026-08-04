@@ -459,6 +459,11 @@ def detect_and_store(domain, company=None, force=False, hubspot=None):
         db.upsert_hiring_signals(conn, host, res["formatted"],
                                  hiring_detail=json.dumps(detail, ensure_ascii=False),
                                  hiring_error=res["error"], company_name=company)
+        # Meter the credit. We reached Prospeo (the cache-skip path returned long
+        # before here), so this billed whatever the outcome was — including a
+        # definitive NO_MATCH, which still costs.
+        db.record_usage(conn, "prospeo", "enrich-company", 1, "credits", ref=host,
+                        detail={"error_code": res["error_code"]} if res["error_code"] else None)
         stored = db.get_signal(conn, host) or {}
     finally:
         conn.close()

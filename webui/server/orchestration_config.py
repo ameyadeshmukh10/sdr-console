@@ -366,7 +366,7 @@ PLAYBOOK_PLAYS = {
 }
 
 
-def _tech_signals_section(root):
+def _tech_signals_section(root, demo=False):
     import tech_signals as T
     selection = json.loads((root / "technographics" / "signatures" / "selection.marketing_sales.json").read_text())
     try:
@@ -409,9 +409,21 @@ def _tech_signals_section(root):
         buckets[bucket].append({"id": vid, "name": name, "playbook": play})
         if play:
             playbook_vendors[play].append(name)
+    if demo:
+        available, reason = True, None
     return {
         "available": available, "reason": None if available else reason,
         "refresh_days": int(float(os.environ.get("TECH_REFRESH_DAYS") or 90)),
+        # The knobs, surfaced so Setup can show HOW this is configured rather than
+        # only what it currently detects. Values are read live from the environment.
+        "settings": _signal_settings([
+            ("TECH_DETECT_ENABLED", "1", "Run the scan at all"),
+            ("TECH_REFRESH_DAYS", "90", "Re-scan a domain after this many days"),
+            ("TECH_HUBSPOT_WRITEBACK", "1",
+             "PATCH the technographic_signals company property in HubSpot"),
+            ("TECH_SELECTION_FILE", "(curated ~65 vendors)",
+             "Which vendor catalogue subset is in scope"),
+        ], demo=demo),
         "buckets": [{"id": k, "name": display[k], "vendors": sorted(buckets[k], key=lambda v: v["name"])}
                     for k in display if buckets[k]],
         "playbooks": [{"id": k, "play": PLAYBOOK_PLAYS[k], "vendors": sorted(v)}
@@ -419,7 +431,37 @@ def _tech_signals_section(root):
     }
 
 
-def _hiring_signals_section(root):
+# Env names whose VALUE must never reach the client. This payload is served to the
+# browser, so credentials are reported as present/absent only — never echoed.
+_SECRET_ENV_RE = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|URL$", re.I)
+
+
+def _signal_settings(specs, demo=False):
+    """[(env_key, default, effect)] -> rows carrying the effective value + origin.
+
+    In demo mode credential-shaped vars report as configured: the profile stands in
+    for a live deployment, and surfacing the demo host's empty keys would show
+    unconfigured features in what is meant to be a working system.
+    """
+    rows = []
+    for key, default, effect in specs:
+        raw = os.environ.get(key)
+        present = raw not in (None, "") or demo
+        if _SECRET_ENV_RE.search(key):
+            value = "set" if present else "not set"
+        else:
+            value = raw if present else str(default)
+        rows.append({
+            "key": key,
+            "value": value,
+            "secret": bool(_SECRET_ENV_RE.search(key)),
+            "source": "environment" if present else "default",
+            "effect": effect,
+        })
+    return rows
+
+
+def _hiring_signals_section(root, demo=False):
     import hiring_signals as H
     try:
         available, reason = H.hiring_available()
@@ -456,9 +498,19 @@ def _hiring_signals_section(root):
 
     exclude = [{"label": (_humanize_regex(p)["humanized"] or [p])[0], "raw": p}
                for p in H.SALES_EXCLUDE_PATTERNS]
+    if demo:
+        available, reason = True, None
     return {
         "available": available, "reason": None if available else reason,
         "refresh_days": int(float(os.environ.get("HIRING_REFRESH_DAYS") or 90)),
+        "settings": _signal_settings([
+            ("HIRING_DETECT_ENABLED", "1", "Run the scan at all"),
+            ("HIRING_REFRESH_DAYS", "90", "Re-scan a domain after this many days"),
+            ("HIRING_HUBSPOT_WRITEBACK", "1",
+             "Refresh open_roles_count / hiring_signals* company properties"),
+            ("PROSPEO_API_KEY", "(unset)",
+             "Job-postings provider — one credit per uncached scan"),
+        ], demo=demo),
         "exclude_beats_include": True,
         "include": [g for g in groups if g["chips"]],
         "exclude": exclude,
@@ -466,7 +518,10 @@ def _hiring_signals_section(root):
 
 
 # ---- payload -----------------------------------------------------------------
-def orchestration_config_payload(root=None):
+def orchestration_config_payload(root=None, demo=False):
+    """`demo=True` presents a fully-configured deployment: capability is declared
+    rather than probed, so a demo never shows the host's missing optional deps or
+    absent API keys as broken features."""
     root = Path(root) if root else PROJECT_ROOT
     payload, errors = {"ok": True}, {}
 
@@ -486,12 +541,12 @@ def orchestration_config_payload(root=None):
 
     signals = {}
     try:
-        signals["tech"] = _tech_signals_section(root)
+        signals["tech"] = _tech_signals_section(root, demo=demo)
     except Exception as e:  # noqa: BLE001
         signals["tech"] = None
         errors["signals.tech"] = str(e)
     try:
-        signals["hiring"] = _hiring_signals_section(root)
+        signals["hiring"] = _hiring_signals_section(root, demo=demo)
     except Exception as e:  # noqa: BLE001
         signals["hiring"] = None
         errors["signals.hiring"] = str(e)

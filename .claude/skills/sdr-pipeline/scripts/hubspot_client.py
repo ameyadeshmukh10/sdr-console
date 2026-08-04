@@ -224,28 +224,64 @@ class HubSpotClient:
         return self._request("PATCH", f"/crm/v3/objects/companies/{company_id}",
                              body={"properties": dict(properties)})
 
-    def ensure_company_property(self, name, label, field_type="textarea",
-                                group_name="companyinformation"):
-        """Idempotently make sure a custom company property exists. Reads it
-        first; on 404 creates it (409/duplicate from a concurrent create counts
-        as success). Other errors — e.g. a token missing the schema scopes —
-        propagate as HubSpotError for the caller to handle."""
+    # Default property group per object type — HubSpot rejects a create without a
+    # group that exists on that object.
+    _PROPERTY_GROUPS = {
+        "companies": "companyinformation",
+        "contacts": "contactinformation",
+        "deals": "dealinformation",
+    }
+    # fieldType -> the `type` HubSpot expects alongside it. Only textarea/text/html
+    # are strings; a numeric or boolean property declared as a string silently
+    # becomes un-sortable and un-filterable in HubSpot, which defeats the point of
+    # writing a score there.
+    _PROPERTY_TYPES = {
+        "text": "string", "textarea": "string", "html": "string",
+        "number": "number", "bool": "bool", "booleancheckbox": "bool",
+        "date": "date", "select": "enumeration", "radio": "enumeration",
+    }
+
+    def ensure_property(self, object_type, name, label, field_type="textarea",
+                        group_name=None, options=None):
+        """Idempotently make sure a custom property exists on any object type.
+
+        Reads it first; on 404 creates it (409/duplicate from a concurrent create
+        counts as success). Other errors — e.g. a token missing the schema scopes —
+        propagate as HubSpotError for the caller to handle.
+
+        Generalizes the old company-only helper: a contact-level field map needs the
+        same guarantee for contacts and deals, and needs numbers to be real numbers.
+        """
+        if object_type not in self._PROPERTY_GROUPS:
+            raise ValueError(f"unsupported object type {object_type!r}")
         try:
-            self._request("GET", f"/crm/v3/properties/companies/{name}")
+            self._request("GET", f"/crm/v3/properties/{object_type}/{name}")
             return False  # already there
         except HubSpotError as exc:
             if "HTTP 404" not in str(exc):
                 raise
+        hs_field = "text" if field_type == "bool" else field_type
+        body = {
+            "name": name, "label": label,
+            "type": self._PROPERTY_TYPES.get(field_type, "string"),
+            "fieldType": "booleancheckbox" if field_type == "bool" else hs_field,
+            "groupName": group_name or self._PROPERTY_GROUPS[object_type],
+        }
+        if options:
+            body["options"] = options
         try:
-            self._request("POST", "/crm/v3/properties/companies", body={
-                "name": name, "label": label, "type": "string",
-                "fieldType": field_type, "groupName": group_name,
-            })
+            self._request("POST", f"/crm/v3/properties/{object_type}", body=body)
         except HubSpotError as exc:
             msg = str(exc)
             if "HTTP 409" not in msg and "already exists" not in msg.lower():
                 raise
         return True
+
+    def ensure_company_property(self, name, label, field_type="textarea",
+                                group_name="companyinformation"):
+        """Back-compat wrapper — tech_signals and hiring_signals call this."""
+        return self.ensure_property("companies", name, label,
+                                    field_type=field_type, group_name=group_name)
 
     # ---- contacts -------------------------------------------------------
     def batch_read_contacts(self, ids, properties):

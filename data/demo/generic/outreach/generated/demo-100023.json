@@ -1,0 +1,25 @@
+{
+  "contact_id": "demo-100023",
+  "persona": "partnerships",
+  "variant": "value-give",
+  "signal": "entered the UK market with a London-based sales team",
+  "tech_signals": "HubSpot · Demandbase",
+  "hiring_signals": "6 open roles · 2 sales: Enterprise AE; SDR",
+  "cta_play": "outbound-teardown",
+  "demo": true,
+  "email": {
+    "subject1": "a teardown of your current outbound",
+    "body1": "Sofia, saw Pinegrove Bank entered the UK market with a London-based sales team.\n\nPartner-sourced accounts usually sit untouched because nobody owns the first touch.\n\nWe run an AI SDR that writes the first touches so your reps start warm.\n\nI can do a teardown of your current sequence and show where the drop-off is. Worth 20 minutes?",
+    "subject2": "covering the gap while you hire",
+    "body2": "Sofia, following up on Pinegrove Bank.\n\n2 sales: Enterprise AE; SDR — the ramp window is where pipeline usually slips.\n\nOn top of HubSpot we add 2-5x the touch volume without changing how the team works.\n\nOpen to a look at the run rate?",
+    "subject3": "how Memgraph did it",
+    "body3": "Sofia, last bit of proof for Pinegrove Bank.\n\nMemgraph mapped their intent signals to the accounts worth a first touch and ran our AI SDR to $2.7M in pipeline.\n\nWant the same mapping for Pinegrove Bank?",
+    "subject4": "last one, Sofia",
+    "body4": "Sofia, I'll stop reaching out on this one. If activating partner-sourced accounts is still open, the offer stands."
+  },
+  "linkedin": {
+    "li_connect": "Sofia, saw Pinegrove Bank entered the UK market with a London-based sales team. We work with teams on activating partner-sourced accounts.",
+    "li_msg1": "Thanks for connecting, Sofia. I can do a teardown of your current sequence and show where the drop-off is. Worth 20 minutes?",
+    "li_msg2": "Sofia, one more nudge — Memgraph ran the same play to $2.7M in pipeline. Worth 20 minutes?"
+  }
+}

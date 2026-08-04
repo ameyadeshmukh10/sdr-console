@@ -1,0 +1,188 @@
+{
+  "configured": true,
+  "demo": true,
+  "deals_created": 14,
+  "total_pipeline": 486000,
+  "emails_logged": 18420,
+  "contacts_emailed": 4870,
+  "by_stage": [
+    {
+      "stage": "Discovery",
+      "deals": 6,
+      "amount": 190000
+    },
+    {
+      "stage": "Proposal",
+      "deals": 3,
+      "amount": 132000
+    },
+    {
+      "stage": "Demo scheduled",
+      "deals": 3,
+      "amount": 120000
+    },
+    {
+      "stage": "Closed won",
+      "deals": 1,
+      "amount": 32000
+    },
+    {
+      "stage": "Closed lost",
+      "deals": 1,
+      "amount": 12000
+    }
+  ],
+  "deals": [
+    {
+      "id": "demo-deal-1",
+      "name": "Northwind Analytics \u2014 AI SDR pilot",
+      "stage": "Proposal",
+      "amount": 62000,
+      "created_at": 1772409600000,
+      "owner": "Dana Whitfield",
+      "contacts": 3,
+      "attribution": "originated"
+    },
+    {
+      "id": "demo-deal-2",
+      "name": "Verity Pay \u2014 outbound expansion",
+      "stage": "Demo scheduled",
+      "amount": 54000,
+      "created_at": 1773446400000,
+      "owner": "Dana Whitfield",
+      "contacts": 2,
+      "attribution": "influenced"
+    },
+    {
+      "id": "demo-deal-3",
+      "name": "Sable Security \u2014 GTM automation",
+      "stage": "Discovery",
+      "amount": 48000,
+      "created_at": 1774051200000,
+      "owner": "Marcus Bell",
+      "contacts": 4,
+      "attribution": "originated"
+    },
+    {
+      "id": "demo-deal-4",
+      "name": "Tandem Labs \u2014 pipeline coverage",
+      "stage": "Proposal",
+      "amount": 45000,
+      "created_at": 1774656000000,
+      "owner": "Dana Whitfield",
+      "contacts": 2,
+      "attribution": "originated"
+    },
+    {
+      "id": "demo-deal-5",
+      "name": "Orchard Retail Cloud \u2014 AI SDR",
+      "stage": "Discovery",
+      "amount": 41000,
+      "created_at": 1775260800000,
+      "owner": "Marcus Bell",
+      "contacts": 3,
+      "attribution": "originated"
+    },
+    {
+      "id": "demo-deal-6",
+      "name": "Cobalt Grid \u2014 SDR augmentation",
+      "stage": "Demo scheduled",
+      "amount": 38000,
+      "created_at": 1775952000000,
+      "owner": "Dana Whitfield",
+      "contacts": 1,
+      "attribution": "originated"
+    },
+    {
+      "id": "demo-deal-7",
+      "name": "Lumen Freight \u2014 outbound rebuild",
+      "stage": "Discovery",
+      "amount": 36000,
+      "created_at": 1776556800000,
+      "owner": "Marcus Bell",
+      "contacts": 2,
+      "attribution": "influenced"
+    },
+    {
+      "id": "demo-deal-8",
+      "name": "Kestrel Health \u2014 pipeline pilot",
+      "stage": "Closed won",
+      "amount": 32000,
+      "created_at": 1777161600000,
+      "owner": "Dana Whitfield",
+      "contacts": 3,
+      "attribution": "originated"
+    },
+    {
+      "id": "demo-deal-9",
+      "name": "Aperture Robotics \u2014 AI SDR",
+      "stage": "Discovery",
+      "amount": 31000,
+      "created_at": 1777766400000,
+      "owner": "Marcus Bell",
+      "contacts": 2,
+      "attribution": "originated"
+    },
+    {
+      "id": "demo-deal-10",
+      "name": "Brightsend \u2014 GTM coverage",
+      "stage": "Demo scheduled",
+      "amount": 28000,
+      "created_at": 1778457600000,
+      "owner": "Dana Whitfield",
+      "contacts": 1,
+      "attribution": "originated"
+    },
+    {
+      "id": "demo-deal-11",
+      "name": "Meridian Talent \u2014 SDR pilot",
+      "stage": "Discovery",
+      "amount": 26000,
+      "created_at": 1779062400000,
+      "owner": "Marcus Bell",
+      "contacts": 2,
+      "attribution": "influenced"
+    },
+    {
+      "id": "demo-deal-12",
+      "name": "Ferrous Supply \u2014 outbound",
+      "stage": "Proposal",
+      "amount": 25000,
+      "created_at": 1779667200000,
+      "owner": "Dana Whitfield",
+      "contacts": 3,
+      "attribution": "originated"
+    },
+    {
+      "id": "demo-deal-13",
+      "name": "Northwind Analytics \u2014 expansion",
+      "stage": "Closed lost",
+      "amount": 12000,
+      "created_at": 1780272000000,
+      "owner": "Marcus Bell",
+      "contacts": 1,
+      "attribution": "originated"
+    },
+    {
+      "id": "demo-deal-14",
+      "name": "Cobalt Grid \u2014 pilot extension",
+      "stage": "Discovery",
+      "amount": 8000,
+      "created_at": 1780876800000,
+      "owner": "Dana Whitfield",
+      "contacts": 1,
+      "attribution": "originated"
+    }
+  ],
+  "by_attribution": {
+    "originated": {
+      "deals": 11,
+      "amount": 370000
+    },
+    "influenced": {
+      "deals": 3,
+      "amount": 116000
+    }
+  },
+  "last_sync_at": "2026-08-03T22:06:40Z"
+}

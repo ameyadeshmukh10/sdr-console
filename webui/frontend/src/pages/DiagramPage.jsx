@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { api } from '../api.js'
-import { Stat, Spinner, ErrorBanner, num, EmailIcon, LinkedInIcon, LINKEDIN_BLUE } from '../components/ui.jsx'
+import { Spinner, ErrorBanner, EmailIcon, LinkedInIcon, LINKEDIN_BLUE } from '../components/ui.jsx'
 import { BRAND, PERSONA_COLORS } from '../theme.js'
 import {
-  SectionCard, PipelineSection, IcpFilterSection, PersonaAgentsSection,
+  SectionFrame, PipelineSection, IcpFilterSection, PersonaAgentsSection,
   SequencingSection, KnowledgeSection, GuardrailsSection, SignalsSection,
 } from '../components/OrchestrationSections.jsx'
+import Connectors from '../components/Connectors.jsx'
+import ConfigChat from '../components/ConfigChat.jsx'
 
 // Pillar 2 — See: how the pipeline WORKS (not how much it processed).
 // HubSpot -> ICP filter -> agent orchestrator -> persona agents -> Email + LinkedIn,
@@ -61,113 +64,92 @@ export default function DiagramPage() {
   const [config, setConfig] = useState(null)
   const [error, setError] = useState(null)
   const [hover, setHover] = useState(null)        // persona id being hovered
-  const [expanded, setExpanded] = useState(() => new Set())
+  // Under-the-hood is a tab strip, not a stack of accordions: one section on
+  // screen at a time, all of them reachable in one click from anywhere.
+  const [tab, setTab] = useState('pipeline')
+  const [conn, setConnectors] = useState(null)    // connector inventory
+  const [connError, setConnError] = useState(null)
+  const [cfgScopes, setCfgScopes] = useState(null)  // chat-editable config scopes
   const [unenroll, setUnenroll] = useState(null)  // unenrollment checker status
-  const [runBusy, setRunBusy] = useState(false)   // one global run at a time
-  const [runMsg, setRunMsg] = useState(null)
   const sectionRefs = useRef({})
+  const navigate = useNavigate()
 
   useEffect(() => {
     api.orchestrationConfig().then(setConfig).catch((e) => setError(e.message))
+    api.connectors().then(setConnectors).catch((e) => setConnError(e.message))
+    // Non-fatal: sections still render read-only if this backend lacks the endpoint.
+    api.configScopes().then(setCfgScopes).catch(() => {})
     // Non-fatal: the diagram renders fine without it (e.g. an older backend).
     api.unenrollStatus().then(setUnenroll).catch(() => {})
   }, [])
 
-  function toggleSection(id) {
-    setExpanded((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
+  // Clicking a node in the diagram selects that tab and brings the strip into
+  // view, so the diagram stays the navigation for the config below it. The safety
+  // gate is the exception — running it lives on Pipeline, so send them there.
   function openSection(id) {
     if (id === 'unenroll') {
-      sectionRefs.current.unenroll?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      navigate('/pipeline')
       return
     }
-    setExpanded((prev) => new Set(prev).add(id))
-    // let the section body mount before scrolling to it
-    setTimeout(() => sectionRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60)
+    setTab(id)
+    setTimeout(() => sectionRefs.current.tabs?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60)
   }
 
   const dim = (p) => hover && hover !== p
-
-  // ---- unenrollment gate (safety bar under both outbound channels) ---------
-  const gateRule = unenroll?.rules?.[0]
-  const gateSub = unenroll
-    ? [gateRule?.description?.replace(/\.\s*$/, ''), `every ${unenroll.interval_minutes}m`]
-        .filter(Boolean).join(' · ') + (unenroll.enabled === false ? ' · sweeper disabled' : '')
-    : ''
-
-  // Kick a sweep (or dry run), then poll until the global run flag clears and
-  // refresh the rule cards — same pattern as the Analytics attribution sync.
-  async function runCheck(dryRun) {
-    setRunBusy(true)
-    setRunMsg(dryRun ? 'Starting dry run…' : 'Starting unenrollment check…')
-    try {
-      await api.unenrollRun({ dry_run: !!dryRun })
-    } catch (e) {
-      // 409 = a check is already running (e.g. the background sweeper) — keep polling it.
-      if (e.status !== 409) {
-        setRunMsg(`Unenrollment check failed to start: ${e.message}`)
-        setRunBusy(false)
-        return
-      }
-    }
-    setRunMsg('Unenrollment check running — sweeping flagged contacts across both channels…')
-    for (let i = 0; i < 120; i++) {          // up to ~10 min
-      await new Promise((r) => setTimeout(r, 5000))
-      try {
-        const s = await api.unenrollStatus()
-        if (s.running && s.progress) setRunMsg(`Running — ${s.progress}`)
-        if (!s.running) {
-          setUnenroll(s)
-          if (dryRun) {
-            // Dry runs never touch last_run — their summary comes via last_result.
-            const d = s.last_result
-            setRunMsg(d && typeof d === 'object' && d.dry_run
-              ? (d.ok === false
-                  ? `Dry run failed: ${d.error || (d.errors || []).join('; ') || 'unknown'}`
-                  : `Dry run complete — ${num(d.checked || 0)} checked, `
-                    + `${num((d.bison?.stopped || 0) + (d.heyreach?.stopped || 0))} would be stopped. No changes made.`)
-              : 'Dry run complete — no changes made.')
-          } else {
-            const lr = s.rules?.[0]?.last_run
-            const sum = lr?.summary
-            setRunMsg(lr?.ok === false
-              ? `Unenrollment check finished with an error: ${typeof sum === 'string' ? sum : (sum?.errors?.length ? sum.errors.join('; ') : (sum?.error || 'unknown'))}`
-              : 'Check complete.')
-          }
-          setRunBusy(false)
-          return
-        }
-      } catch { /* transient — keep polling */ }
-    }
-    setRunMsg('Unenrollment check is still running — refresh the page later.')
-    setRunBusy(false)
-  }
 
   const node = (id) => ({
     onClick: () => openSection(id),
     style: { cursor: 'pointer' },
   })
 
+  // `controls` / `sources` give every section the same frame: what it decides, and
+  // the exact files to edit to change that decision.
   const sections = [
-    { id: 'pipeline', title: 'Pipeline stages & agent routing', sub: 'sdr-pipeline SKILL.md · live', C: PipelineSection, data: config?.pipeline },
-    { id: 'icp', title: 'ICP filter — who gets written to', sub: 'buyer_group.py · live', C: IcpFilterSection, data: config?.icp_filter },
-    { id: 'personas', title: 'Persona agents', sub: '.claude/agents · live', C: PersonaAgentsSection, data: config?.personas },
-    { id: 'sequencing', title: 'Sequencing & CTA offers', sub: 'icp-email.md · cta-offers.md · live', C: SequencingSection, data: config?.sequencing },
-    { id: 'knowledge', title: 'Knowledge base', sub: 'offer.md · live', C: KnowledgeSection, data: config?.knowledge },
-    { id: 'guardrails', title: 'Guardrails', sub: 'lint_sequence.py · icp-email.md · live', C: GuardrailsSection, data: config?.guardrails },
-    { id: 'signals', title: 'Signal intelligence', sub: 'technographics + hiring config · live', C: SignalsSection, data: config?.signals },
+    { id: 'pipeline', title: 'Pipeline stages & agent routing', tab: 'Pipeline', sub: 'sdr-pipeline SKILL.md · live',
+      C: PipelineSection, data: config?.pipeline,
+      controls: 'the order of pipeline stages, and which persona agent each contact is routed to.',
+      sources: ['.claude/skills/sdr-pipeline/SKILL.md'] },
+    { id: 'icp', title: 'ICP filter — who gets written to', tab: 'ICP filter', sub: 'buyer_group.py · live',
+      C: IcpFilterSection, data: config?.icp_filter,
+      controls: 'which job titles count as ICP and which persona they map to. Non-matches are skipped at pull time.',
+      sources: ['.claude/skills/ai-sdr/scripts/buyer_group.py'] },
+    { id: 'personas', title: 'Persona agents', tab: 'Personas', sub: '.claude/agents · live',
+      C: PersonaAgentsSection, data: config?.personas,
+      controls: 'the pain, outcome, CTA set and tone each persona agent writes with.',
+      sources: ['.claude/agents/sdr-sales-leadership.md', '.claude/agents/sdr-revops.md',
+                '.claude/agents/sdr-partnerships.md', '.claude/agents/sdr-sdr-bdr-leadership.md'] },
+    { id: 'sequencing', title: 'Sequencing & CTA offers', tab: 'Sequencing', sub: 'icp-email.md · cta-offers.md · live',
+      C: SequencingSection, data: config?.sequencing,
+      controls: 'the job of each of the 4 email touches and 3 LinkedIn touches, and the offer library the CTAs draw from.',
+      sources: ['.claude/skills/ai-sdr/knowledge/icp-email.md',
+                '.claude/skills/ai-sdr/knowledge/cta-offers.md'] },
+    { id: 'knowledge', title: 'Knowledge base', tab: 'Knowledge', sub: 'offer.md · live',
+      C: KnowledgeSection, data: config?.knowledge,
+      controls: 'the product story and the only proof points the copy is allowed to cite.',
+      sources: ['.claude/skills/ai-sdr/knowledge/offer.md'] },
+    { id: 'guardrails', title: 'Guardrails', tab: 'Guardrails', sub: 'lint_sequence.py · icp-email.md · live',
+      C: GuardrailsSection, data: config?.guardrails,
+      controls: 'the checks every email must pass before enrollment, and the writing rules agents are held to.',
+      sources: ['.claude/skills/ai-sdr/scripts/lint_sequence.py'] },
+    { id: 'signals', title: 'Signal intelligence', tab: 'Signals', sub: 'technographics + hiring config · live',
+      C: SignalsSection, data: config?.signals,
+      controls: 'which account signals are detected, how long they are cached, whether they write back to HubSpot, and how each one changes the copy.',
+      sources: ['.claude/skills/sdr-pipeline/scripts/tech_signals.py',
+                '.claude/skills/sdr-pipeline/scripts/hiring_signals.py'],
+      editNote: 'the detection scope lives in the two scripts above; the on/off, cache-window and '
+        + 'write-back settings are environment variables (Railway service variables in prod, .env locally) '
+        + 'and take effect on the next scan without a code change.' },
+    // Last tab: not repo config like the others, so it renders its own panel and
+    // opts out of the shared frame (no source files to point at).
+    { id: 'connectors', title: 'Connected systems', sub: 'detected from configuration', tab: 'Connectors',
+      C: () => <Connectors data={conn} error={connError} bare />, data: null,
+      frameless: true },
   ]
   const failedSections = Object.keys(config?.errors || {})
 
   return (
     <div>
-      <h1 className="page-title">Orchestration</h1>
+      <h1 className="page-title">Setup</h1>
       <p className="page-sub">
         How the pipeline works: HubSpot contacts pass the ICP filter, the orchestrator routes each
         to its persona agent, and copy goes out over email and LinkedIn — grounded in the knowledge
@@ -287,7 +269,7 @@ export default function DiagramPage() {
               <rect x={CHAN.x} y={GATE_Y} width={CHAN.w} height={GATE_H} rx="12"
                 fill="#fffdf7" stroke={BRAND.red} strokeWidth="1.5" strokeDasharray="6 3" />
               <text x={CHAN.x + 16} y={GATE_Y + 26} fill={BRAND.ink} fontSize="13" fontWeight="700">Unenrollment checker</text>
-              <text x={CHAN.x + 16} y={GATE_Y + 45} fill={BRAND.muted} fontSize="10.5">safety gate · details below</text>
+              <text x={CHAN.x + 16} y={GATE_Y + 45} fill={BRAND.muted} fontSize="10.5">safety gate · run it on Pipeline</text>
             </g>
           )}
         </svg>
@@ -307,103 +289,63 @@ export default function DiagramPage() {
 
       {/* ---- under the hood: live config sections -------------------------- */}
       <div className="section-h" style={{ marginTop: 18 }}>Under the hood</div>
+      <p className="muted" style={{ fontSize: 12.5, marginTop: -4, maxWidth: 700 }}>
+        Every section reads the live config from the repo sources named on its right, and
+        ends with how to change it. Nothing here is hand-maintained copy.
+      </p>
       {!config && !error && <Spinner label="Loading pipeline config…" />}
       {failedSections.length > 0 && (
         <p className="muted" style={{ fontSize: 12 }}>
           Some sections could not be parsed from the repo sources: {failedSections.join(', ')}.
         </p>
       )}
-      {config && sections.map(({ id, title, sub, C, data }) => (
-        <SectionCard key={id} id={id} title={title} sub={sub} open={expanded.has(id)}
-          onToggle={toggleSection} innerRef={(el) => { sectionRefs.current[id] = el }}>
-          <C data={data} />
-        </SectionCard>
-      ))}
+      {config && (() => {
+        const active = sections.find((x) => x.id === tab) || sections[0]
+        const { title, sub, C, data, controls, sources, editNote } = active
+        return (
+          <>
+            <div className="uth-tabs" ref={(el) => { sectionRefs.current.tabs = el }}
+              role="tablist" aria-label="Configuration sections">
+              {sections.map((sc) => (
+                <button key={sc.id} role="tab" aria-selected={sc.id === active.id}
+                  className={'uth-tab' + (sc.id === active.id ? ' active' : '')}
+                  onClick={() => setTab(sc.id)}>
+                  {sc.tab}
+                </button>
+              ))}
+            </div>
+            <div className="panel uth-panel" role="tabpanel">
+              <div className="row between" style={{ alignItems: 'flex-start', gap: 12, marginBottom: 4 }}>
+                <div className="section-h" style={{ marginTop: 0, marginBottom: 0 }}>{title}</div>
+                <span className="muted" style={{ fontSize: 11.5, whiteSpace: 'nowrap' }}>{sub}</span>
+              </div>
+              {active.frameless
+                ? <C data={data} />
+                : (
+                  <SectionFrame controls={controls} sources={sources} editNote={editNote}>
+                    <C data={data} />
+                  </SectionFrame>
+                )}
+              {cfgScopes && (
+                <ConfigChat
+                  scope={active.id}
+                  meta={cfgScopes.scopes?.find((x) => x.id === active.id)}
+                  persistence={cfgScopes.persistence}
+                  available={cfgScopes.available}
+                  history={cfgScopes.history}
+                  onApplied={() => {
+                    // Config changed on disk — re-read both the rendered config and
+                    // the audit history so the section reflects the new state.
+                    api.orchestrationConfig().then(setConfig).catch(() => {})
+                    api.configScopes().then(setCfgScopes).catch(() => {})
+                  }}
+                />
+              )}
+            </div>
+          </>
+        )
+      })()}
 
-      {/* Suppression rules — one data-driven card per rule the checker enforces. */}
-      {unenroll && (
-        <>
-          <div className="section-h" style={{ marginTop: 18 }}
-            ref={(el) => { sectionRefs.current.unenroll = el }}>
-            Unenrollment & suppression rules
-          </div>
-          {(unenroll.rules || []).map((r) => (
-            <RuleCard key={r.id} rule={r} busy={runBusy} msg={runMsg} onRun={runCheck}
-              running={!!unenroll.running} progress={unenroll.progress} />
-          ))}
-        </>
-      )}
-    </div>
-  )
-}
-
-// Human line for a rule's last sweep — `last_run` may be null/{} (never ran) and
-// `summary` may be a raw string when the script output couldn't be parsed.
-function lastRunLine(lastRun) {
-  if (!lastRun || !lastRun.at) return 'No run yet — first sweep runs ~2 min after deploy.'
-  const when = new Date(lastRun.at).toLocaleString()
-  const s = lastRun.summary
-  if (typeof s === 'string') return `Last run ${when} — ${lastRun.ok === false ? 'error' : 'ok'} · ${s}`
-  if (lastRun.ok === false) {
-    // A fatal sweep has {error} (singular); a completed-with-failures one has {errors}.
-    const why = s?.errors?.length ? s.errors.join('; ') : (s?.error || 'sweep failed')
-    return `Last run ${when} — error · ${why}`
-  }
-  const stopped = (s?.bison?.stopped || 0) + (s?.heyreach?.stopped || 0)
-  const detail = s ? ` · ${num(s.checked || 0)} checked, ${num(stopped)} stopped` : ''
-  return `Last run ${when} — ok${detail}`
-}
-
-// One suppression rule. Fully data-driven from the payload — more rules will
-// exist over time and must render here without code changes.
-function RuleCard({ rule, busy, msg, onRun, running, progress }) {
-  const counts = rule.counts?.available ? rule.counts : null
-  const byChan = counts?.by_channel_action || {}
-  const chips = [
-    { label: 'Email', configured: !!rule.channels?.bison?.configured },
-    { label: 'LinkedIn', configured: !!rule.channels?.heyreach?.configured },
-  ]
-  return (
-    <div className="panel" style={{ marginBottom: 16 }}>
-      <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-        <span style={{ fontWeight: 700, fontSize: 15 }}>{rule.name}</span>
-        <span className="badge" style={rule.enabled
-          ? { color: 'var(--green)', borderColor: 'var(--green)', background: 'rgba(28, 130, 110, 0.08)' }
-          : { color: 'var(--muted)' }}>
-          {rule.enabled ? 'enabled' : 'disabled'}
-        </span>
-        {chips.map((c) => (
-          <span key={c.label} className="badge" style={c.configured ? undefined : { color: 'var(--muted)' }}>
-            {c.label} {c.configured ? '✓ configured' : '— not configured'}
-          </span>
-        ))}
-      </div>
-      <p className="muted" style={{ fontSize: 12.5, margin: '8px 0 14px' }}>{rule.description}</p>
-      {counts ? (
-        <div className="grid stat-grid" style={{ marginBottom: 14 }}>
-          <Stat label="Contacts flagged" value={num(counts.contacts)} />
-          <Stat label="Stopped — email" value={num(byChan.bison?.stopped || 0)} />
-          <Stat label="Stopped — LinkedIn" value={num(byChan.heyreach?.stopped || 0)} />
-          <Stat label="Failed" value={num(counts.failed || 0)} tone={(counts.failed || 0) > 0 ? 'bad' : 'good'} />
-        </div>
-      ) : (
-        <p className="muted" style={{ fontSize: 12, margin: '0 0 14px' }}>No sweep results recorded yet.</p>
-      )}
-      <p className="muted" style={{ fontSize: 12, margin: '0 0 14px' }}>{lastRunLine(rule.last_run)}</p>
-      <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-        <button className="sm" onClick={() => onRun(false)} disabled={busy}>
-          {busy ? <Spinner label="Running…" /> : 'Run now'}
-        </button>
-        <button className="ghost sm" onClick={() => onRun(true)} disabled={busy}>Dry run</button>
-      </div>
-      {msg && <p className="muted" style={{ fontSize: 12, margin: '10px 0 0' }}>{msg}</p>}
-      {!msg && running && (
-        // The background sweeper is mid-run (nobody clicked anything here) —
-        // say so instead of looking idle. Clicking Run now attaches to it.
-        <p className="muted" style={{ fontSize: 12, margin: '10px 0 0' }}>
-          A sweep is running now{progress ? ` — ${progress}` : '…'}
-        </p>
-      )}
     </div>
   )
 }

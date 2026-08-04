@@ -1,0 +1,25 @@
+{
+  "contact_id": "demo-100012",
+  "persona": "sdr-bdr",
+  "variant": "value-give",
+  "signal": "reported that half of new revenue now comes from outbound",
+  "tech_signals": "Salesforce · Outreach · 6sense",
+  "hiring_signals": "3 open roles · 0 sales",
+  "cta_play": "personalized-drafts",
+  "demo": true,
+  "email": {
+    "subject1": "10 personalized drafts for your team",
+    "body1": "Omar, saw Juniper Clinical reported that half of new revenue now comes from outbound.\n\nNew reps take a quarter to ramp, and the pipeline gap shows up before they are productive.\n\nWe run an AI SDR that writes the first touches so your reps start warm.\n\nHappy to run 10 personalized emails for your top accounts so you can judge the output before committing to anything.",
+    "subject2": "the ramp time and rep capacity problem",
+    "body2": "Omar, quick follow-up for Juniper Clinical.\n\nOn top of Salesforce we add 2-5x the touch volume without changing how the team works.\n\nOpen to a look at the run rate?",
+    "subject3": "how Memgraph did it",
+    "body3": "Omar, last bit of proof for Juniper Clinical.\n\nMemgraph mapped their intent signals to the accounts worth a first touch and ran our AI SDR to $2.7M in pipeline.\n\nWant the same mapping for Juniper Clinical?",
+    "subject4": "last one, Omar",
+    "body4": "Omar, I'll stop reaching out on this one. If ramp time and rep capacity is still open, the offer stands."
+  },
+  "linkedin": {
+    "li_connect": "Omar, saw Juniper Clinical reported that half of new revenue now comes from outbound. We work with teams on ramp time and rep capacity.",
+    "li_msg1": "Thanks for connecting, Omar. Happy to run 10 personalized emails for your top accounts so you can judge the output before committing to anything.",
+    "li_msg2": "Omar, one more nudge — Memgraph ran the same play to $2.7M in pipeline. Worth 20 minutes?"
+  }
+}

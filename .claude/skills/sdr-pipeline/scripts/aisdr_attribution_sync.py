@@ -42,6 +42,7 @@ sys.path.insert(0, str(SCRIPTS))  # hubspot_client, mongo_store
 
 from hubspot_client import HubSpotClient, HubSpotError, to_ms_epoch  # noqa: E402
 import mongo_store  # noqa: E402
+from batch_db import classify_motion  # noqa: E402
 
 BODY_CAP = 60000        # same body cap convention as hubspot_activity_sync.py
 WINDOW_SOFT_CAP = 9800  # re-window before HubSpot's 10k search-result ceiling
@@ -69,6 +70,10 @@ def hs_bool(v):
 def contact_props():
     linkedin = os.environ.get("HUBSPOT_LINKEDIN_PROPERTY", "hs_linkedin_url")
     return ["firstname", "lastname", "email", "jobtitle", linkedin, "company",
+            # Provenance: an inbound-sourced contact we also emailed produces an
+            # INFLUENCED deal, not an originated one. Without these the attribution
+            # silently claims inbound pipeline as outbound.
+            "hs_analytics_source", "hs_latest_source", "lifecyclestage",
             "ai_sdr_deal_created", "ai_sdr_meeting_booked", "ai_sdr_reply_generated"], linkedin
 
 
@@ -137,12 +142,17 @@ def fetch_emails(client, from_email, start_ms, *, sleep, limit=None):
 # Attribution (pure — unit-testable with plain dicts)
 # --------------------------------------------------------------------------
 
-def compute_attribution(emails, deals):
+def compute_attribution(emails, deals, motion_by_contact=None):
     """emails: [{timestamp, contact_ids: [...]}]; deals: [{_id, createdate,
-    contact_ids: [...]}]. Returns (first_email_by_contact, attributed_deal_ids,
-    flagged_contact_ids). A deal is attributed iff ANY associated contact's first
-    AI SDR email is at or before the deal's create date; a contact is flagged iff
-    at least one of its deals is attributed."""
+    contact_ids: [...]}]; motion_by_contact: {contact_id: 'inbound'|'outbound'}.
+
+    Returns (first_email_by_contact, attributed_deal_ids, flagged_contact_ids,
+    originated_deal_ids, influenced_deal_ids). A deal is attributed iff ANY
+    associated contact's first AI SDR email is at or before the deal's create date;
+    a contact is flagged iff at least one of its deals is attributed. Attributed
+    deals are further split into originated (all qualifying contacts came in cold)
+    and influenced (at least one arrived inbound) — see the set comments below."""
+    motion_by_contact = motion_by_contact or {}
     first = {}
     for e in emails:
         ts = e.get("timestamp")
@@ -152,18 +162,33 @@ def compute_attribution(emails, deals):
             if cid not in first or ts < first[cid]:
                 first[cid] = ts
     attributed, flagged = set(), set()
+    # Split the claim by how the qualifying contact entered the funnel:
+    #   originated — every qualifying contact came to us cold (outbound motion)
+    #   influenced — at least one qualifying contact was inbound-sourced, so the
+    #                deal cannot honestly be claimed as outbound-created
+    # `attributed` stays the union (unchanged behaviour for existing consumers and
+    # for the HubSpot write-back); the split is additive.
+    originated, influenced = set(), set()
     for d in deals:
         created = d.get("createdate")
         if created is None:
             continue
+        qualifying = []
         for cid in d.get("contact_ids") or []:
             ts = first.get(cid)
             if ts is not None and created >= ts:
                 attributed.add(d["_id"])
                 flagged.add(cid)
+                qualifying.append(cid)
+        if not qualifying:
+            continue
+        if any(motion_by_contact.get(cid) == "inbound" for cid in qualifying):
+            influenced.add(d["_id"])
+        else:
+            originated.add(d["_id"])
     # flag every contact on an attributed deal only if IT was emailed and predates
     # the deal — already guaranteed by the loop above (cid added per qualifying hit).
-    return first, attributed, flagged
+    return first, attributed, flagged, originated, influenced
 
 
 # --------------------------------------------------------------------------
@@ -271,6 +296,12 @@ def run_sync(client, db, *, full=False, dry_run=False, limit=None, sleep=0.25):
             "name": " ".join(x for x in (p.get("firstname"), p.get("lastname")) if x) or None,
             "email": p.get("email"), "jobtitle": p.get("jobtitle"),
             "linkedin_url": p.get(linkedin_prop), "company": p.get("company"),
+            "source": p.get("hs_analytics_source"),
+            "latest_source": p.get("hs_latest_source"),
+            "lifecycle_stage": p.get("lifecyclestage"),
+            "motion": classify_motion(p.get("hs_analytics_source"),
+                                      p.get("hs_latest_source"),
+                                      p.get("lifecyclestage")),
             "ai_sdr_meeting_booked": hs_bool(p.get("ai_sdr_meeting_booked")),
             "ai_sdr_reply_generated": hs_bool(p.get("ai_sdr_reply_generated")),
             "hs_ai_sdr_deal_created": hs_bool(p.get("ai_sdr_deal_created")),
@@ -312,18 +343,32 @@ def run_sync(client, db, *, full=False, dry_run=False, limit=None, sleep=0.25):
     emails_all = list(db.emails.find({}, {"timestamp": 1, "contact_ids": 1}))
     deals_all = list(db.deals.find({}, {"createdate": 1, "contact_ids": 1,
                                         "hs_ai_sdr_deal_created": 1}))
-    first, attributed, flagged = compute_attribution(emails_all, deals_all)
+    # Contact motion comes from the snapshot written in step 7, so a contact whose
+    # source HubSpot only revealed on a later run is reclassified on the next sweep.
+    motion_by_contact = {c["_id"]: c.get("motion")
+                         for c in db.contacts.find({}, {"motion": 1})}
+    first, attributed, flagged, originated, influenced = compute_attribution(
+        emails_all, deals_all, motion_by_contact)
     counts["deals_attributed"] = len(attributed)
+    counts["deals_originated"] = len(originated)
+    counts["deals_influenced"] = len(influenced)
     counts["contacts_flagged"] = len(flagged)
-    print(f"[aisdr] attribution: {len(attributed)} deals, {len(flagged)} contacts",
-          flush=True)
+    print(f"[aisdr] attribution: {len(attributed)} deals "
+          f"({len(originated)} outbound-originated, {len(influenced)} influenced), "
+          f"{len(flagged)} contacts", flush=True)
 
     contact_first = [UpdateOne({"_id": cid}, {"$set": {"first_aisdr_email_at": ts}})
                      for cid, ts in first.items()]
     if contact_first:
         db.contacts.bulk_write(contact_first, ordered=False)
     deal_flags = [UpdateOne({"_id": d["_id"]},
-                            {"$set": {"ai_sdr_deal_created": d["_id"] in attributed}})
+                            {"$set": {
+                                "ai_sdr_deal_created": d["_id"] in attributed,
+                                # 'originated' | 'influenced' | None — what we can
+                                # honestly claim for this deal.
+                                "ai_sdr_attribution": ("originated" if d["_id"] in originated
+                                                       else "influenced" if d["_id"] in influenced
+                                                       else None)}})
                   for d in deals_all]
     if deal_flags:
         db.deals.bulk_write(deal_flags, ordered=False)

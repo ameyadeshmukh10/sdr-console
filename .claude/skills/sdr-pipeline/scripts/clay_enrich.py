@@ -57,7 +57,24 @@ _IC_TITLE_RE = re.compile(
 
 
 def is_target_title(title):
-    """True only for GTM-leadership / RevOps-Sales-Ops titles (ICs excluded)."""
+    """True only for buyers, per the CONFIGURED buyer group.
+
+    Clay's keyword match is fuzzy, so this is the real gate. It asks the buyer-group
+    ruleset rather than the regexes below, which means editing a role in the console
+    changes both what is searched for AND what survives. The regexes stay as the
+    fallback for a DB that predates the ruleset."""
+    try:
+        import batch_db as _db
+        import buyer_group_config as _bg
+        conn = _db.connect()
+        try:
+            rules = _bg._rules(conn)
+            if rules:
+                return _bg.classify(conn, title)["is_icp"]
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        pass
     t = title or ""
     if _IC_TITLE_RE.search(t):
         return False
@@ -110,7 +127,27 @@ def company_domains(list_id, cap=None, exclude_ids=None):
     return selected, stats
 
 
+def _configured_terms():
+    """(include, exclude) from the configured buyer group, or (None, None).
+
+    The hardcoded JOB_TITLE_* lists below stay as the fallback for a DB that predates
+    the buyer_group_roles table — but when it exists it wins, so editing the buyer
+    group in the console changes what Clay is actually asked for."""
+    try:
+        import batch_db as _db
+        import buyer_group_config as _bg
+        conn = _db.connect()
+        try:
+            inc, exc = _bg.clay_search_terms(conn)
+        finally:
+            conn.close()
+        return (inc or None), (exc or None)
+    except Exception:  # noqa: BLE001
+        return None, None
+
+
 def _find_args(domain, titles, locations):
+    cfg_inc, cfg_exc = _configured_terms()
     return {
         "companyIdentifier": domain,
         "contactFilters": {
