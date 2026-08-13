@@ -59,6 +59,8 @@ python3 $P/sdr_batches.py pending-batches            # list pending batch ids
 python3 $P/sdr_batches.py get-batch 1                 # the 25 contacts in batch 1
 #     (a sub-agent writes data/outreach/generated/<contact_id>.json, then:)
 python3 $P/sdr_batches.py ingest 1                    # lint files + mark generated/failed
+#     (ingest also mirrors signal + email 1 to the HubSpot contact property
+#      sdr_signal_notes — best-effort; SDR_NOTES_HUBSPOT_WRITEBACK=0 disables)
 
 # (e) Enroll everything marked "generated" into Bison (per-persona campaigns)
 python3 $P/sdr_batches.py enroll --dry-run            # preview payloads, no writes
@@ -66,6 +68,8 @@ python3 $P/sdr_batches.py enroll                      # LIVE: create leads + att
 
 # Fix-ups
 python3 $P/sdr_batches.py reset-batch 7               # set batch 7 + its contacts back to pending
+python3 $P/sdr_batches.py notes-backfill --dry-run    # preview signal+email-1 notes -> HubSpot contacts
+python3 $P/sdr_batches.py notes-backfill              # LIVE one-time backfill of sdr_signal_notes
 ```
 
 **Contact status:** `pending → generated → enrolled` (or `failed` with the lint reason).
