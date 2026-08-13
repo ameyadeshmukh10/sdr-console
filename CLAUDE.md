@@ -185,6 +185,34 @@ hand-rolled retry; NO requests/tenacity/pyyaml — zero new pip deps).
   Run a first bulk backfill with `--limit` — every non-skipped scan is a credit.
   `--self-test` is offline (no key/network/DB).
 
+## Signal notes contact write-back (added 2026-08)
+
+After every batch ingest, the researched signal + **email touch 1 only** (subject1 +
+body1 — user-approved scope; never touches 2-4 or LinkedIn) is mirrored to the HubSpot
+**contact** property `sdr_signal_notes` (multi-line text, pre-existing in the portal).
+
+- **Helper:** `.claude/skills/sdr-pipeline/scripts/signal_notes.py` (stdlib-only) —
+  `format_note()` / `note_update()` / `sync_contacts()`. Best-effort in the tech/hiring
+  write-back style: lazy client singleton, whole-body try/except, stderr logging, never
+  raises. `SDR_NOTES_HUBSPOT_WRITEBACK=0` kills it (caller-evaluated via `enabled()`).
+- **Hook:** `sdr_batches.py cmd_ingest` — the single choke point all three generation
+  paths funnel through (inline UI job, Message-Batches poller, CLI). Contacts that
+  ingest as `generated` are collected and PATCHed in ONE `batch_update("contacts", ...)`
+  call (contact_id IS the HubSpot id — no lookup). Latest generation wins (re-ingest
+  re-syncs); an asset with no touch 1 yields no update, so notes are never blanked.
+- **stdout contract (load-bearing):** `cmd_ingest` prints exactly ONE stdout line and
+  `app.py` head-truncates it to 200 chars — the sync outcome is appended to that line
+  (`, notes: N synced`); all detail goes to stderr. Never add stdout lines before it.
+- **Backfill:** `sdr_batches.py notes-backfill [--dry-run] [--limit N]
+  [--status generated,enrolled,skipped]` — one-time catch-up over pipeline.db contacts
+  joined to `generated/<cid>.json`; idempotent, no ledger. `--dry-run` prints a sample
+  note to stderr.
+- **Gotchas:** one deleted/merged contact id 4xx-fails a whole 100-chunk — `sync_contacts`
+  retries that chunk one-by-one to isolate it (matters for the ~2k backfill, not fresh
+  25-contact ingests). `ensure_contact_property` may 403 without schema scopes — it's
+  wrapped separately and skipped (the property already exists). Notes truncate at 65,000
+  chars (HubSpot multi-line cap is 65,536).
+
 ## Unenrollment checker (added 2026-07)
 
 Suppression sweeps: contacts RevOps tagged with the HubSpot contact property

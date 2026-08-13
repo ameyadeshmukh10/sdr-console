@@ -6,7 +6,8 @@ Subcommands:
   pending-batches                                   space-separated pending batch ids
   get-batch <id>                                    JSON of a batch's contacts (for a sub-agent)
   ingest <id>                                       lint generated/<cid>.json for the batch → mark
-                                                    generated/failed, batch done
+                                                    generated/failed, batch done (+ best-effort
+                                                    signal+email-1 → HubSpot sdr_signal_notes)
   enroll [--dry-run]                                enroll all 'generated' contacts into Bison
   reset-batch <id>                                  set a batch + its contacts back to pending
 
@@ -88,6 +89,7 @@ def cmd_ingest(args):
         print(f"batch {args.batch_id}: no contacts")
         return 1
     gen = bad = 0
+    generated_assets = []  # (contact_id, asset) that ingested clean
     for r in rows:
         p = db.GEN_DIR / f"{r['contact_id']}.json"
         if not p.is_file():
@@ -108,8 +110,27 @@ def cmd_ingest(args):
         else:
             db.set_contact_status(conn, r["contact_id"], "generated")
             gen += 1
+            generated_assets.append((r["contact_id"], asset))
     db.set_batch_status(conn, args.batch_id, "done")
-    print(f"batch {args.batch_id} ingested: {gen} generated, {bad} failed")
+    # Best-effort: mirror signal + email 1 to the HubSpot contact property.
+    # Callers show only the single stdout line below, so the outcome is folded
+    # into it; details go to stderr. A HubSpot failure never fails the ingest.
+    notes = ""
+    try:
+        import signal_notes as SN
+        if generated_assets and SN.enabled():
+            updates = [u for cid, a in generated_assets
+                       if (u := SN.note_update(cid, a)) is not None]
+            res = SN.sync_contacts(updates)
+            if res.get("reason"):  # e.g. no_token — skipped, nothing attempted
+                notes = f", notes: skipped ({res['reason']})"
+            else:
+                notes = f", notes: {res.get('synced', 0)} synced"
+                if res.get("failed"):
+                    notes += f" {res['failed']} failed"
+    except Exception as e:  # noqa: BLE001
+        sys.stderr.write(f"[notes] writeback skipped: {e}\n")
+    print(f"batch {args.batch_id} ingested: {gen} generated, {bad} failed{notes}")
     return 0
 
 
@@ -433,6 +454,65 @@ def cmd_heyreach_backfill(args):
     return 0
 
 
+def cmd_notes_backfill(args):
+    """One-time catch-up: write signal + email 1 to the HubSpot contact
+    property sdr_signal_notes for contacts generated before the ingest hook
+    shipped. Idempotent (same inputs -> identical property values)."""
+    import signal_notes as SN
+    if not SN.enabled():
+        print(f"notes-backfill disabled — unset {SN.WRITEBACK_FLAG}=0 to run")
+        return 1
+    statuses = [s.strip() for s in (args.status or "").split(",") if s.strip()]
+    if not statuses:
+        print("notes-backfill: --status resolved to no statuses")
+        return 1
+    conn = db.connect()
+    qmarks = ",".join("?" * len(statuses))
+    rows = [dict(r) for r in conn.execute(
+        f"SELECT contact_id FROM contacts WHERE status IN ({qmarks})", statuses)]
+
+    updates, missing_file, empty, unreadable = [], 0, 0, 0
+    for r in rows:
+        cid = r["contact_id"]
+        p = db.GEN_DIR / f"{cid}.json"
+        if not p.is_file():
+            missing_file += 1
+            continue
+        try:
+            asset = json.loads(p.read_text())
+        except (ValueError, OSError):
+            unreadable += 1
+            continue
+        u = SN.note_update(cid, asset)
+        if u is None:
+            empty += 1
+            continue
+        updates.append(u)
+    if args.limit:
+        updates = updates[:args.limit]
+
+    print(f"notes-backfill [{','.join(statuses)}]: {len(rows)} contacts, "
+          f"{len(updates)} to sync, {missing_file} missing copy, "
+          f"{empty} empty touch 1, {unreadable} unreadable")
+    if args.dry_run:
+        if updates:
+            sample = updates[0]
+            sys.stderr.write(f"[notes] sample for contact {sample['id']}:\n"
+                             f"{sample['properties'][SN.NOTES_PROPERTY]}\n")
+        print(f"  [dry] would sync {len(updates)} contacts -> {SN.NOTES_PROPERTY}")
+        return 0
+    if not updates:
+        return 0
+
+    def _progress(done, total):
+        print(f"  synced {done}/{total}")
+
+    res = SN.sync_contacts(updates, progress=_progress)
+    print(f"notes-backfill: synced={res.get('synced', 0)} failed={res.get('failed', 0)} "
+          f"missing_file={missing_file} empty={empty}")
+    return 0 if res.get("ok") else 1
+
+
 def main():
     ap = argparse.ArgumentParser(description="SDR batch pipeline")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -443,6 +523,7 @@ def main():
     p = sub.add_parser("ingest"); p.add_argument("batch_id", type=int); p.set_defaults(func=cmd_ingest)
     p = sub.add_parser("enroll"); p.add_argument("--dry-run", action="store_true"); p.set_defaults(func=cmd_enroll)
     p = sub.add_parser("heyreach-backfill"); p.add_argument("--job"); p.add_argument("--dry-run", action="store_true"); p.set_defaults(func=cmd_heyreach_backfill)
+    p = sub.add_parser("notes-backfill"); p.add_argument("--dry-run", action="store_true"); p.add_argument("--limit", type=int, default=0); p.add_argument("--status", default="generated,enrolled,skipped"); p.set_defaults(func=cmd_notes_backfill)
     p = sub.add_parser("setup-variant-campaigns"); p.add_argument("--template", type=int); p.add_argument("--force", action="store_true"); p.set_defaults(func=cmd_setup_variant_campaigns)
     p = sub.add_parser("reset-batch"); p.add_argument("batch_id", type=int); p.set_defaults(func=cmd_reset_batch)
     args = ap.parse_args()

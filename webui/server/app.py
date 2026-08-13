@@ -1335,7 +1335,7 @@ def _run_generate_job(job_id, batch_id, variant="value-give"):
         job["summary"] = {"total": summary["total"], "linted": summary["linted"],
                           "failed": summary["failed"]}
         log(f"generation done: {summary['linted']} linted, {summary['failed']} failed; ingesting…")
-        ing = run_script([str(SDR_BATCHES), "ingest", str(batch_id)], timeout=120)
+        ing = run_script([str(SDR_BATCHES), "ingest", str(batch_id)], timeout=240)
         log((ing["stdout"] or ing["stderr"]).strip()[:200])
         INDEX.build()
         job["status"] = "cancelled" if job["cancel"].is_set() else "done"
@@ -1833,7 +1833,7 @@ def _poll_batch_job(job_id):
                     list(ex.map(_retry_one, retry_contacts))
             # record results via the canonical ingest path, mark batches done
             for bid in job["pipeline_batch_ids"]:
-                run_script([str(SDR_BATCHES), "ingest", str(bid)], timeout=180)
+                run_script([str(SDR_BATCHES), "ingest", str(bid)], timeout=300)
             INDEX.build()
             with db_connect() as conn:
                 ids = job["pipeline_batch_ids"]

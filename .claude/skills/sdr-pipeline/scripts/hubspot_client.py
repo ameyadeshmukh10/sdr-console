@@ -224,20 +224,19 @@ class HubSpotClient:
         return self._request("PATCH", f"/crm/v3/objects/companies/{company_id}",
                              body={"properties": dict(properties)})
 
-    def ensure_company_property(self, name, label, field_type="textarea",
-                                group_name="companyinformation"):
-        """Idempotently make sure a custom company property exists. Reads it
-        first; on 404 creates it (409/duplicate from a concurrent create counts
-        as success). Other errors — e.g. a token missing the schema scopes —
-        propagate as HubSpotError for the caller to handle."""
+    def _ensure_property(self, object_type, name, label, field_type, group_name):
+        """Idempotently make sure a custom property exists on object_type. Reads
+        it first; on 404 creates it (409/duplicate from a concurrent create
+        counts as success). Other errors — e.g. a token missing the schema
+        scopes — propagate as HubSpotError for the caller to handle."""
         try:
-            self._request("GET", f"/crm/v3/properties/companies/{name}")
+            self._request("GET", f"/crm/v3/properties/{object_type}/{name}")
             return False  # already there
         except HubSpotError as exc:
             if "HTTP 404" not in str(exc):
                 raise
         try:
-            self._request("POST", "/crm/v3/properties/companies", body={
+            self._request("POST", f"/crm/v3/properties/{object_type}", body={
                 "name": name, "label": label, "type": "string",
                 "fieldType": field_type, "groupName": group_name,
             })
@@ -246,6 +245,14 @@ class HubSpotClient:
             if "HTTP 409" not in msg and "already exists" not in msg.lower():
                 raise
         return True
+
+    def ensure_company_property(self, name, label, field_type="textarea",
+                                group_name="companyinformation"):
+        return self._ensure_property("companies", name, label, field_type, group_name)
+
+    def ensure_contact_property(self, name, label, field_type="textarea",
+                                group_name="contactinformation"):
+        return self._ensure_property("contacts", name, label, field_type, group_name)
 
     # ---- contacts -------------------------------------------------------
     def batch_read_contacts(self, ids, properties):
