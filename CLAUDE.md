@@ -187,9 +187,10 @@ hand-rolled retry; NO requests/tenacity/pyyaml — zero new pip deps).
 
 ## Signal notes contact write-back (added 2026-08)
 
-After every batch ingest, the researched signal + **email touch 1 only** (subject1 +
-body1 — user-approved scope; never touches 2-4 or LinkedIn) is mirrored to the HubSpot
-**contact** property `sdr_signal_notes` (multi-line text, pre-existing in the portal).
+After every batch ingest, the researched signal + **email touch 1's body only**
+(user-approved scope/format: `Signal:\n<signal>\n\n<body1>` — no subject, no body label,
+never touches 2-4 or LinkedIn) is mirrored to the HubSpot **contact** property
+`sdr_signal_notes` (multi-line text, pre-existing in the portal).
 
 - **Helper:** `.claude/skills/sdr-pipeline/scripts/signal_notes.py` (stdlib-only) —
   `format_note()` / `note_update()` / `sync_contacts()`. Best-effort in the tech/hiring

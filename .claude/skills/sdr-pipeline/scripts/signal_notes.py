@@ -36,20 +36,18 @@ def enabled():
 
 
 def format_note(asset):
-    """Plain-text note: signal + email touch 1 only (user-approved scope).
-    Returns None when touch 1 is missing/empty so callers skip the contact
+    """Plain-text note: the signal under a "Signal:" label, then the email 1
+    body verbatim — no subject line, no body label (user-approved format).
+    Returns None when the body is missing/empty so callers skip the contact
     instead of blanking an existing note."""
-    email = asset.get("email") or {}
-    subject = (email.get("subject1") or "").strip()
-    body = (email.get("body1") or "").strip()
-    if not (subject or body):
+    body = ((asset.get("email") or {}).get("body1") or "").strip()
+    if not body:
         return None
     signal = (asset.get("signal") or "").strip()
     parts = []
     if signal:
         parts.append(f"Signal:\n{signal}")
-    parts.append(f"Email 1 subject:\n{subject}")
-    parts.append(f"Email 1 body:\n{body}")
+    parts.append(body)
     return "\n\n".join(parts)[:MAX_LEN]
 
 
