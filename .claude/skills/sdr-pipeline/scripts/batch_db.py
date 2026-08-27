@@ -516,9 +516,14 @@ def unenrollment_counts(conn, rule=None):
         f"SELECT COUNT(DISTINCT contact_id) FROM unenrollment_log {where}", params).fetchone()[0]
     last = conn.execute(
         f"SELECT MAX(created_at) FROM unenrollment_log {where}", params).fetchone()[0]
+    glue = "AND" if where else "WHERE"
+    top_errors = [{"error": r["error"], "n": r["n"]} for r in conn.execute(
+        f"SELECT error, COUNT(*) n FROM unenrollment_log {where} {glue} "
+        "status='failed' AND coalesce(error,'') != '' "
+        "GROUP BY error ORDER BY n DESC LIMIT 5", params)]
     return {"by_status": by_status, "by_channel_action": by_channel_action,
             "contacts": contacts, "failed": by_status.get("failed", 0),
-            "last_action_at": last}
+            "top_errors": top_errors, "last_action_at": last}
 
 
 def suppressed_contact_ids(conn, rule=None):

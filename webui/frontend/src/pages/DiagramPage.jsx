@@ -359,6 +359,13 @@ function lastRunLine(lastRun) {
 function RuleCard({ rule, busy, msg, onRun, running, progress }) {
   const counts = rule.counts?.available ? rule.counts : null
   const byChan = counts?.by_channel_action || {}
+  // The true flagged population comes from the last sweep's HubSpot search —
+  // the ledger's distinct-contact count only says how many the sweeps have
+  // TOUCHED so far, which can lag far behind after a RevOps bulk flag.
+  const lastSummary = (rule.last_run?.summary && typeof rule.last_run.summary === 'object')
+    ? rule.last_run.summary : null
+  const flagged = lastSummary?.flagged
+  const topErr = counts?.top_errors?.[0]
   const chips = [
     { label: 'Email', configured: !!rule.channels?.bison?.configured },
     { label: 'LinkedIn', configured: !!rule.channels?.heyreach?.configured },
@@ -381,13 +388,19 @@ function RuleCard({ rule, busy, msg, onRun, running, progress }) {
       <p className="muted" style={{ fontSize: 12.5, margin: '8px 0 14px' }}>{rule.description}</p>
       {counts ? (
         <div className="grid stat-grid" style={{ marginBottom: 14 }}>
-          <Stat label="Contacts flagged" value={num(counts.contacts)} />
+          <Stat label="Flagged in HubSpot" value={flagged == null ? '—' : num(flagged)} />
+          <Stat label="Contacts swept" value={num(counts.contacts)} />
           <Stat label="Stopped — email" value={num(byChan.bison?.stopped || 0)} />
           <Stat label="Stopped — LinkedIn" value={num(byChan.heyreach?.stopped || 0)} />
           <Stat label="Failed" value={num(counts.failed || 0)} tone={(counts.failed || 0) > 0 ? 'bad' : 'good'} />
         </div>
       ) : (
         <p className="muted" style={{ fontSize: 12, margin: '0 0 14px' }}>No sweep results recorded yet.</p>
+      )}
+      {topErr && (
+        <p className="muted" style={{ fontSize: 12, margin: '0 0 14px' }}>
+          Top failure ({num(topErr.n)}×): {String(topErr.error).slice(0, 220)}
+        </p>
       )}
       <p className="muted" style={{ fontSize: 12, margin: '0 0 14px' }}>{lastRunLine(rule.last_run)}</p>
       <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>

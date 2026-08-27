@@ -59,7 +59,18 @@ class HeyReachClient:
                 detail = e.read().decode("utf-8", "replace")[:300]
                 if e.code == 429 or (500 <= e.code < 600):
                     if attempt < 4:
-                        time.sleep(2 ** attempt)
+                        delay = 2 ** attempt
+                        if e.code == 429:
+                            # HeyReach caps at 300 req/min — a 1-8s backoff just
+                            # burns the retries inside the same limit window.
+                            # Honor Retry-After when sent (capped), else >= 10s.
+                            retry_after = e.headers.get("Retry-After") if e.headers else None
+                            try:
+                                delay = max(delay, min(float(retry_after), 60.0)
+                                            if retry_after else 10.0)
+                            except (TypeError, ValueError):
+                                delay = max(delay, 10.0)
+                        time.sleep(delay)
                         last = HeyReachError(f"HTTP {e.code} for {url}: {detail}")
                         continue
                 raise HeyReachError(f"HTTP {e.code} for {url}: {detail}") from e
