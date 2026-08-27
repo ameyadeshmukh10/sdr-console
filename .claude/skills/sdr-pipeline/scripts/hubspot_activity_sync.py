@@ -267,19 +267,24 @@ def refresh_lead_map(conn, bison, email_to_cid, *, hs, force, max_age_hours, log
         except (ValueError, TypeError):
             pass
     log_fn("refreshing Bison lead map (paginating /api/leads)…")
-    cnt = 0
+    # Fetch every page FIRST, write once after. Interleaving upserts with the
+    # paginated GETs held pipeline.db's write lock open across hundreds of
+    # network round-trips (including Bison 429-backoff sleeps) — long enough to
+    # starve every concurrent writer (e.g. the unenrollment sweep) past
+    # busy_timeout into "database is locked". Never hold a write transaction
+    # across network calls.
+    fetched = []
     for lead in bison.get_paginated("/api/leads"):
         email = (lead.get("email") or "").strip().lower()
-        if not email:
-            continue
-        db.upsert_lead_map(conn, email, lead.get("id"), email_to_cid.get(email))
-        cnt += 1
-        if cnt % 500 == 0:
-            conn.commit()
+        if email:
+            fetched.append((email, lead.get("id")))
+    for email, lead_id in fetched:
+        db.upsert_lead_map(conn, email, lead_id, email_to_cid.get(email))
     conn.execute("INSERT INTO bison_lead_map (email, updated_at) VALUES (?,?) "
                  "ON CONFLICT(email) DO UPDATE SET updated_at=excluded.updated_at",
                  (FULL_SWEEP_MARKER, db.now()))
     conn.commit()
+    cnt = len(fetched)
     log_fn(f"lead map: {cnt} Bison leads mapped")
     resolve_unmatched_against_hubspot(conn, hs, log_fn=log_fn)
     return cnt

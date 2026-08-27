@@ -5,7 +5,13 @@ RevOps maintains the HubSpot CONTACT property `everworker_tag` (enumeration,
 opportunity, or must otherwise be left alone — the AI SDR stops touching them:
 
   1. sweep: search HubSpot for contacts where everworker_tag = "false" (only the
-     explicit "false" matches; unset/true contacts are untouched),
+     explicit "false" matches; unset/true contacts are untouched). Tens of
+     thousands of contacts can be flagged at once (a RevOps bulk workflow), so
+     the sweep queues NEVER-CHECKED contacts first, newest first — a contact
+     flagged yesterday is the one still mid-sequence — then rotates through
+     failed/re-check retries oldest-first, capped per sweep
+     (UNENROLL_FRESH_LIMIT / UNENROLL_RETRY_LIMIT) so a sweep always finishes
+     inside the server's 1h timeout instead of being killed mid-backlog,
   2. Email Bison: resolve the lead by email (bison_lead_map cache, then a live
      lookup), read its scheduled emails, and stop-future-emails in every campaign
      that still has steps queued ('scheduled' / 'sending paused'),
@@ -17,8 +23,16 @@ opportunity, or must otherwise be left alone — the AI SDR stops touching them:
      sweeps are idempotent: a 'done' row is skipped until it is older than
      UNENROLL_RECHECK_HOURS (default 24 — so a contact re-enrolled while still
      flagged is re-stopped within a day), 'skipped_unconfigured' rows re-arm
-     automatically once the channel's API key lands, a 'failed' row retries
-     every sweep, and --force re-checks everything now.
+     automatically once the channel's API key lands, 'failed' rows and stale
+     re-checks rotate through the capped retry queue oldest-first, and --force
+     (implied by --contact-id) re-checks everything now, uncapped.
+
+Resilience (each of these failure modes previously killed or starved sweeps):
+ledger writes retry SQLite lock contention and NEVER abort the sweep; per-channel
+API calls are paced (UNENROLL_PACE_S, default 0.25s — HeyReach caps at 300/min);
+and a channel that fails UNENROLL_CIRCUIT_THRESHOLD (default 8) times in a row is
+deferred for the rest of the sweep WITHOUT ledger rows, so those contacts are
+retried at full priority next sweep instead of minting thousands of failed rows.
 
 The ledger is one-way: flipping the tag back to "true" only re-permits FUTURE
 enrollment (the enroll gate's live check wins) — already-stopped sequences stay
@@ -39,6 +53,7 @@ scripts, streamed like the tech/hiring detectors.
 import argparse
 import json
 import os
+import sqlite3
 import sys
 import time
 from datetime import datetime, timezone
@@ -87,6 +102,20 @@ def linkedin_property():
 
 def _is_false(value):
     return str(value or "").strip().lower() == "false"
+
+
+def _env_int(name, default):
+    try:
+        return max(0, int(os.environ.get(name, "") or default))
+    except ValueError:
+        return default
+
+
+def _env_float(name, default):
+    try:
+        return max(0.0, float(os.environ.get(name, "") or default))
+    except ValueError:
+        return default
 
 
 # --------------------------------------------------------------------------
@@ -156,7 +185,8 @@ def fetch_flagged_contacts(client, *, limit=None):
                           "value": str(window_start)}],
                 properties=props,
                 after=after,
-                sorts=[{"propertyName": "hs_object_id", "direction": "ASCENDING"}])
+                sorts=[{"propertyName": "hs_object_id", "direction": "ASCENDING"}],
+                limit=200)  # search max page size — tens of thousands can be flagged
             out.extend(results)
             if limit and len(out) >= limit:
                 return out[:limit]
@@ -189,8 +219,14 @@ def _bison_lead_id(conn, bison, email, contact_id, *, dry_run=False):
     lead = bison.find_lead_by_email(email)
     if lead and lead.get("id") is not None:
         if not dry_run:  # dry runs write nothing, not even the benign cache
-            db.upsert_lead_map(conn, email, lead["id"], contact_id)
-            conn.commit()
+            try:  # cache write is best-effort — a locked DB must not fail the stop
+                db.upsert_lead_map(conn, email, lead["id"], contact_id)
+                conn.commit()
+            except sqlite3.Error:
+                try:
+                    conn.rollback()
+                except sqlite3.Error:
+                    pass
         return int(lead["id"])
     return None
 
@@ -264,29 +300,66 @@ def _recheck_hours():
         return 24.0
 
 
-def _handled(conn, dedup_key, configured):
-    """True if this (rule, channel, contact) needs no work this sweep. A 'done'
-    row is skipped — except action='skipped_unconfigured', which re-arms once the
-    channel's API key is configured, and any row older than UNENROLL_RECHECK_HOURS
-    (default 24), which is re-verified so a contact re-enrolled while still
-    flagged (tag flip-flop, manual enrollment outside the console) is re-stopped
-    within a day instead of never. 0 = re-verify every sweep."""
-    row = conn.execute(
-        "SELECT action, status, created_at FROM unenrollment_log WHERE dedup_key=?",
-        (dedup_key,)).fetchone()
-    if not row or row["status"] != "done":
-        return False
+def _ledger_snapshot(conn):
+    """The rule's whole ledger in ONE read: dedup_key -> {action, status, created_at}.
+    Even at tens of thousands of contacts this fits trivially in memory, and it
+    replaces two SELECTs per contact — during the sweep the DB is only touched to
+    write outcomes, keeping lock windows tiny."""
+    return {r["dedup_key"]: {"action": r["action"], "status": r["status"],
+                             "created_at": r["created_at"]}
+            for r in conn.execute(
+                "SELECT dedup_key, action, status, created_at "
+                "FROM unenrollment_log WHERE rule=?", (RULE,))}
+
+
+def _needs_work(row, configured):
+    """Does this ledger row (None = never attempted) need attention this sweep?
+    A 'done' row is skipped — except action='skipped_unconfigured', which re-arms
+    once the channel's API key is configured, and any row older than
+    UNENROLL_RECHECK_HOURS (default 24), which is re-verified so a contact
+    re-enrolled while still flagged (tag flip-flop, manual enrollment outside the
+    console) is re-stopped within a day instead of never. 0 = re-verify every
+    sweep."""
+    if row is None or row["status"] != "done":
+        return True
     if configured and row["action"] == "skipped_unconfigured":
-        return False
+        return True
     hours = _recheck_hours()
     try:
         age = datetime.now(timezone.utc) - datetime.strptime(
             row["created_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-        if age.total_seconds() >= hours * 3600:
-            return False
     except (TypeError, ValueError):
-        return False  # unparseable timestamp — re-verify rather than trust it
-    return True
+        return True  # unparseable timestamp — re-verify rather than trust it
+    return age.total_seconds() >= hours * 3600
+
+
+def _safe_record(conn, dedup_key, *args, **kwargs):
+    """record_unenrollment that never kills the sweep. Retries SQLite write-slot
+    contention with backoff (another writer — the hourly activity sync, the
+    webhook drain — can hold the lock past busy_timeout); anything else gives up
+    after one try. Returns True when the row landed. The channel stop has already
+    happened by the time this runs, and one 'database is locked' propagating from
+    here used to abort ENTIRE sweeps — the sweep must outlive ledger hiccups."""
+    last = None
+    for attempt in range(4):
+        try:
+            db.record_unenrollment(conn, dedup_key, *args, **kwargs)
+            return True
+        except sqlite3.OperationalError as e:
+            last = e
+            if "locked" not in str(e).lower() or attempt >= 3:
+                break
+            time.sleep(min(1.0 * (2 ** attempt), 8.0))
+        except sqlite3.Error as e:
+            last = e
+            break
+    try:
+        conn.rollback()  # clear any half-open transaction so later writes start clean
+    except sqlite3.Error:
+        pass
+    print(f"[unenroll] ledger write failed for {dedup_key}: "
+          f"{type(last).__name__}: {str(last)[:160]}", file=sys.stderr, flush=True)
+    return False
 
 
 def _note_body(bison_result, heyreach_result):
@@ -334,23 +407,70 @@ def run_check(*, dry_run=False, limit=None, force=False, contact_id=None):
     conn = db.connect()
     db.init_schema(conn)
 
-    counts = {ch: {"stopped": 0, "not_active": 0, "not_found": 0, "no_identifier": 0,
-                   "failed": 0, "skipped_unconfigured": 0} for ch in CHANNELS}
-    checked = skipped_ledger = notes_logged = 0
-    errors = []
+    configured = {"bison": bison is not None, "heyreach": heyreach is not None}
+    ledger = {} if force else _ledger_snapshot(conn)
 
+    # Partition into two queues. `fresh` = at least one configured channel has NO
+    # ledger row: the contact was never even attempted — processed FIRST, newest
+    # id first, because a contact RevOps just flagged is exactly the one still
+    # mid-sequence (the bug this ordering fixes: with 20k+ flagged and a wall of
+    # retrying failures ahead of them in ascending-id order, newly flagged
+    # contacts were never reached before the sweep died). `retries` = failed rows
+    # and stale-done re-checks — rotated oldest ledger entry first (every write
+    # refreshes created_at, so the backlog cycles) and capped per sweep so the
+    # sweep finishes inside the server's 1h timeout.
+    fresh, retries, skipped_ledger = [], [], 0
     for c in contacts:
+        cid = str(c.get("id"))
+        rows = {ch: ledger.get(f"{RULE}:{ch}:{cid}") for ch in CHANNELS}
+        todo = [ch for ch in CHANNELS if _needs_work(rows[ch], configured[ch])]
+        if not todo:
+            skipped_ledger += 1
+            continue
+        if any(rows[ch] is None for ch in todo):
+            fresh.append((c, todo))
+        else:
+            retries.append((c, todo, min((rows[ch]["created_at"] or "") for ch in todo)))
+    fresh.sort(key=lambda it: int(it[0]["id"]) if str(it[0].get("id", "")).isdigit() else 0,
+               reverse=True)
+    retries.sort(key=lambda it: it[2])
+
+    fresh_cap = 0 if force else _env_int("UNENROLL_FRESH_LIMIT", 1000)
+    retry_cap = 0 if force else _env_int("UNENROLL_RETRY_LIMIT", 500)
+    fresh_work = fresh[:fresh_cap] if fresh_cap else fresh
+    retry_work = retries[:retry_cap] if retry_cap else retries
+    deferred_fresh = len(fresh) - len(fresh_work)
+    deferred_retry = len(retries) - len(retry_work)
+    work = fresh_work + [(c, todo) for c, todo, _ in retry_work]
+    print(f"[unenroll] queue: {len(fresh)} never-checked (doing {len(fresh_work)}, "
+          f"newest first), {len(retries)} retries/re-checks (doing {len(retry_work)}, "
+          f"oldest first), {skipped_ledger} already handled",
+          file=sys.stderr, flush=True)
+
+    counts = {ch: {"stopped": 0, "not_active": 0, "not_found": 0, "no_identifier": 0,
+                   "failed": 0, "skipped_unconfigured": 0, "deferred": 0}
+              for ch in CHANNELS}
+    checked = notes_logged = ledger_errors = 0
+    errors = []
+    # Circuit breaker: after N consecutive failures on a channel (a HeyReach 429
+    # storm, Bison down) stop calling it for the rest of the sweep. Deferred
+    # contacts get NO ledger row, so the next sweep — with a fresh circuit —
+    # picks them right back up; without this, one outage minted thousands of
+    # 'failed' rows that every later sweep burned its whole budget retrying.
+    threshold = _env_int("UNENROLL_CIRCUIT_THRESHOLD", 8)
+    # Pacing: minimum gap between calls per channel (HeyReach caps at 300/min —
+    # unpaced per-contact lookups turned big sweeps into guaranteed 429 storms).
+    pace = _env_float("UNENROLL_PACE_S", 0.25)
+    consec = {ch: 0 for ch in CHANNELS}
+    tripped = set()
+    last_call = {ch: 0.0 for ch in CHANNELS}
+
+    for c, todo in work:
         cid = str(c.get("id"))
         props = c.get("properties") or {}
         email = (props.get("email") or "").strip().lower()
         linkedin_url = (props.get(li) or "").strip()
         keys = {ch: f"{RULE}:{ch}:{cid}" for ch in CHANNELS}
-        configured = {"bison": bison is not None, "heyreach": heyreach is not None}
-        todo = [ch for ch in CHANNELS
-                if force or not _handled(conn, keys[ch], configured[ch])]
-        if not todo:
-            skipped_ledger += 1
-            continue
         checked += 1
 
         results = {}
@@ -358,11 +478,20 @@ def run_check(*, dry_run=False, limit=None, force=False, contact_id=None):
             if not configured[ch]:
                 results[ch] = ("skipped_unconfigured", None)
                 counts[ch]["skipped_unconfigured"] += 1
-                if not dry_run:
-                    db.record_unenrollment(conn, keys[ch], RULE, ch, cid,
-                                           "skipped_unconfigured", "done",
-                                           email=email, linkedin_url=linkedin_url)
+                if not dry_run and not _safe_record(
+                        conn, keys[ch], RULE, ch, cid, "skipped_unconfigured", "done",
+                        email=email, linkedin_url=linkedin_url):
+                    ledger_errors += 1
                 continue
+            if ch in tripped:
+                results[ch] = ("deferred", None)
+                counts[ch]["deferred"] += 1
+                continue
+            if pace > 0:
+                wait = last_call[ch] + pace - time.time()
+                if wait > 0:
+                    time.sleep(wait)
+            last_call[ch] = time.time()
             try:
                 if ch == "bison":
                     action, campaign_ids = stop_bison(conn, bison, cid, email,
@@ -370,21 +499,30 @@ def run_check(*, dry_run=False, limit=None, force=False, contact_id=None):
                 else:
                     action, campaign_ids = stop_heyreach(heyreach, linkedin_url, email,
                                                          dry_run=dry_run)
+                consec[ch] = 0
                 results[ch] = (action, campaign_ids)
                 counts[ch][action] += 1
-                if not dry_run:
-                    db.record_unenrollment(conn, keys[ch], RULE, ch, cid, action, "done",
-                                           email=email, linkedin_url=linkedin_url,
-                                           campaign_ids=campaign_ids)
+                if not dry_run and not _safe_record(
+                        conn, keys[ch], RULE, ch, cid, action, "done",
+                        email=email, linkedin_url=linkedin_url,
+                        campaign_ids=campaign_ids):
+                    ledger_errors += 1
             except Exception as e:  # noqa: BLE001 - one contact never aborts the sweep
                 results[ch] = ("failed", None)
                 counts[ch]["failed"] += 1
+                consec[ch] += 1
                 err = f"{type(e).__name__}: {str(e)[:300]}"
                 errors.append(f"{ch} {email or cid}: {err}")
-                if not dry_run:
-                    db.record_unenrollment(conn, keys[ch], RULE, ch, cid, "failed",
-                                           "failed", email=email,
-                                           linkedin_url=linkedin_url, error=err)
+                if not dry_run and not _safe_record(
+                        conn, keys[ch], RULE, ch, cid, "failed", "failed",
+                        email=email, linkedin_url=linkedin_url, error=err):
+                    ledger_errors += 1
+                if threshold and consec[ch] >= threshold and ch not in tripped:
+                    tripped.add(ch)
+                    msg = (f"{ch}: {threshold} consecutive failures — circuit open, "
+                           f"deferring remaining {ch} checks to the next sweep")
+                    errors.append(msg)
+                    print(f"[unenroll] {msg}", file=sys.stderr, flush=True)
 
         stops = {ch: r for ch, r in results.items() if r[0] == "stopped"}
         if stops and not dry_run and note_enabled:
@@ -401,11 +539,15 @@ def run_check(*, dry_run=False, limit=None, force=False, contact_id=None):
 
     conn.close()
     failed_total = sum(counts[ch]["failed"] for ch in CHANNELS)
-    return {"ok": failed_total == 0, "rule": RULE, "dry_run": dry_run,
-            "flagged": len(contacts), "checked": checked,
+    return {"ok": failed_total == 0 and ledger_errors == 0, "rule": RULE,
+            "dry_run": dry_run, "flagged": len(contacts), "checked": checked,
             "skipped_ledger": skipped_ledger,
+            "queue": {"fresh": len(fresh), "retries": len(retries),
+                      "deferred_fresh": deferred_fresh,
+                      "deferred_retry": deferred_retry},
             "bison": counts["bison"], "heyreach": counts["heyreach"],
-            "notes_logged": notes_logged, "errors": errors[:20],
+            "notes_logged": notes_logged, "ledger_errors": ledger_errors,
+            "errors": errors[:20],
             "duration_s": round(time.time() - started, 1), "at": now_iso()}
 
 
@@ -417,13 +559,15 @@ def main(argv=None):
     ap.add_argument("--limit", type=int, default=None, help="max flagged contacts to process")
     ap.add_argument("--force", action="store_true",
                     help="re-process contacts already handled in the ledger")
-    ap.add_argument("--contact-id", default=None, help="check a single HubSpot contact id")
+    ap.add_argument("--contact-id", default=None,
+                    help="check a single HubSpot contact id now (implies --force)")
     args = ap.parse_args(argv)
 
     _load_dotenv()
     try:
         summary = run_check(dry_run=args.dry_run, limit=args.limit,
-                            force=args.force, contact_id=args.contact_id)
+                            force=args.force or bool(args.contact_id),
+                            contact_id=args.contact_id)
     except Exception as e:  # noqa: BLE001 - the summary line must always print
         summary = {"ok": False, "rule": RULE, "dry_run": args.dry_run,
                    "error": f"{type(e).__name__}: {str(e)[:500]}", "at": now_iso()}

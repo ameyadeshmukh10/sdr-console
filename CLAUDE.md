@@ -221,7 +221,8 @@ Suppression sweeps: contacts RevOps tagged with the HubSpot contact property
 by the AI SDR again — they booked a meeting, became an opportunity, etc.
 
 - **Engine:** `.claude/skills/sdr-pipeline/scripts/unenrollment_check.py` (module + CLI:
-  `--json --dry-run --limit --force --contact-id`). Per sweep: search contacts where
+  `--json --dry-run --limit --force --contact-id`; `--contact-id` implies `--force`).
+  Per sweep: search contacts where
   `everworker_tag EQ "false"` (10k re-window via `hs_object_id GT`), then per contact —
   **Bison**: email → lead (`bison_lead_map`, live fallback) → `lead_scheduled_emails` →
   `stop_future_emails` in each campaign with steps still queued (`scheduled`/`sending
@@ -244,11 +245,30 @@ by the AI SDR again — they booked a meeting, became an opportunity, etc.
   future suppression rules append entries), `POST /api/unenroll/run` (`{dry_run?}`,
   409 if running). UI: Orchestration view — a dashed "safety gate" bar in the diagram +
   an "Unenrollment & suppression rules" card section (Run now / Dry run buttons).
+- **Scale + queueing (2026-08 fix, load-bearing):** a RevOps bulk workflow flagged
+  ~23k contacts, and the original ascending-id sweep starved never-checked contacts
+  behind thousands of retrying failures — newly flagged, still-mid-sequence contacts
+  were literally never reached before the 1h `run_script_streaming` timeout killed
+  the run. The sweep now queues NEVER-CHECKED contacts first, newest id first
+  (capped `UNENROLL_FRESH_LIMIT`, default 1000), then rotates failed/re-check
+  retries oldest-ledger-entry first (capped `UNENROLL_RETRY_LIMIT`, default 500).
+  Channel API calls are paced (`UNENROLL_PACE_S`, default 0.25s — HeyReach caps at
+  300 req/min) and a channel failing `UNENROLL_CIRCUIT_THRESHOLD` (default 8) times
+  consecutively is deferred for the rest of the sweep WITHOUT ledger rows (so those
+  contacts keep full priority next sweep instead of minting failed rows). Ledger
+  writes retry lock contention and never abort the sweep (`ledger_errors` in the
+  summary). `unenrollment_counts` exposes `top_errors`; the UI card shows the top
+  failure + "Flagged in HubSpot" (last sweep's search total) vs "Contacts swept"
+  (ledger coverage) — they legitimately differ while a backlog drains.
 - **Gotchas:** HeyReach lead/campaign endpoints all live under the `/campaign/`
   controller (`/campaign/GetCampaignsForLead`, NOT `/lead/…` — the first live run
   404'd on that; paths are cross-checked against the bcharleson/heyreach-cli client).
   Keep `import unenrollment_check` cheap (its module imports are stdlib + batch_db
-  only; clients import lazily inside functions — boot rule).
+  only; clients import lazily inside functions — boot rule). NEVER hold a pipeline.db
+  write transaction across network calls in ANY writer (the activity sync's lead-map
+  refresh once did — its interleaved Bison pagination held the write lock past
+  busy_timeout and crashed concurrent sweeps with "database is locked"; it now
+  buffers the fetch and writes in one short transaction).
 
 ## Background jobs (daemon threads started in `app.py main()`)
 
