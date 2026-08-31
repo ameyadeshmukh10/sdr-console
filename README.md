@@ -8,7 +8,7 @@ touch back to HubSpot, enforces do-not-contact suppression, and attributes creat
 and pipeline dollars back to the AI SDR — end to end, with humans gating only the
 outward writes.
 
-Repo: <https://github.com/ameyadeshmukh10/sdr-console> (private)
+Repo: <https://github.com/ameyadeshmukh10/sdr-console> 
 
 ## What it does, end to end
 
@@ -172,5 +172,4 @@ Batch API) → dry-run → enroll. See [`USAGE.md`](USAGE.md) for the underlying
 
 `.env` (live API keys) and the Clay OAuth token file are the only things gitignored —
 copy `.env.example` and fill it in (including `AUTH_SECRET_KEY`, which signs console
-login sessions). Everything else, including the `data/` snapshot, is in the repo. The
-repo is private; treat the prospect data in `data/` accordingly.
+login sessions). Everything else, including the `data/` snapshot, is in the repo.
