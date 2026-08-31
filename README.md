@@ -1,115 +1,170 @@
 # SDR Console
 
-An autonomous outbound sales pipeline and web console for an **SDR AI Worker**, deployed
-as a single service on **Railway**. It sources and researches ICP contacts from HubSpot,
-generates persona-targeted email + LinkedIn outreach with Claude agents, enrolls into
-Email Bison (email) and HeyReach (LinkedIn), triages and answers replies, logs every
-touch back to HubSpot, enforces do-not-contact suppression, and attributes created deals
-and pipeline dollars back to the AI SDR — end to end, with humans gating only the
-outward writes.
+**A production AI GTM system I designed, built, and operate end to end** — an autonomous
+outbound pipeline plus a full web console for an **SDR AI Worker**, live on Railway.
 
-Repo: <https://github.com/ameyadeshmukh10/sdr-console> (private)
+It sources and researches ICP contacts, generates persona-targeted email + LinkedIn
+outreach with Claude agents, enrolls across two sequencing channels, triages and answers
+replies, mirrors every touch into HubSpot, enforces do-not-contact suppression, and
+closes the loop with **deal attribution** — which deals the AI SDR created and what
+they're worth. Humans gate only the outward writes; everything else runs itself.
+
+This repo is my GTM engineering portfolio in working-code form: outbound systems design,
+signal engineering, multi-agent AI orchestration, token-cost economics, RevOps
+compliance, and closed-loop revenue attribution — all in one deployed system, built solo.
+
+Repo: <https://github.com/ameyadeshmukh10/sdr-console> (private) · Built by
+[Ameya Deshmukh](https://github.com/ameyadeshmukh10)
+
+## The system by the numbers
+
+| | |
+|---|---|
+| **2,000+** | researched, linted, persona-targeted outreach sequences generated (bundled snapshot) |
+| **~19,000** | AI SDR email engagements logged to HubSpot; **5,000+** contacts emailed |
+| **$282k** | pipeline attributed to the AI SDR by the nightly attribution engine (9 deals, July 2026 seed — strict computed attribution, not self-reported flags) |
+| **~23,000** | contact do-not-contact backlog drained by the suppression sweeper without missing a mid-sequence contact |
+| **7,500** | vendor fingerprints in the technographic detection catalogue (deterministic — no LLM, no third-party API) |
+| **50%** | generation cost cut via Anthropic's Message Batches API, on top of a 90-day signal cache that eliminates repeat research |
+| **8** | console views · **~70** API routes · **4** autonomous background loops · **1** deployed process |
 
 ## What it does, end to end
 
-1. **Source** — pull an ICP contact list from HubSpot (searchable by list name), or grow
-   the list from a *company* list: a Clay MCP enrichment flow sources GTM-leadership
-   contacts per company, dedups against HubSpot, and creates them straight into the
-   pipeline — no manual list building.
-2. **Research** — every account gets a researched recent signal (web search), a
-   **technographic scan** (which CRM / ad pixels / martech / salestech the company runs,
-   via deterministic DNS + website fingerprinting against a 7.5k-vendor catalogue), and a
-   **hiring scan** (open roles, with a sales/GTM-role classifier). All three are cached
-   per company domain for 90 days so a company is researched once, not once per contact.
-3. **Generate** — each contact is routed by job title to one of **4 persona agents**
-   (sales leadership, RevOps, partnerships, SDR/BDR leadership) that write a value-first
-   4-touch email sequence + LinkedIn copy. Signals steer the copy: a hiring signal opens
-   email 2; detected sequencing tools steer a no-disruption angle; intent/ABM tools steer
-   a signal-activation story in email 3. Every sequence passes a deterministic linter
-   (word counts, meeting CTA, metric present, breakup touch, no pricing…) before it
-   counts as generated.
-4. **Enroll** — generated contacts are enrolled into per-persona Email Bison campaigns
-   and a HeyReach LinkedIn campaign, always through a dry-run preview → confirm gate.
-5. **Manage replies** — a unified inbox classifies inbound email + LinkedIn replies with
-   Claude, drafts channel-aware follow-ups for interested leads (approve to send), and
-   can build a **personalized signal-play web page** for a lead's company and embed the
-   live link in the reply.
-6. **Log + attribute** — background loops mirror all activity into HubSpot (emails,
-   LinkedIn touches, signal notes, technographic + hiring company properties) and a
-   nightly job computes **deal attribution**: which HubSpot deals the AI SDR created and
-   what they're worth, snapshotted into MongoDB and surfaced as Analytics tiles.
-7. **Suppress** — contacts RevOps flags as do-not-contact (booked a meeting, became an
-   opportunity) are dropped at pull time, blocked at enroll time, and actively
-   **unenrolled from in-flight Bison/HeyReach sequences** by a recurring sweep with a
-   durable idempotent ledger.
+1. **Source** — pull an ICP contact list from HubSpot (searchable by name), or grow the
+   list from a *company* list: a Clay-powered buying-group enrichment sources
+   GTM-leadership contacts per company, dedups against HubSpot, applies the ICP/persona
+   filter, and creates them straight into the pipeline. No manual list building.
+2. **Research** — every account gets three signal layers, each cached per domain for 90
+   days: a researched recent news signal (web search), a **technographic scan** (which
+   CRM / ad pixels / martech / salestech the company runs, via DNS + website
+   fingerprinting), and a **hiring scan** (open roles with a sales/GTM-role classifier).
+3. **Generate** — each contact routes by job title to one of **4 persona agents** (sales
+   leadership, RevOps, partnerships, SDR/BDR leadership) that write a value-first
+   4-touch email sequence + LinkedIn copy. Signals steer the copy mechanically: an open
+   sales-hiring signal opens email 2; a detected sequencing tool (Outreach/Salesloft/
+   Apollo) triggers a no-disruption angle; intent/ABM tooling triggers a
+   signal-activation story in email 3. Every sequence must pass a **deterministic
+   linter** — word counts, paragraph shape, value-anchored meeting CTA, a metric,
+   step-4 breakup, no pricing — before it counts as generated.
+4. **Enroll** — generated contacts enroll into per-persona Email Bison campaigns and a
+   HeyReach LinkedIn campaign, always through a dry-run preview → confirm gate.
+5. **Manage replies** — a unified two-pane inbox classifies inbound email + LinkedIn
+   replies with Claude, drafts channel-aware follow-ups for interested leads (approve to
+   send in-thread), and can build a **personalized signal-play web page** for the lead's
+   company — researched, rendered, and published live to the CMS — with the link
+   embedded in the reply.
+6. **Log + attribute** — background loops mirror all activity into HubSpot (email and
+   LinkedIn engagements, per-contact signal notes, technographic + hiring company
+   properties), and a nightly engine computes deal attribution with an explicit,
+   auditable rule: a deal counts only if it's associated with an AI-SDR-emailed contact
+   **and** was created after that contact's first AI SDR email.
+7. **Suppress** — contacts RevOps flags as do-not-contact are dropped at pull time,
+   blocked at enroll time, and actively **unenrolled from in-flight sequences on both
+   channels** by a recurring sweep with a durable, idempotent ledger.
+
+## GTM engineering highlights
+
+The parts I'm proudest of — each a real problem in running AI outbound at volume, solved
+in code:
+
+- **Signal engineering, three layers deep.** News, technographics, and hiring are
+  separate engines with shared semantics (formatted display line, raw detail JSON,
+  checked-at timestamp, error state), a shared 90-day cache, and *rules for how copy
+  consumes them* — reference one relevant tool max, never recite the stack, never
+  mention chat/scheduling tools, never claim job postings are new. Signal data is only
+  as good as the discipline in using it.
+- **Deterministic where it should be deterministic.** Tech detection is DNS + static-HTML
+  fingerprinting against a Wappalyzer-derived catalogue — no LLM in the loop, offline
+  self-tests, and a strict rule that a network-dead scan is never stored as "no signals."
+  The LLM is reserved for what actually needs it: research and writing.
+- **Token-cost economics as a first-class design constraint.** Web-search tokens dominate
+  generation cost, so: same-company contacts are batched together, cache hits become
+  write-only calls (zero searches), bulk generation rides the Message Batches API at
+  half price with 1-hour prompt caching, and the job log marks every contact `[cached]`
+  vs `[searched]` so cost is observable, not vibes.
+- **Attribution that survives scrutiny.** The nightly sync snapshots emails, contacts,
+  and deals into MongoDB and computes attribution from data, not opinions — it found
+  that HubSpot's raw flag count overstated AI-sourced deals by 5x (47 flagged vs 9
+  computed) because of pre-existing manual flags. The tiles show the defensible number.
+- **Compliance engineered for the worst case.** When RevOps bulk-flagged ~23k contacts,
+  the naive sweep starved the contacts who mattered most (newly flagged, mid-sequence).
+  I rebuilt it: never-checked contacts first, newest first; paced API calls under
+  channel rate limits; per-channel circuit breakers; ledger writes that survive lock
+  contention. Suppression is one-way — flipping the flag back re-permits future sends,
+  but stopped sequences stay stopped.
+- **Experimentation built into the pipe.** Three instruction-set variants (value-give /
+  earn / show) with an exact percentage split — largest-remainder allocation plus
+  interleaving so variants don't cluster — flowing through generation, enrollment, and
+  analytics so A/B results stay attributable.
+- **An analysis loop, not just a send loop.** Interested replies feed a trends engine:
+  conversion by campaign, seniority, function, CTA, offer type, and reply cohorts, with
+  verbatim evidence books per cohort. The system tells me what's working.
+- **Reply-to-microsite in one click.** The Signal Playbook agent researches the lead's
+  company, builds a personalized play deck as a single-file HTML page, publishes it live
+  on the company website via the HubSpot CMS API (stable URL across rebuilds), and
+  drafts the reply around the link — a bespoke asset per interested lead, on demand.
+- **Agent-driven sourcing over MCP.** The Clay enrichment is orchestrated by a
+  cheap model driving Clay's MCP server through the Anthropic API's MCP connector, with
+  auth via full OAuth 2.1 — discovery, dynamic client registration, PKCE, token
+  refresh — implemented from scratch in stdlib Python.
 
 ## The console
 
-React SPA (React 18 + Vite + Recharts) served by the same process as the API. Every view
-sits behind a login gate (signed bearer-token sessions; every `/api/*` route is
-auth-gated). Eight views:
+React 18 + Vite + Recharts SPA, served by the same process as the API, behind a login
+gate (signed bearer-token sessions; every `/api/*` route auth-gated). Eight views:
 
 | View | What it does |
 |------|--------------|
-| **Use** | Search HubSpot lists by name (contact or company), ingest a contact list into the batch pipeline, or run the Clay buying-group enrichment on a company list (end-to-end or review-then-commit). |
-| **Pipeline** | Live batch progress, one-click copy generation (real-time, or via Anthropic's Message Batches API at **50% cost**), A/B instruction-set variants with an exact percentage split, and enrollment with a dry-run gate + confirm modal. |
-| **Orchestration** | Live diagram of HubSpot → persona agents → campaigns with contact counts, plus the suppression safety gate: unenrollment status, run-now / dry-run controls. |
-| **Analytics** | Campaign leads / contacted / reply / interested rates, and the AI SDR **deal-attribution tiles** (deals created, total pipeline $) with an on-demand sync. |
-| **Trends** | What's working across interested replies — seniority, function, winning CTA, offer type, conversion by campaign, reply cohorts. |
-| **Replies** | Two-pane triage inbox across email + LinkedIn: scan-classify with Claude, tag interested in Bison (gated), draft → approve → send in-thread, dismiss/reclassify with persistent state, and the Signal Playbook reply agent. |
-| **Signals** | The per-company research cache: signal, technographic line, hiring line, age; per-row and bulk re-detect for tech + hiring. |
-| **Outreach** | Search/filter/group all generated sequences (2,000+ in the bundled snapshot) by persona, CTA play, signal, status; click through to the full 4-touch copy. |
+| **Use** | Search HubSpot lists by name (contact or company), ingest into the pipeline, or run Clay buying-group enrichment (end-to-end or review-then-commit). |
+| **Pipeline** | Live batch progress; one-click generation (real-time or 50%-off Batch API); variant % split; enrollment with dry-run gate + confirm modal. |
+| **Orchestration** | Live diagram of HubSpot → persona agents → campaigns with contact counts, plus the suppression safety gate with run-now / dry-run controls. |
+| **Analytics** | Campaign reply / interested rates and the deal-attribution tiles (deals created, total pipeline $) with on-demand sync. |
+| **Trends** | What's working across interested replies — seniority, function, winning CTA, offer type, conversion by campaign, cohorts. |
+| **Replies** | Cross-channel triage inbox: Claude classification, gated Bison tagging, draft → approve → send in-thread, dismiss/reclassify with persistent state, Signal Playbook agent. |
+| **Signals** | The per-company research cache: signal, tech line, hiring line, age; per-row and bulk re-detect. |
+| **Outreach** | Search/filter/group all generated sequences by persona, CTA play, signal, status; click through to the full copy. |
 
 ## Autonomous operations
 
-The deployed process runs four background loops — no cron, no worker fleet:
+Four background loops inside the one deployed process — no cron service, no worker fleet:
 
-- **Activity autosync** (hourly) — logs new outbound/inbound email + LinkedIn activity to
-  HubSpot contacts, with a dedup ledger, an audit CLI for duplicate forensics, and a
-  reconcile mode that adopts pre-existing engagements instead of re-creating them.
-- **Deal attribution** (nightly, midnight ET, DST-safe) — pulls every AI SDR email
-  engagement from HubSpot, joins email → contact → deals, snapshots into MongoDB, and
-  flags attributed deals/contacts in HubSpot. Incremental via a watermark (idempotent
-  upserts); deal associations are re-swept every run so late-created deals still get
-  attributed. A full seed over ~19k engagements takes ~15 minutes; nightly increments
-  take seconds.
+- **Activity autosync** (hourly) — logs outbound/inbound email + LinkedIn activity to
+  HubSpot with a dedup ledger, a duplicate-forensics audit CLI, and a reconcile mode
+  that adopts pre-existing engagements instead of re-creating them.
+- **Deal attribution** (nightly, midnight ET, DST-safe) — incremental via watermark with
+  idempotent upserts; deal associations re-swept every run so late-created deals still
+  attribute. Full seed over ~19k engagements: ~15 minutes. Nightly increment: seconds.
 - **HeyReach webhook drain** — near-real-time LinkedIn activity logging.
-- **Unenrollment sweeps** (every 30 min) — enforces the do-not-contact flag across both
-  channels: stops queued Bison emails and live HeyReach sequences, writes a HubSpot
-  timeline note, and records everything in an idempotent ledger. Built for scale: a
-  ~23k-contact bulk flag is drained newest-first with pacing, per-channel circuit
-  breakers, and retry rotation, so freshly flagged mid-sequence contacts are stopped
-  first.
+- **Unenrollment sweeps** (every 30 min) — the do-not-contact enforcement described
+  above, across both channels, with HubSpot timeline notes on every stop.
 
 Everything that writes outward is either human-gated in the UI (enroll, tag, send) or
-best-effort with full logging (HubSpot property write-backs never fail a pipeline run).
+best-effort with full logging — a HubSpot write-back never fails a pipeline run.
 
 ## Architecture
 
 Deliberately boring where it can be, sophisticated where it counts:
 
-- **One deployed process.** `webui/server/app.py` (Python 3.12, `ThreadingHTTPServer`)
-  serves both the JSON API (~70 routes) and the built SPA. The backend is **Python
-  stdlib only** except `pymongo` (attribution store) and `dnspython` (technographic
-  DNS probes) — both imported lazily, so the server boots and degrades gracefully
-  without them, without `MONGO_URL`, and without any API key configured.
+- **One deployed process.** `webui/server/app.py` (Python 3.12, `ThreadingHTTPServer`,
+  ~4,000 lines) serves the JSON API (~70 routes) and the built SPA. The backend is
+  **Python stdlib only** except `pymongo` and `dnspython` — both imported lazily, so the
+  server boots and degrades gracefully with any dependency, key, or database absent.
 - **Write/read separation.** The web server opens SQLite **read-only**; all writes go
-  through the pipeline scripts in `.claude/skills/*/scripts/`, which the server shells
-  out to (each prints progress lines + a final JSON summary). Read endpoints degrade
-  gracefully rather than 500.
-- **Claude integration without an SDK.** Copy generation, reply classification, and the
-  Clay MCP enrichment all call the Anthropic API over stdlib `urllib` — including the
-  Message Batches API (async, half price), forced JSON schemas, prompt caching, and the
-  server-side web-search tool.
-- **Cost engineering.** Web-search tokens dominate generation cost, so: same-company
-  contacts are batched together, a 90-day per-domain signal cache turns re-runs into
-  write-only calls, and bulk generation rides the Batches API at 50% off.
+  through pipeline scripts the server shells out to (progress lines + a final JSON
+  summary line as the contract). Read endpoints degrade gracefully rather than 500.
+- **Anthropic API without an SDK.** Generation, classification, and MCP-driven
+  enrichment all ride stdlib `urllib`: Message Batches, forced JSON schemas, prompt
+  caching, the server-side web-search tool, and the MCP connector.
+- **Resumable by design.** Batch state is a SQLite state machine
+  (`pending → generated → enrolled`, `failed` carries the lint reason); batch jobs
+  persist to disk and survive restarts (the poller resumes); enrollment and sweeps are
+  idempotent via ledgers.
 
 ### Data stores
 
 | Store | What |
 |---|---|
-| SQLite (`data/outreach/pipeline.db`) | Contact/batch state machine, per-account signals cache (research + tech + hiring), activity-log ledger, enrollment lead map, unenrollment ledger. |
+| SQLite (`data/outreach/pipeline.db`) | Contact/batch state machine, per-account signal cache (research + tech + hiring), activity ledger, enrollment lead map, unenrollment ledger. |
 | JSONL under `data/` | Generated sequences, campaign stats, interested-reply threads + analysis. |
 | MongoDB (db `aisdr`) | Deal-attribution snapshots: emails, contacts, deals, sync watermark. |
 
@@ -117,31 +172,36 @@ Deliberately boring where it can be, sophisticated where it counts:
 
 One Docker service + a MongoDB service:
 
-- **Multi-stage image**: Node 20 builds the Vite SPA; a `python:3.12-slim` runtime serves
-  it (Node is kept in the runtime only for the Signal Playbook deck renderer). Deploys on
-  every push to `main`, with an `/api/health` healthcheck and on-failure restarts
-  (`railway.json`).
-- **Railway Volume at `/app/data`** is the live data dir. The committed `data/` snapshot
-  is only a first-boot seed (the entrypoint copies it in when the volume is empty) —
-  production data on the volume is far ahead of the repo. The app verifies durability at
-  boot and the UI shows a warning banner if the data dir looks ephemeral.
-- **MongoDB** is wired via a Railway reference variable (`MONGO_URL`) over private
-  networking. Unset it and the attribution endpoints report `configured: false` and the
-  nightly loop self-disables — the console keeps working.
+- **Multi-stage image**: Node 20 builds the Vite SPA; a `python:3.12-slim` runtime
+  serves it (Node kept in the runtime only for the deck renderer). Push to `main` →
+  auto-deploy, `/api/health` healthcheck, on-failure restarts (`railway.json`).
+- **Railway Volume at `/app/data`** is the live data dir; the committed `data/` is a
+  first-boot seed the entrypoint copies onto an empty volume. The app verifies
+  durability at boot and the UI warns if the data dir looks ephemeral.
+- **MongoDB** wired via a Railway reference variable over private networking. Unset it
+  and attribution reports `configured: false`, the nightly loop self-disables, and the
+  rest of the console keeps working.
 - Config lives in Railway service variables (locally: `.env`); `.env.example` documents
   every variable.
+
+## Stack & integrations
+
+Python 3.12 (stdlib-first backend) · React 18 + Vite + Recharts · SQLite + MongoDB ·
+Anthropic API (Messages, Batches, web search, prompt caching, MCP connector) · HubSpot
+(CRM, engagements, properties, CMS pages) · Email Bison · HeyReach · Clay (MCP, OAuth
+2.1) · Prospeo · DNS-level technographics · Docker · Railway
 
 ## Layout
 
 | Path | What |
 |------|------|
-| `.claude/skills/` | The pipeline logic: persona sub-agents, copy linter, HubSpot/Bison/HeyReach clients, signal engines (tech + hiring), attribution sync, suppression sweeper, orchestrator + batch runner. |
+| `.claude/skills/` | The pipeline logic: persona sub-agents, copy linter, channel clients, signal engines, attribution sync, suppression sweeper, orchestrator + batch runner. |
 | `webui/` | The console (React frontend, stdlib Python backend). See [`webui/README.md`](webui/README.md). |
-| `technographics/` | Vendored deterministic technographic-detection engine (DNS + HTML fingerprinting, Wappalyzer-derived catalogue). |
-| `deck-renderer/` | Vite single-file HTML renderer for Signal Playbook play pages. |
+| `technographics/` | Vendored deterministic technographic-detection engine. |
+| `deck-renderer/` | Vite single-file HTML renderer for signal-play pages. |
 | `data/` | A real pipeline snapshot: ICP contacts, 2,000+ generated sequences, reply threads + analysis, campaign stats, the SQLite DB. First-boot seed in prod. |
 | `USAGE.md` | CLI runbook for every pipeline script. |
-| `CLAUDE.md` | Architecture + operational context for Claude sessions: deployment topology, data semantics, gotchas. |
+| `CLAUDE.md` | Architecture + operational context for Claude sessions. |
 | `openapi.json` | Email Bison API reference. |
 
 ## Quick start
@@ -154,12 +214,12 @@ cp .env.example .env          # fill in your HubSpot / Bison / HeyReach / Anthro
 #   or: ./webui/run.sh dev    # hot-reload dev (UI :5173, API :8787)
 ```
 
-The console opens against the bundled `data/` snapshot, so every page has real content on
-first run — no pipeline run required to explore it.
+The console opens against the bundled `data/` snapshot, so every page has real content
+on first run — no pipeline run required to explore it.
 
 ## Running the pipeline yourself
 
-With a valid `.env`, generate and enroll a fresh batch from Claude Code:
+With a valid `.env`, from Claude Code:
 
 ```bash
 /sdr-batches <N> enroll        # process N pending batches and enroll into Bison
