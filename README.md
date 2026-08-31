@@ -1,6 +1,6 @@
 # SDR Console
 
-Autonomous outbound pipeline + a local web console for **EverWorker's SDR AI Worker**.
+Autonomous outbound pipeline + a web console for ** SDR AI Worker**.
 
 Pull an ICP contact list from HubSpot, route each contact to a job-title persona agent
 that researches a recent company signal and writes value-first email + LinkedIn copy, then
