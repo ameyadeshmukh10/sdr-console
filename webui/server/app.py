@@ -16,6 +16,11 @@ Endpoints (all under /api, all JSON):
   GET  /api/outreach/<contact_id>  full generated copy for one contact
   POST /api/ingest {list_id}       run hubspot_pull.py + sdr_batches.py init
   POST /api/reindex                rebuild the in-memory outreach index
+  GET  /api/slas                   SLAs (automatic enrollment rules) + options
+  POST /api/slas                   create / update an SLA ({id} present = update)
+  POST /api/slas/<id>/run|toggle|delete   act on one SLA
+  GET  /api/pull/history           which lists were pulled, when, by whom/what
+  GET  /api/hubspot/forms|properties      HubSpot metadata for the SLA wizard
 
 Design notes:
   - SQLite is opened read-only (mode=ro) so the API can never block or corrupt
@@ -89,6 +94,8 @@ REPLIES_LAST_RUN = DATA / "interested-replies" / "last_run.json"
 REVIEW_QUEUE = DATA / "interested-replies" / "review_queue.json"
 LI_REVIEW_QUEUE = DATA / "interested-replies" / "li_review_queue.json"
 BATCH_JOBS_DIR = DATA / "outreach" / "batch-jobs"
+SLA_RUN = SCRIPTS / "sdr-pipeline" / "scripts" / "sla_run.py"
+PULL_HISTORY_PATH = DATA / "outreach" / "pull_history.json"
 
 # In-process pipeline-DB access for the HeyReach webhook path. The server's own
 # db_connect() is read-only (mode=ro); persisting webhook events needs writes, so that
@@ -694,7 +701,7 @@ def run_script_streaming(args, on_stderr_line=None, timeout=3600):
             "stderr": "".join(err_chunks)}
 
 
-def do_ingest(list_id):
+def do_ingest(list_id, source="manual", by=None):
     pre = db_status()
     pull = run_script([str(HUBSPOT_PULL), str(list_id)], timeout=600)
     if pull["returncode"] != 0:
@@ -703,6 +710,10 @@ def do_ingest(list_id):
     if init["returncode"] != 0:
         return {"ok": False, "stage": "init", "pull": pull, "init": init}
     INDEX.build()
+    try:
+        record_pull(list_id, source=source, by=by, pull_stdout=pull.get("stdout") or "")
+    except Exception:  # noqa: BLE001 — history is best-effort, never fail the pull
+        pass
     post = db_status()
     # Prefer the explicit "+N new contacts, +M new batches" from init stdout.
     m = re.search(r"\+(\d+)\s+new contacts.*?\+(\d+)\s+new batches", init["stdout"])
@@ -727,9 +738,222 @@ def do_hubspot_lists(query, list_type=None):
     if res["returncode"] != 0:
         return {"ok": False, "error": (res["stderr"] or res["stdout"]).strip()[:300]}
     try:
-        return {"ok": True, "lists": json.loads(res["stdout"] or "[]")}
+        lists = json.loads(res["stdout"] or "[]")
+        hist = pull_history()["lists"]
+        for l in lists:
+            h = hist.get(str(l.get("list_id")))
+            if h:
+                l["pulled_at"] = h.get("last_pulled_at")
+                l["pulled_kept"] = h.get("kept")
+                l["pulled_read"] = h.get("read")
+                l["pulled_source"] = h.get("source")
+                l["pulls"] = h.get("pulls")
+        return {"ok": True, "lists": lists}
     except json.JSONDecodeError:
         return {"ok": False, "error": "could not parse list search output"}
+
+
+# ----------------------------------------------------------------------------
+# Pull history — which HubSpot lists were pulled, when, by whom/what. Feeds the Use
+# view's list picker ("pulled Aug 13 · 11 kept" on rows already used) and is
+# written by do_ingest after every successful pull (manual or SLA-driven).
+# ----------------------------------------------------------------------------
+PULL_HISTORY_LOCK = threading.Lock()
+
+
+def pull_history():
+    d = _read_json(PULL_HISTORY_PATH) or {}
+    lists = d.get("lists") if isinstance(d.get("lists"), dict) else {}
+    return {"lists": lists}
+
+
+def record_pull(list_id, *, source="manual", by=None, pull_stdout=""):
+    """Upsert the history row for a list. Read/kept counts come from the pull's
+    own printed summary ("Pulled N list members → M read → K ICP contacts.")."""
+    read = kept = None
+    m = re.search(r"(\d+)\s+read\s*(?:→|->)\s*(\d+)\s+ICP contacts", pull_stdout or "")
+    if m:
+        read, kept = int(m.group(1)), int(m.group(2))
+    with PULL_HISTORY_LOCK:
+        d = pull_history()
+        row = d["lists"].get(str(list_id)) or {"pulls": 0}
+        row.update({"last_pulled_at": now_iso(), "kept": kept, "read": read,
+                    "pulls": int(row.get("pulls") or 0) + 1,
+                    "source": source, "by": by})
+        d["lists"][str(list_id)] = row
+        _write_json_atomic(PULL_HISTORY_PATH, d)
+    return d["lists"][str(list_id)]
+
+
+# ----------------------------------------------------------------------------
+# SLAs — automatic enrollment rules (webui/server/sla_store.py + scripts/sla_run.py).
+# A scheduler thread runs due SLAs: sla_run.py evaluates the criteria (form
+# submissions / company + contact property filters) and adds new matches to the
+# SLA's own HubSpot static list; then the standard do_ingest(list_id) pull + init
+# runs, so ICP gating and suppression apply exactly as for a hand-picked list.
+# Gate: SLA_ENABLED (read like the other loop gates — .env merged with the
+# process environment).
+# ----------------------------------------------------------------------------
+import sla_store                      # noqa: E402  (stdlib only, no I/O at import)
+SLA_STORE = sla_store.SlaStore(sla_store.default_path(DATA))
+SLA_RUNS = {}                          # sla_id -> live run record (single-flight per SLA)
+SLA_RUN_LOCK = threading.Lock()
+INGEST_LOCK = threading.Lock()         # one pull + init at a time (manual or SLA)
+
+
+def slas_payload():
+    slas = SLA_STORE.list()
+    for s_ in slas:
+        s_["running"] = bool(SLA_RUNS.get(s_["id"], {}).get("running"))
+    return {"ok": True, "slas": slas, "enabled_loop": _sla_loop_enabled(),
+            "options": {"every": sla_store.ALLOWED_EVERY, "operators": list(sla_store.OPERATORS),
+                        "max_filters": sla_store.MAX_FILTERS, "max_name": sla_store.MAX_NAME}}
+
+
+def _sla_loop_enabled():
+    return (read_env().get("SLA_ENABLED", "1") or "1").strip().lower() not in ("0", "false", "no")
+
+
+def run_sla(sla_id, mode="manual", by=None, dry_run=False):
+    """Run one SLA now (background). 409 if it is already running."""
+    sla = SLA_STORE.get(sla_id)
+    if not sla:
+        return {"ok": False, "error": "no such SLA"}, 404
+    with SLA_RUN_LOCK:
+        if SLA_RUNS.get(sla_id, {}).get("running"):
+            return {"ok": False, "error": "this SLA is already running"}, 409
+        rec = {"running": True, "mode": mode, "by": by, "started_at": now_iso(), "phase": "evaluating",
+               "dry_run": dry_run, "summary": None, "error": None}
+        SLA_RUNS[sla_id] = rec
+
+    def _run():
+        run = {"at": now_iso(), "mode": mode, "by": by, "dry_run": dry_run, "ok": False,
+               "matched": 0, "new": 0, "added": 0, "form_submissions": 0, "pull": None, "error": None}
+        try:
+            args = [str(SLA_RUN), "--sla-file", str(SLA_STORE.path), "--sla-id", sla_id, "--json"]
+            if dry_run:
+                args.append("--dry-run")
+            res = run_script(args, timeout=1800)
+            lines = [ln for ln in (res.get("stdout") or "").splitlines() if ln.strip()]
+            summary = {}
+            try:
+                summary = json.loads(lines[-1]) if lines else {}
+            except ValueError:
+                pass
+            if not summary:
+                raise RuntimeError((res.get("stderr") or "sla_run produced no summary")[-300:])
+            run.update({k: summary.get(k) for k in ("matched", "new", "added", "form_submissions",
+                                                    "company_matches", "list_id", "list_created",
+                                                    "skipped_in_pipeline", "skipped_already_added")})
+            if summary.get("errors"):
+                run["error"] = "; ".join(summary["errors"])[:400]
+            if summary.get("list_id") and not sla.get("hubspot_list_id"):
+                SLA_STORE.patch(sla_id, hubspot_list_id=str(summary["list_id"]),
+                                hubspot_list_name=summary.get("list_name") or f"AI SDR SLA · {sla['name']}")
+            if not dry_run and summary.get("added"):
+                new_ids = [str(x) for x in (summary.get("new_ids") or [])]
+                cur = SLA_STORE.get(sla_id) or {}
+                SLA_STORE.patch(sla_id, added_ids=sorted(set(cur.get("added_ids") or []) | set(new_ids))[-20000:])
+                rec["phase"] = "pulling"
+                with INGEST_LOCK:
+                    ing = do_ingest(str(summary["list_id"]), source=f"sla:{sla_id}", by=by or "sla")
+                run["pull"] = {"ok": bool(ing.get("ok")), "stage": ing.get("stage"),
+                               "new_contacts": ing.get("new_contacts"), "new_batches": ing.get("new_batches")}
+                if not ing.get("ok"):
+                    run["error"] = (run["error"] + "; " if run["error"] else "") + f"pull failed at {ing.get('stage')}"
+            run["ok"] = bool(summary.get("ok")) and not (run.get("pull") and not run["pull"]["ok"])
+        except Exception as e:  # noqa: BLE001
+            run["error"] = f"{type(e).__name__}: {e}"[:400]
+        finally:
+            if not dry_run:
+                SLA_STORE.record_run(sla_id, run)
+            rec.update({"running": False, "finished_at": now_iso(), "phase": "done", "summary": run,
+                        "error": run.get("error")})
+            print(f"[sla] {sla['name']} ({mode}): {json.dumps({k: run.get(k) for k in ('ok', 'matched', 'new', 'added', 'error')})}", flush=True)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"ok": True, "started": True, "sla_id": sla_id, "dry_run": dry_run}, 202
+
+
+def _sla_loop():
+    """Every 60 s: run whichever enabled SLAs are due (next_run_at <= now)."""
+    if not _sla_loop_enabled():
+        print("[sla] scheduler disabled (SLA_ENABLED=0)", flush=True)
+        return
+    print("[sla] scheduler enabled (checks every 60 s)", flush=True)
+    time.sleep(90)
+    while True:
+        try:
+            for s_ in SLA_STORE.due():
+                payload, code = run_sla(s_["id"], mode="scheduled")
+                if code == 202:
+                    print(f"[sla] due → started {s_['name']}", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"[sla] loop error: {type(e).__name__}: {e}", flush=True)
+        time.sleep(60)
+
+
+# HubSpot metadata for the SLA wizard (10-min caches; the token already has these scopes)
+_HS_META = {"forms": (0, None), "properties": {}}
+_HS_META_LOCK = threading.Lock()
+
+
+def _hs_client():
+    from hubspot_client import HubSpotClient  # noqa: E402  (PIPELINE_SCRIPTS is on sys.path)
+    return HubSpotClient()
+
+
+def hubspot_forms_payload(q=""):
+    with _HS_META_LOCK:
+        ts, cached = _HS_META["forms"]
+        if cached is None or time.time() - ts > 600:
+            forms, after, pages = [], None, 0
+            hs = _hs_client()
+            while pages < 40:
+                pages += 1
+                params = {"limit": 100}
+                if after:
+                    params["after"] = after
+                payload = hs._request("GET", "/marketing/v3/forms", params=params)
+                for f in payload.get("results") or []:
+                    forms.append({"id": f.get("id"), "name": f.get("name"), "type": f.get("formType"),
+                                  "created_at": f.get("createdAt"), "archived": bool(f.get("archived"))})
+                after = (payload.get("paging") or {}).get("next", {}).get("after")
+                if not after:
+                    break
+            cached = [f for f in forms if not f["archived"]]
+            _HS_META["forms"] = (time.time(), cached)
+    q = (q or "").strip().lower()
+    out = [f for f in cached if not q or q in (f["name"] or "").lower()]
+    return {"ok": True, "forms": out[:200], "total": len(cached)}
+
+
+def hubspot_properties_payload(object_type, q=""):
+    if object_type not in ("contacts", "companies"):
+        return {"ok": False, "error": "object must be contacts or companies"}
+    with _HS_META_LOCK:
+        ts, cached = _HS_META["properties"].get(object_type, (0, None))
+        if cached is None or time.time() - ts > 600:
+            payload = _hs_client()._request("GET", f"/crm/v3/properties/{object_type}")
+            cached = []
+            for pr in payload.get("results") or []:
+                if pr.get("hidden"):
+                    continue
+                cached.append({"name": pr.get("name"), "label": pr.get("label") or pr.get("name"),
+                               "type": pr.get("type"), "field_type": pr.get("fieldType"),
+                               "group": pr.get("groupName"),
+                               "options": [{"value": o.get("value"), "label": o.get("label")}
+                                           for o in (pr.get("options") or []) if not o.get("hidden")][:200]})
+            cached.sort(key=lambda x: (x["label"] or "").lower())
+            _HS_META["properties"][object_type] = (time.time(), cached)
+    q = (q or "").strip().lower()
+    out = [pr for pr in cached if not q or q in (pr["label"] or "").lower() or q in (pr["name"] or "").lower()]
+    if q:   # exact name/label first, then prefix matches, then the rest (label order)
+        def rank(pr):
+            n, l = (pr["name"] or "").lower(), (pr["label"] or "").lower()
+            return (0 if q in (n, l) else 1 if (n.startswith(q) or l.startswith(q)) else 2, l)
+        out.sort(key=rank)
+    return {"ok": True, "properties": out[:150], "total": len(cached)}
 
 
 # One HubSpot activity sync at a time: the hourly autosync loop and the API path
@@ -3455,6 +3679,24 @@ class Handler(BaseHTTPRequestHandler):
                 q = params.get("q", [""])[0]
                 list_type = params.get("type", [None])[0]
                 return self._json(do_hubspot_lists(q, list_type))
+            if path == "/api/pull/history":
+                return self._json({"ok": True, **pull_history()})
+            if path == "/api/slas":
+                return self._json(slas_payload())
+            if path.startswith("/api/slas/") and path.endswith("/status"):
+                sid = path[len("/api/slas/"):-len("/status")]
+                return self._json({"ok": True, "sla_id": sid, **(SLA_RUNS.get(sid) or {"running": False})})
+            if path == "/api/hubspot/forms":
+                try:
+                    return self._json(hubspot_forms_payload((params.get("q") or [""])[0]))
+                except Exception as e:  # noqa: BLE001
+                    return self._json({"ok": False, "error": str(e)[:300], "forms": []})
+            if path == "/api/hubspot/properties":
+                try:
+                    return self._json(hubspot_properties_payload((params.get("object") or ["contacts"])[0],
+                                                                 (params.get("q") or [""])[0]))
+                except Exception as e:  # noqa: BLE001
+                    return self._json({"ok": False, "error": str(e)[:300], "properties": []})
             if path == "/api/hubspot/activity/status":
                 return self._json(hubspot_activity_status_payload())
             if path == "/api/hubspot/activity/audit":
@@ -3536,7 +3778,31 @@ class Handler(BaseHTTPRequestHandler):
                 list_id = str(body.get("list_id", "")).strip()
                 if not list_id:
                     return self._error(400, "list_id required")
-                return self._json(do_ingest(list_id))
+                if not INGEST_LOCK.acquire(timeout=1):
+                    return self._error(409, "a pull is already running (manual or SLA) — try again in a minute")
+                try:
+                    me = verify_token(bearer_from_headers(self.headers))
+                    return self._json(do_ingest(list_id, source="manual", by=me))
+                finally:
+                    INGEST_LOCK.release()
+            if path == "/api/slas" or path.startswith("/api/slas/"):
+                me = verify_token(bearer_from_headers(self.headers))
+                body = self._read_body()
+                try:
+                    if path == "/api/slas":                       # create or update ({id} present)
+                        return self._json({"ok": True, "sla": SLA_STORE.upsert(body, by=me)})
+                    sid, _, action = path[len("/api/slas/"):].partition("/")
+                    if action == "delete":
+                        SLA_STORE.delete(sid)
+                        return self._json({"ok": True})
+                    if action == "toggle":
+                        return self._json({"ok": True, "sla": SLA_STORE.set_enabled(sid, body.get("enabled") is not False, by=me)})
+                    if action == "run":
+                        payload, code = run_sla(sid, mode="manual", by=me, dry_run=bool(body.get("dry_run")))
+                        return self._json(payload, code=code)
+                    return self._error(404, "unknown SLA action")
+                except sla_store.SlaError as e:
+                    return self._error(e.code, str(e))
             if path == "/api/analytics/refresh":
                 return self._json(do_refresh())
             if path == "/api/enroll/dry-run":
@@ -4020,6 +4286,7 @@ def main():
     threading.Thread(target=_activity_autosync_loop, daemon=True).start()
     threading.Thread(target=_aisdr_sync_loop, daemon=True).start()
     threading.Thread(target=_unenrollment_loop, daemon=True).start()
+    threading.Thread(target=_sla_loop, daemon=True).start()
     if Handler.static_dir:
         print(f"[webui] serving frontend from {Handler.static_dir}")
     else:

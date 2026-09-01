@@ -1,48 +1,32 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { api } from '../api.js'
-import { Stat, Spinner, ErrorBanner, num } from '../components/ui.jsx'
+import { Spinner, ErrorBanner, num } from '../components/ui.jsx'
 import ListPicker from '../components/ListPicker.jsx'
 import SourcePanel from '../components/SourcePanel.jsx'
+import SlaPanel from '../components/SlaPanel.jsx'
 
 // Pillar 1 — Use: feed a HubSpot list into the pipeline. Contact lists pull +
-// init directly; company lists enrich the buying group via Clay first.
+// init directly from the picker (Select → confirm → run, all in one place);
+// company lists enrich the buying group via Clay first. Batch progress and the
+// pipeline stats live on the Pipeline tab — this page is only "get contacts in".
 export default function UsePage() {
-  const [status, setStatus] = useState(null)
-  const [pending, setPending] = useState([])
-  const [listId, setListId] = useState('2198')
-  const [picked, setPicked] = useState(null)   // selected company list, if any
+  const [picked, setPicked] = useState(null)      // {list_id, name, object_type_id, size}
+  const [manualId, setManualId] = useState('')     // fallback: type an id by hand
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
   const [showLog, setShowLog] = useState(false)
 
-  // 0-1 = contact list, 0-2 = company list.
-  function selectList(l) {
-    if (l.object_type_id === '0-2') {
-      setPicked(l)
-    } else {
-      setPicked(null)
-      setListId(l.list_id)
-    }
-  }
-
-  async function refresh() {
-    try {
-      const [s, b] = await Promise.all([api.status(), api.batches('pending')])
-      setStatus(s)
-      setPending(b.batches)
-    } catch (e) { setError(e.message) }
-  }
-
-  useEffect(() => { refresh() }, [])
+  const isCompany = picked?.object_type_id === '0-2'
+  const contactListId = (isCompany ? '' : (picked?.list_id || manualId)).toString().trim()
 
   async function runIngest() {
+    if (!contactListId) return
     setRunning(true); setError(null); setResult(null)
     try {
-      const r = await api.ingest(listId.trim())
+      const r = await api.ingest(contactListId)
       setResult(r)
       if (!r.ok) setError(`Ingest failed at ${r.stage || 'unknown'} stage`)
-      await refresh()
     } catch (e) { setError(e.message) }
     finally { setRunning(false) }
   }
@@ -54,37 +38,50 @@ export default function UsePage() {
 
   return (
     <div>
-      <h1 className="page-title">Use — feed the AI SDR</h1>
-      <p className="page-sub">Pull a HubSpot list into the pipeline and batch it for the SDR sub-agents.</p>
+      <h1 className="page-title" style={{ marginBottom: 18 }}>Select Target Audience</h1>
 
       <ErrorBanner error={error} />
 
       <div className="panel" style={{ marginBottom: 22 }}>
-        <div className="section-h" style={{ marginTop: 0 }}>Search HubSpot lists</div>
-        <ListPicker onSelect={selectList} />
-      </div>
+        <div className="section-h" style={{ marginTop: 0 }}>CRM List</div>
+        <ListPicker onSelect={(l) => { setPicked(l); setResult(null); setError(null) }} selectedId={picked?.list_id} />
 
-      {picked && <SourcePanel list={picked} onChanged={refresh} />}
+        {/* Step 2 lives right here — no second panel to hunt for. */}
+        {picked && !isCompany && (
+          <div className="banner info" style={{ marginTop: 14, marginBottom: 0 }}>
+            <div className="row between" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span>
+                <b>2 · Selected:</b> {picked.name} <span className="mono muted">#{picked.list_id}</span>
+                {picked.size != null && <span className="muted"> · {num(picked.size)} contacts</span>}
+                <span className="muted"> — pulls the list (<span className="mono">hubspot_pull.py</span>) then batches it (<span className="mono">sdr_batches.py init</span>).</span>
+              </span>
+              <span className="row" style={{ gap: 8 }}>
+                <button onClick={runIngest} disabled={running}>
+                  {running ? <Spinner label="Pulling + batching…" /> : 'Confirm — run pull + init'}
+                </button>
+                <button className="ghost sm" onClick={() => setPicked(null)} disabled={running}>Cancel</button>
+              </span>
+            </div>
+          </div>
+        )}
 
-      <div className="panel" style={{ marginBottom: 22 }}>
-        <div className="section-h" style={{ marginTop: 0 }}>Pull a contact list</div>
-        <div className="toolbar" style={{ marginBottom: 0 }}>
-          <label className="field">
-            HubSpot list ID
-            <input value={listId} onChange={(e) => setListId(e.target.value)} style={{ width: 160 }} />
-          </label>
-          <button onClick={runIngest} disabled={running || !listId.trim()}>
-            {running ? <Spinner label="Pulling + batching…" /> : 'Run pull + init'}
-          </button>
-          <span className="muted" style={{ alignSelf: 'center' }}>
-            Runs <span className="mono">hubspot_pull.py</span> then <span className="mono">sdr_batches.py init</span>. Copy is generated separately via <span className="mono">/sdr-batches</span>.
-          </span>
-        </div>
+        {!picked && (
+          <details style={{ marginTop: 12 }}>
+            <summary className="muted" style={{ fontSize: 12.5, cursor: 'pointer' }}>Or enter a contact list ID by hand</summary>
+            <div className="row" style={{ gap: 8, marginTop: 8, alignItems: 'center' }}>
+              <input value={manualId} onChange={(e) => setManualId(e.target.value)} placeholder="e.g. 2198" style={{ width: 140 }} />
+              <button className="ghost sm" onClick={runIngest} disabled={running || !manualId.trim()}>
+                {running ? <Spinner label="Pulling + batching…" /> : 'Run pull + init'}
+              </button>
+            </div>
+          </details>
+        )}
 
         {result && result.ok && (
-          <div className="banner info" style={{ marginTop: 16, marginBottom: 0 }}>
+          <div className="banner info" style={{ marginTop: 14, marginBottom: 0 }}>
             Added <b>{num(result.new_contacts)}</b> new contacts and <b>{num(result.new_batches)}</b> new batches.
             {result.new_contacts === 0 && ' (List already ingested — init is idempotent.)'}
+            {' '}Generate copy on the <b>Pipeline</b> tab.
           </div>
         )}
         {log && (
@@ -97,36 +94,9 @@ export default function UsePage() {
         )}
       </div>
 
-      {status && (
-        <div className="grid stat-grid" style={{ marginBottom: 22 }}>
-          <Stat label="Total contacts" value={num(status.total_contacts)} />
-          <Stat label="Enrolled" value={num(status.contacts_by_status.enrolled || 0)} tone="good" />
-          <Stat label="Pending" value={num(status.contacts_by_status.pending || 0)} />
-          <Stat label="Batches done" value={num(status.batches_by_status.done || 0)}
-            sub={`${status.batches_by_status.pending || 0} pending`} />
-        </div>
-      )}
+      {picked && isCompany && <SourcePanel list={picked} />}
 
-      <h2 className="section-h">Pending batches</h2>
-      {pending.length === 0 ? (
-        <div className="empty">No pending batches — everything generated has been processed.<br />
-          Ingest a list above, then run <span className="mono">/sdr-batches</span> in Claude Code to generate copy.</div>
-      ) : (
-        <div className="panel" style={{ padding: 0 }}>
-          <table>
-            <thead><tr><th>Batch</th><th>Size</th><th>Status</th></tr></thead>
-            <tbody>
-              {pending.map((b) => (
-                <tr key={b.batch_id}>
-                  <td className="mono">#{b.batch_id}</td>
-                  <td>{b.size}</td>
-                  <td><span className="badge status-pending">pending</span></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <SlaPanel />
     </div>
   )
 }

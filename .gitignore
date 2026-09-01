@@ -4,6 +4,9 @@
 data/outreach/clay_oauth.json
 # Transient Clay sourcing job candidate files:
 data/outreach/source-jobs/
+# SLA rules + pull history (runtime state on the volume)
+data/outreach/slas.json
+data/outreach/pull_history.json
 # Autosync health status (runtime state; written by the server on every sync tick)
 data/interested-replies/.autosync_status.json
 

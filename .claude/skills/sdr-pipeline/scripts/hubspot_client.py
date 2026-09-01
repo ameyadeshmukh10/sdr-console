@@ -142,26 +142,50 @@ class HubSpotClient:
         """Record IDs for any v3 list (contacts OR companies). Alias of get_list_members."""
         return list(self.get_list_members(list_id))
 
-    def search_lists(self, query="", object_type_id=None, count=50):
+    def search_lists(self, query="", object_type_id=None, count=500, newest_first=True):
         """Search HubSpot lists by name. Returns a list of normalized dicts:
-        {list_id, name, object_type_id, processing_type, size}.
+        {list_id, name, object_type_id, processing_type, size, created_at, updated_at}.
         object_type_id '0-1'=contacts, '0-2'=companies; pass it to constrain results.
+        The lists-search API has no sort parameter and its natural order is not
+        by date (the newest lists were missing from a 500-wide first page), so
+        we page through every match (offset/hasMore, `count` per page, capped at
+        max_total) and order newest-created first ourselves — the console's
+        picker otherwise surfaces years-old lists at the top.
         """
-        body = {"query": query or "", "count": int(count), "offset": 0,
-                "additionalProperties": ["hs_list_size"]}
-        if object_type_id:
-            body["objectTypeIds"] = [object_type_id]
-        payload = self._request("POST", "/crm/v3/lists/search", body=body)
-        out = []
-        for lst in payload.get("lists", []):
-            extra = lst.get("additionalProperties") or {}
-            out.append({
-                "list_id": str(lst.get("listId")),
-                "name": lst.get("name"),
-                "object_type_id": lst.get("objectTypeId"),
-                "processing_type": lst.get("processingType"),
-                "size": extra.get("hs_list_size"),
-            })
+        def _page(n, offset):
+            body = {"query": query or "", "count": int(n), "offset": int(offset),
+                    "additionalProperties": ["hs_list_size"]}
+            if object_type_id:
+                body["objectTypeIds"] = [object_type_id]
+            return self._request("POST", "/crm/v3/lists/search", body=body)
+
+        out, offset, page_size, max_total = [], 0, int(count), 5000
+        while True:
+            try:
+                payload = _page(page_size, offset)
+            except HubSpotError as e:
+                if "HTTP 400" not in str(e) or page_size <= 50:
+                    raise
+                page_size = 50   # a stricter page cap than documented — degrade
+                continue
+            lists = payload.get("lists", []) or []
+            for lst in lists:
+                extra = lst.get("additionalProperties") or {}
+                out.append({
+                    "list_id": str(lst.get("listId")),
+                    "name": lst.get("name"),
+                    "object_type_id": lst.get("objectTypeId"),
+                    "processing_type": lst.get("processingType"),
+                    "size": extra.get("hs_list_size"),
+                    "created_at": lst.get("createdAt"),
+                    "updated_at": lst.get("updatedAt"),
+                })
+            if not payload.get("hasMore") or not lists or len(out) >= max_total:
+                break
+            offset = payload.get("offset") or (offset + len(lists))
+        if newest_first:
+            out.sort(key=lambda r: (r.get("created_at") or "", r.get("updated_at") or ""),
+                     reverse=True)
         return out
 
     def create_list(self, name, object_type_id="0-1"):

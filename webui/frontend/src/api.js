@@ -93,6 +93,16 @@ export const api = {
     if (type) p.set('type', type)
     return get('/api/hubspot/lists?' + p.toString())
   },
+  pullHistory: () => get('/api/pull/history'),
+  // SLAs — automatic enrollment rules (Use view → Create SLA)
+  slas: () => get('/api/slas'),
+  saveSla: (sla) => post('/api/slas', sla),                               // {id?} → create or update
+  deleteSla: (id) => post('/api/slas/' + encodeURIComponent(id) + '/delete'),
+  toggleSla: (id, enabled) => post('/api/slas/' + encodeURIComponent(id) + '/toggle', { enabled }),
+  runSla: (id, dryRun = false) => post('/api/slas/' + encodeURIComponent(id) + '/run', { dry_run: dryRun }),
+  slaStatus: (id) => get('/api/slas/' + encodeURIComponent(id) + '/status'),
+  hubspotForms: (q) => get('/api/hubspot/forms?q=' + encodeURIComponent(q || '')),
+  hubspotProperties: (object, q) => get('/api/hubspot/properties?object=' + encodeURIComponent(object) + '&q=' + encodeURIComponent(q || '')),
   clayStatus: () => get('/api/clay/status'),
   clayConnectUrl: () => get('/api/clay/oauth/start'),
   sourceEnrich: (opts) => post('/api/source/enrich', opts),

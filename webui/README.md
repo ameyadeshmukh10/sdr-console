@@ -93,12 +93,28 @@ shows each contact move `researching → done/failed` live with web-search count
 are recorded via `ingest`. One job at a time; cancellable. Model = `CLAUDE_MODEL` (default
 `claude-opus-4-8`). **Everything is stdlib urllib — no `anthropic` SDK, no pip.**
 
-### HubSpot list search (Use tab)
-The Use tab can **search HubSpot lists by name** instead of needing a list ID. A
-contact/company toggle scopes the search (`objectTypeId` `0-1` contacts, `0-2` companies).
-Backend: `search_lists()` on `HubSpotClient` (`POST /crm/v3/lists/search`, requests
-`hs_list_size`) → `hubspot_lists.py search "<q>" [--type contact|company]` →
+### Select Target Audience (Use tab)
+The Use tab is now a single **CRM List** panel: a contact/company type dropdown
+(`objectTypeId` `0-1` contacts, `0-2` companies) inline with the search box, and a
+collapsed result table ("show lists / hide lists") with Created / Size / Pulled / ID
+columns, newest-created first. Selecting a contact list shows the inline
+"2 · Selected … Confirm — run pull + init" banner (no second panel to hunt for);
+lists already pulled carry a "pulled" badge + a "Pull again" action from the pull
+history (`data/outreach/pull_history.json`, written by every successful ingest and
+merged into `GET /api/hubspot/lists`). Backend: `search_lists()` on `HubSpotClient`
+(`POST /crm/v3/lists/search`, requests `hs_list_size`, pages every match and sorts
+newest-created first) → `hubspot_lists.py search "<q>" [--type contact|company]` →
 `GET /api/hubspot/lists?q=&type=`. The manual list-ID input stays as a fallback.
+
+### SLAs — automatic enrollment rules (Use tab)
+"Schedule SLAs" below the list picker: rules that check HubSpot on a schedule and
+enroll whoever matches — the second way (next to picking a list by hand) to feed the
+AI SDR. Wizard: schedule (5|15 min · 1|5|10 h · 3|7|14 days at 22:00 UTC) → criteria
+(a HubSpot form whose new submissions trigger the run, and/or up to 10 account + 10
+contact property filters) → confirm. Each SLA maintains its own HubSpot static list
+("AI SDR SLA · <name>"); a run adds new matches and then runs the standard pull +
+init on it. See CLAUDE.md ("SLAs — automatic enrollment rules") for the store, the
+runner (`sla_run.py`), the endpoints and the `SLA_ENABLED` scheduler gate.
 
 ### Clay buying-group enrichment (no Claude Code)
 Select a **company list** → **Enrich buying group** sources GTM-leadership contacts at each
