@@ -173,3 +173,11 @@ Batch API) → dry-run → enroll. See [`USAGE.md`](USAGE.md) for the underlying
 `.env` (live API keys) and the Clay OAuth token file are the only things gitignored —
 copy `.env.example` and fill it in (including `AUTH_SECRET_KEY`, which signs console
 login sessions). Everything else, including the `data/` snapshot, is in the repo.
+
+##UI 
+
+<img width="1416" height="989" alt="Screenshot 2026-09-01 at 12 24 06 PM" src="https://github.com/user-attachments/assets/f93bf847-c9e9-40f5-9444-10ce8edf1300" />
+
+
+
+
