@@ -130,6 +130,16 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 button.linklike { background: none; border: none; padding: 0; color: var(--accent, #0a7); font-weight: 600; cursor: pointer; }
 button.linklike:hover { text-decoration: underline; }
 
+/* Pill tabs (SLA wizard steps) */
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+button.tab {
+  background: #fff; color: var(--muted); border: 1px solid var(--border-strong);
+  font-weight: 600; font-size: 13px; padding: 6px 13px; border-radius: 999px; box-shadow: none;
+}
+button.tab:hover { color: var(--jade); border-color: var(--jade); filter: none; }
+button.tab.active { background: var(--accent-dim); color: var(--jade); border-color: var(--jade); }
+button.tab .n { opacity: .65; margin-left: 6px; font-weight: 700; }
+
 /* Tables */
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--hairline); }

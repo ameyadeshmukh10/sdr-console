@@ -2,7 +2,8 @@
 
   python3 hubspot_lists.py search "<query>" [--type contact|company]
 
-Output: JSON [{list_id, name, object_type_id, processing_type, size}, ...].
+Output: JSON [{list_id, name, object_type_id, processing_type, size, created_at,
+updated_at}, ...], newest-created first (the API has no sort; we pull one wide page).
 object_type_id "0-1" = contact list, "0-2" = company list.
 """
 
@@ -23,7 +24,7 @@ def main():
     ap.add_argument("command", choices=["search"])
     ap.add_argument("query", nargs="?", default="")
     ap.add_argument("--type", choices=["contact", "company"], default=None)
-    ap.add_argument("--count", type=int, default=50)
+    ap.add_argument("--count", type=int, default=500)
     args = ap.parse_args()
 
     object_type_id = TYPE_TO_OBJECT_ID.get(args.type)

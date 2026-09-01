@@ -270,12 +270,47 @@ by the AI SDR again — they booked a meeting, became an opportunity, etc.
   busy_timeout and crashed concurrent sweeps with "database is locked"; it now
   buffers the fetch and writes in one short transaction).
 
+## SLAs — automatic enrollment rules (ported from the Radicle console, 2026-09)
+
+- **Store:** `webui/server/sla_store.py` → `data/outreach/slas.json` (gitignored; `SLA_STORE_PATH`
+  override for tests). Validation: name < 100 chars; schedule `every ∈ {5,15} minutes | {1,5,10}
+  hours | {3,7,14} days` (days fire at 22:00 UTC — `next_run_after`); ≤ 10 company + ≤ 10
+  contact filters (`{property, operator, value | values | high_value, label, type}` with HubSpot
+  search operators; IN/NOT_IN → `values`, BETWEEN → value+high_value, HAS_PROPERTY/
+  NOT_HAS_PROPERTY valueless); at least one criterion (form or any filter). Per SLA:
+  `hubspot_list_id`, `added_ids`, `last_run`, `runs[≤20]`, `totals`, `next_run_at`.
+- **Run:** `scripts/sla_run.py --sla-file … --sla-id … [--dry-run] --json` — evaluate
+  (company filters → ids → contacts via `associations.company IN` chunks of 100, AND contact
+  filters, windowed past the 10k search cap by `hs_object_id GT`; form → `form-integrations/v1/
+  submissions/forms/{id}` since `last_run_at` → emails → `find_existing_email_ids` → filtered
+  by the criteria) → minus pipeline-DB contacts (via `batch_db.connect()`) and `added_ids` →
+  `create_list("AI SDR SLA · <name>")` (idempotent by name) + `add_contacts_to_list` → JSON
+  summary as the last stdout line. Dry-run never writes. `app.run_sla` (single-flight per SLA,
+  `SLA_RUNS`) then runs `do_ingest(list_id, source="sla:<id>")` under `INGEST_LOCK` (manual
+  `/api/ingest` takes the same lock → 409 if busy) and `record_run` rolls totals + next_run.
+  `_sla_loop` checks `due()` every 60 s (`SLA_ENABLED` gate, read via `read_env()` like the
+  other loops). HubSpot metadata for the wizard: `hubspot_forms_payload` (`/marketing/v3/forms`,
+  10-min cache) and `hubspot_properties_payload` (`/crm/v3/properties/{contacts|companies}`,
+  options for enumerations, exact/prefix-ranked search).
+- **Pull history:** `data/outreach/pull_history.json` (gitignored; `record_pull` in `do_ingest`
+  parses the pull's "Pulled N list members → M read → K ICP contacts." stdout line) →
+  `pulled_at/pulled_kept/pulled_source/pulls` merged into `/api/hubspot/lists` rows;
+  `ListPicker` shows the badge/column/"Pull again". `search_lists` in `hubspot_client.py` now
+  pages through every match and orders newest-created first (the API has no sort).
+- **UI (Use view, reworked to match):** "Select Target Audience" header; one **CRM List** panel —
+  type dropdown + search + collapsed show/hide-lists table (Created/Size/Pulled/ID columns),
+  Select → inline "2 · Selected … Confirm — run pull + init" banner; `SlaPanel.jsx`
+  (table + `SlaWizard`: schedule → criteria (FormPicker, FilterGroup ×2 with PropertyPicker +
+  FilterRow operators/values by type; enum options are UI-only and re-fetched on edit) →
+  confirm) mounted below it. Stats + pending batches live on the Pipeline tab.
+
 ## Background jobs (daemon threads started in `app.py main()`)
 
 1. `_activity_autosync_loop` — hourly: logs new email/LinkedIn activity to HubSpot.
 2. `_aisdr_sync_loop` — nightly midnight ET: deal attribution (above).
 3. HeyReach webhook drain — near-real-time LinkedIn activity logging.
 4. `_unenrollment_loop` — every 30 min: everworker_tag suppression sweeps (above).
+5. `_sla_loop` — every 60 s: runs due SLAs (`SLA_ENABLED` gate; section above).
 
 ## HubSpot notes
 
