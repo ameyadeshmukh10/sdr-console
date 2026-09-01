@@ -174,9 +174,69 @@ Batch API) → dry-run → enroll. See [`USAGE.md`](USAGE.md) for the underlying
 copy `.env.example` and fill it in (including `AUTH_SECRET_KEY`, which signs console
 login sessions). Everything else, including the `data/` snapshot, is in the repo.
 
-##UI 
+## UI 
 
-<img width="1416" height="989" alt="Screenshot 2026-09-01 at 12 24 06 PM" src="https://github.com/user-attachments/assets/f93bf847-c9e9-40f5-9444-10ce8edf1300" />
+Enroll contact or company lists from hubspot
+
+<img width="3420" height="2240" alt="AISDR Use" src="https://github.com/user-attachments/assets/70495aba-becb-4938-80bf-3eb2b6ac19ae" />
+
+Send batches to API for sequence generation. Use overnight batch processing to reduce token costs by 50% or immediate processing when speed to lead is essential.
+The system uses anthropic prompt caching, intelligent batch grouping (by account), and stateful time bound database storage so it is very token efficient. You can sequence 15,000 people a month
+and spend only $250 to $500 in Anthropic API consumption even while using Opus 4.8. 
+
+<img width="3420" height="2154" alt="AISDR Enrollment Pipeline" src="https://github.com/user-attachments/assets/ccfc3751-7956-4be2-a6a7-6de6702c62bd" />
+
+Review the generated sequence and signal for any contact prior to sending it out for activation. 
+
+<img width="3420" height="3032" alt="AI SDR Sequence" src="https://github.com/user-attachments/assets/53b7d6ad-c5f5-48fe-9a0a-809427b174b6" />
+
+Replies are automatically identified, classifed, and surfaced in a centralized inbox. (The AI SDR uses hundreds of email accounts and dozens of LinkedIn accounts to reach out.) 
+The reply is classified as interested, follow-up, possible interested, or low confidence. Automated and not interested replies are not surfaced to the user. 
+
+<img width="3420" height="2182" alt="AI SDR Reply Triage" src="https://github.com/user-attachments/assets/359d1ab1-4ac4-4f7b-af64-f18b5992de9a" />
+
+Two reply agents are used a standard reply agent or a ABX reply agent. The agent is selected by the user and it drafts the resposne which is then human editable and sendable. The reply automatically comes from the linkedin account or email account the prospect is communicating with. Everything is also automatically logged to the CRM as email or linkedin activity on the contact record attributed to the AI SDR with a single alias for all of its accounts. 
+
+<img width="3420" height="2182" alt="AISDR Reply Classification" src="https://github.com/user-attachments/assets/e8508799-1515-494f-888f-3b2c6a38916a" />
+
+The ABX reply agent orchestrates a multi-agent system (MAS) which invokes subagents that research the prospect and company to determine ICP, buying group, positioning / messaging, and persona messaging. It then calls another agent to configure a temporary version of the AI SDR tuned to the client's company entirely, then runs the AI SDR automatically to find a real relevant company and buyer group contacts  that fits the prospects ICP and positioning showing real signal, then it creates sequencing, and then it calls a design agent to create a customized deck, and publishes it directly to hubspot as an interactive web experience with a dedicated URL, then it writes the reply email and places the link in the text box. This all happens completely autonomously. 
+
+<img width="3420" height="2182" alt="AI SDR ABX Agent" src="https://github.com/user-attachments/assets/306c9a98-8897-4e19-bb3b-a8d5257291ec" />
+
+The ABX Agent creates an interactive personalized web experience as shown below. This works very well to generate meetings. I've customized this for other companies as well so you can easily extend this to have multiple ABX experiences of any kind you can think of. 
+
+<img width="1708" height="985" alt="abx-1:4" src="https://github.com/user-attachments/assets/ef8ed7f1-bf68-4af4-a194-27b7cee0b1f1" />
+
+<img width="856" height="481" alt="abx 2:4" src="https://github.com/user-attachments/assets/43aae00e-03b3-49bb-a3ba-2b5aa2183204" />
+
+<img width="1707" height="962" alt="abx 3:4" src="https://github.com/user-attachments/assets/57aedeb4-1864-44a0-b152-0a8fd18a25b4" />
+
+<img width="1698" height="955" alt="abx 4:4" src="https://github.com/user-attachments/assets/1189bde9-4c5f-4e01-a158-a8cf1df1712a" />
+
+The AI SDR Analytics view attributes deals to the AI SDR using time bound last touch attribution. (If the AI SDR communicated with the prospect within 7 days of a deal opening it attributes the deal as AI SDR influenced.) The AI SDR runs email and linkedin against lists in weekly sprints the same lists are provided to human SDRs who dial in parallel. Human SDRs monitor the reply inbox and use the reply agents to convert and manage interested replies to generate deals. 
+
+I've used this version of the AI SDR to generate 42 deals and $1.3M in pipeline all 100% cold outbound signal based pipeline with 2 SDRs from June 28th 2026 to September 1st 2026. This system works very very well. It took me about 1.5-3 months to build and optimize this version. 
+
+<img width="1416" height="989" alt="AISDR Analytics" src="https://github.com/user-attachments/assets/5d5c1587-186b-46a2-83e8-f4ebb1a66d4a" />
+
+The AI SDR Signals View is a stateful database of signals found on account records. These may be used to power ABM segmentation and ad campaigns when I extend this in later releases into an ABM Advertising console. The signals are all stored in MongoDB as JSON and Markdown. 
+
+<img width="1704" height="983" alt="AISDR Signals DB" src="https://github.com/user-attachments/assets/35e6e670-23ab-493d-8907-93707b8fd9a7" />
+
+<img width="1705" height="983" alt="AI SDR Signals Example" src="https://github.com/user-attachments/assets/98472d9b-939d-422e-83ce-36213c31a436" />
+
+<img width="1706" height="983" alt="AISDR Signals Example 2" src="https://github.com/user-attachments/assets/e5043deb-dcec-4112-88c8-33dd4bd9ffac" />
+
+The AI SDR Outreach view shows the outreach its done. You can also search by whether the outreach resulted in an interested reply or a deal. This is stored in a MongoDB and SQLLite DB. 
+You can use claude code and an agent eval system on a quarterly basis to identify trends in what is and isn't working on your outreach because all sequences are stored with detailed metadata (persona, seniority, company, industry, size, message that was replied to, the angle metadata classifer used in the messages, length of message, etc.) The intent here is to eventually create a self optimizing system. 
+
+<img width="3420" height="6168" alt="AISDR Outreach DB" src="https://github.com/user-attachments/assets/965e6050-bd45-4d7d-ba40-007d364d0415" />
+
+The AI SDR Orchestration view is where you can view settings. Currently all edits and configuration happens through actually making changes to source code files via claude code. But this could be extended into a UI layer. Which I am working on doing. 
+
+<img width="3420" height="4114" alt="AISDR Orchestration" src="https://github.com/user-attachments/assets/5a9cbc58-68ad-43c6-982a-a72a19a99871" />
+
+
 
 
 
